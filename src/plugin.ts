@@ -2,12 +2,7 @@
  * TarvenEnv 插件 — Windows 实现
  *
  * 从 Android TarvenEnvPlugin.kt + MainActivity.kt 移植。
- * 不重写逻辑，仅做平台 API 替换：
- * - Android SAF 文件选择器 → Electron dialog
- * - Android ContentResolver → Node.js fs
- * - Android WebStorage → Electron session
- * - .so 伪装二进制 → 系统 node.exe
- * - /system/bin/sh → cmd.exe
+ * 返回类型严格匹配前端 capacitor-plugin.ts 的接口定义。
  */
 
 import { BrowserWindow, dialog } from 'electron';
@@ -30,7 +25,7 @@ let currentUrl: string | null = null;
 let currentPort = 0;
 
 // ---------------------------------------------------------------------------
-// 公开接口（供 main.ts 调用）
+// 公开接口
 // ---------------------------------------------------------------------------
 
 export function setMainWindow(win: BrowserWindow | null): void {
@@ -45,7 +40,6 @@ export function cleanup(): void {
   proc.stopServer();
 }
 
-/** 事件推送 */
 export function notify(eventName: string, data: any): void {
   mainWindow?.webContents.send(`tarven:${eventName}`, data);
 }
@@ -65,7 +59,7 @@ export async function handle(method: string, options: any): Promise<any> {
     case 'sendCommand':
       return doSendCommand(options);
     case 'setPullToRefresh':
-      return { success: true }; // Windows 上无下拉刷新
+      return Promise.resolve();
     case 'pingUrl':
       return pingUrl(options);
     case 'fetchReleases':
@@ -89,18 +83,11 @@ export async function handle(method: string, options: any): Promise<any> {
 
 // ---------------------------------------------------------------------------
 // provisionAndStart — 配置并启动本地 Node 实例
-// 对应 Android MainActivity.kt provisionAndStart (324-426)
+// 前端期望返回: { ready: boolean }
 // ---------------------------------------------------------------------------
 
-async function provisionAndStart(opts: any): Promise<{ success: boolean; error?: string }> {
-  const {
-    port,
-    instanceId,
-    version,
-    zipballUrl,
-    localZipPath,
-    config,
-  } = opts;
+async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
+  const { port, instanceId, version, zipballUrl, localZipPath, config } = opts;
 
   const log = (msg: string, level?: string) => notify('log', { message: msg, level });
   const progress = (pct: number, text?: string) => notify('progress', { percent: pct, stage: text });
@@ -118,20 +105,16 @@ async function provisionAndStart(opts: any): Promise<{ success: boolean; error?:
 
     const serverJs = path.join(targetServerDir, 'server.js');
     const nodeModules = path.join(targetServerDir, 'node_modules');
-
-    // 需要安装的情况：server.js 或 node_modules 不存在
     const needInstall = !fs.existsSync(serverJs) || !fs.existsSync(nodeModules);
 
     if (needInstall) {
       progress(5, '安装中');
 
-      // 优先本地 zip 导入
       if (localZipPath && fs.existsSync(localZipPath)) {
         log(`从本地 zip 安装: ${localZipPath}`);
         progress(15, '解压本地 zip');
         await utils.unzipToDir(localZipPath, targetServerDir);
       } else if (zipballUrl) {
-        // 从 GitHub release 下载
         log(`下载: ${zipballUrl}`);
         progress(10, '下载源码');
 
@@ -142,28 +125,21 @@ async function provisionAndStart(opts: any): Promise<{ success: boolean; error?:
 
         progress(50, '解压源码');
         await utils.unzipToDir(tmpZip, targetServerDir);
-
-        // 解压后可能有子目录（如 SillyTavern-1.12.x/），需要提升
         flattenExtractedDir(targetServerDir);
 
-        // 清理临时 zip
         try { fs.unlinkSync(tmpZip); } catch { /* ignore */ }
       }
 
-      // npm install
       progress(60, '安装依赖');
       await proc.runNpmInstall(targetServerDir, log);
     }
 
-    // 写 config.yaml（对应 Android writeInstanceConfig）
     progress(85, '写入配置');
     writeInstanceConfig(targetServerDir, port, config);
 
-    // 启动服务端
     progress(90, '启动服务');
     proc.startServer(targetServerDir, instanceId, port, log);
 
-    // 轮询就绪
     progress(95, '等待就绪');
     const ready = await pollUntilReady(port, 180000, log);
     if (!ready) {
@@ -176,22 +152,20 @@ async function provisionAndStart(opts: any): Promise<{ success: boolean; error?:
     log('服务就绪', 'success');
 
     notify('ready', { ready: true, url: currentUrl, port });
-    return { success: true };
+    return { ready: true };
   } catch (e: any) {
     log(`失败: ${e.message}`, 'error');
     notify('error', { message: e.message });
-    return { success: false, error: e.message };
+    return { ready: false };
   }
 }
 
-/** 多镜像下载（对应 Android downloadAndExtractGithubRelease） */
 async function downloadWithMirrors(
   originalUrl: string,
   destPath: string,
   onProgress: (pct: number) => void,
   log: (msg: string, level?: string) => void,
 ): Promise<void> {
-  // 镜像列表（对应 Android 的镜像重试逻辑）
   const mirrors = [
     originalUrl,
     originalUrl.replace('https://github.com', 'https://ghfast.top/https://github.com'),
@@ -215,57 +189,47 @@ async function downloadWithMirrors(
   throw lastError || new Error('下载失败');
 }
 
-/** 解压后子目录提升（如 SillyTavern-1.12.x/ → 当前目录） */
 function flattenExtractedDir(dir: string): void {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   if (entries.length === 1 && entries[0].isDirectory()) {
     const subdir = path.join(dir, entries[0].name);
     const subEntries = fs.readdirSync(subdir);
     for (const entry of subEntries) {
-      const src = path.join(subdir, entry);
-      const dest = path.join(dir, entry);
-      fs.renameSync(src, dest);
+      fs.renameSync(path.join(subdir, entry), path.join(dir, entry));
     }
     fs.rmdirSync(subdir);
   }
 }
 
-/** 写 config.yaml（对应 Android writeInstanceConfig） */
 function writeInstanceConfig(serverDir: string, port: number, config: any): void {
+  const c = config || {};
   const yaml = [
     `port: ${port}`,
-    `listen: ${config?.listen ?? true}`,
+    `listen: ${c.listen ?? true}`,
     `whitelistMode: false`,
     `securityOverride: true`,
-    `listen: ${config?.listen ?? true}`,
-    config?.ipv4 !== undefined ? `listenIPv4: ${config.ipv4}` : '',
-    config?.ipv6 !== undefined ? `listenIPv6: ${config.ipv6}` : '',
-    config?.dnsIpv6 !== undefined ? `dnsPreferIPv6: ${config.dnsIpv6}` : '',
-    config?.heartbeat !== undefined ? `enableHeartbeat: ${config.heartbeat}` : '',
-    config?.keepAlive !== undefined ? `autoRestartOnCrash: ${config.keepAlive}` : '',
+    c.ipv4 !== undefined ? `listenIPv4: ${c.ipv4}` : '',
+    c.ipv6 !== undefined ? `listenIPv6: ${c.ipv6}` : '',
+    c.dnsIpv6 !== undefined ? `dnsPreferIPv6: ${c.dnsIpv6}` : '',
+    c.heartbeat !== undefined ? `enableHeartbeat: ${c.heartbeat}` : '',
+    c.keepAlive !== undefined ? `autoRestartOnCrash: ${c.keepAlive}` : '',
   ].filter(Boolean).join('\n');
 
   utils.writeText(path.join(serverDir, 'config.yaml'), yaml);
 }
 
-/** 轮询直到 HTTP 就绪（对应 Android pollUntilReady） */
 async function pollUntilReady(port: number, timeoutMs: number, log: (msg: string, level?: string) => void): Promise<boolean> {
   const start = Date.now();
   const url = `http://127.0.0.1:${port}`;
-
   while (Date.now() - start < timeoutMs) {
     try {
-      const ok = await tryConnect(url);
-      if (ok) return true;
-    } catch {
-      // ignore
-    }
+      if (await tryConnect(url)) return true;
+    } catch { /* ignore */ }
     await new Promise((r) => setTimeout(r, 1500));
   }
   return false;
 }
 
-/** HTTP 探测（对应 Android tryConnect — 2xx-4xx 算就绪） */
 function tryConnect(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
@@ -273,51 +237,43 @@ function tryConnect(url: string): Promise<boolean> {
       resolve(res.statusCode !== undefined && res.statusCode < 500);
     });
     req.on('error', () => resolve(false));
-    req.setTimeout(5000, () => {
-      req.destroy();
-      resolve(false);
-    });
+    req.setTimeout(5000, () => { req.destroy(); resolve(false); });
   });
 }
 
 // ---------------------------------------------------------------------------
-// scanInstances — 扫描本地已安装实例
-// 对应 Android MainActivity.kt scanInstances
+// scanInstances — 前端期望: { instances: ScannedInstance[] }
+// ScannedInstance: { instanceId, version, sizeBytes, hasServer }
 // ---------------------------------------------------------------------------
 
-function scanInstances(): any[] {
+function scanInstances(): { instances: any[] } {
   const serversDir = path.join(paths.bootstrapDir, 'servers');
-  if (!fs.existsSync(serversDir)) return [];
+  if (!fs.existsSync(serversDir)) return { instances: [] };
 
   const instances: any[] = [];
-  const entries = fs.readdirSync(serversDir, { withFileTypes: true });
-
-  for (const entry of entries) {
+  for (const entry of fs.readdirSync(serversDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const dir = path.join(serversDir, entry.name);
     const packageJsonPath = path.join(dir, 'package.json');
-
     if (!fs.existsSync(packageJsonPath)) continue;
 
     try {
       const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
       instances.push({
         instanceId: entry.name,
-        name: pkg.name || entry.name,
         version: pkg.version || 'unknown',
-        dir,
-        size: utils.dirSize(dir),
+        sizeBytes: utils.dirSize(dir),
+        hasServer: fs.existsSync(path.join(dir, 'server.js')),
       });
-    } catch {
-      // skip invalid package.json
-    }
+    } catch { /* skip */ }
   }
 
-  return instances;
+  return { instances };
 }
 
 // ---------------------------------------------------------------------------
-// getInstanceInfo — 读取实例详情
+// getInstanceInfo — 前端期望: InstanceInfo
+// { instanceId, version, path, sizeBytes, createdAt, status }
 // ---------------------------------------------------------------------------
 
 function getInstanceInfo(opts: any): any {
@@ -325,51 +281,52 @@ function getInstanceInfo(opts: any): any {
   const dir = paths.serverDirFor(instanceId);
 
   if (!fs.existsSync(dir)) {
-    return { found: false };
+    return { instanceId, version: 'unknown', path: dir, sizeBytes: 0, createdAt: '—', status: 'not_found' };
   }
 
-  const packageJsonPath = path.join(dir, 'package.json');
   let version = 'unknown';
-  let name = instanceId;
-
-  if (fs.existsSync(packageJsonPath)) {
+  if (fs.existsSync(path.join(dir, 'package.json'))) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8'));
       version = pkg.version || 'unknown';
-      name = pkg.name || instanceId;
     } catch { /* ignore */ }
   }
 
+  let createdAt = '—';
+  try {
+    const stat = fs.statSync(dir);
+    createdAt = stat.birthtime.toISOString().split('T')[0];
+  } catch { /* ignore */ }
+
+  const status = (proc.isServerRunning() && currentPort === port) ? 'running' : 'stopped';
+
   return {
-    found: true,
     instanceId,
-    name,
     version,
-    dir,
-    size: utils.dirSize(dir),
-    running: proc.isServerRunning() && currentPort === port,
-    port,
+    path: dir,
+    sizeBytes: utils.dirSize(dir),
+    createdAt,
+    status,
   };
 }
 
 // ---------------------------------------------------------------------------
-// sendCommand — 向 shell 发送命令
+// sendCommand — 前端期望: void
 // ---------------------------------------------------------------------------
 
-function doSendCommand(opts: any): { success: boolean } {
+function doSendCommand(opts: any): void {
   const { text } = opts;
-  const cwd = path.join(paths.bootstrapDir, 'servers') || process.cwd();
+  const cwd = path.join(paths.bootstrapDir, 'servers');
   proc.sendCommand(text, cwd, (msg, level) => {
     notify('log', { message: msg, level });
   });
-  return { success: true };
 }
 
 // ---------------------------------------------------------------------------
-// pingUrl — HTTP HEAD 探测远程实例
+// pingUrl — 前端期望: { online, statusCode?, error? }
 // ---------------------------------------------------------------------------
 
-function pingUrl(opts: any): Promise<{ online: boolean; statusCode?: number }> {
+function pingUrl(opts: any): Promise<{ online: boolean; statusCode?: number; error?: string }> {
   return new Promise((resolve) => {
     const { url } = opts;
     const protocol = url.startsWith('https') ? https : http;
@@ -379,21 +336,18 @@ function pingUrl(opts: any): Promise<{ online: boolean; statusCode?: number }> {
       resolve({ online: true, statusCode: res.statusCode });
     });
 
-    req.on('error', () => resolve({ online: false }));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ online: false });
-    });
-
+    req.on('error', (e: any) => resolve({ online: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ online: false, error: 'timeout' }); });
     req.end();
   });
 }
 
 // ---------------------------------------------------------------------------
-// fetchReleases — 拉 GitHub releases 列表
+// fetchReleases — 前端期望: { releases: GithubRelease[] }
+// GithubRelease: { tag, zipballUrl, prerelease }
 // ---------------------------------------------------------------------------
 
-function fetchReleases(): Promise<any[]> {
+function fetchReleases(): Promise<{ releases: any[] }> {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'api.github.com',
@@ -409,16 +363,13 @@ function fetchReleases(): Promise<any[]> {
       res.on('data', (chunk: any) => { data += chunk; });
       res.on('end', () => {
         try {
-          const releases = JSON.parse(data);
-          resolve(releases.map((r: any) => ({
-            tagName: r.tag_name,
-            name: r.name,
-            publishedAt: r.published_at,
+          const raw = JSON.parse(data);
+          const releases = raw.map((r: any) => ({
+            tag: r.tag_name,
             zipballUrl: r.zipball_url,
-            tarballUrl: r.tarball_url,
-            body: r.body,
             prerelease: r.prerelease,
-          })));
+          }));
+          resolve({ releases });
         } catch (e) {
           reject(e);
         }
@@ -428,37 +379,37 @@ function fetchReleases(): Promise<any[]> {
 }
 
 // ---------------------------------------------------------------------------
-// pickDirectory — 系统目录选择器
-// 对应 Android ACTION_OPEN_DOCUMENT_TREE
+// pickDirectory — 前端期望: { name, path }
 // ---------------------------------------------------------------------------
 
-async function doPickDirectory(): Promise<{ path: string | null }> {
-  if (!mainWindow) return { path: null };
+async function doPickDirectory(): Promise<{ name: string; path: string }> {
+  if (!mainWindow) return { name: '', path: '' };
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
   });
-  return { path: result.canceled ? null : result.filePaths[0] };
+  if (result.canceled || result.filePaths.length === 0) {
+    return { name: '', path: '' };
+  }
+  const p = result.filePaths[0];
+  return { name: path.basename(p), path: p };
 }
 
 // ---------------------------------------------------------------------------
-// pickImage — 系统图片选择器 → 复制到 covers/
-// 对应 Android MainActivity.copyCoverImage
+// pickImage — 前端期望: { path }
 // ---------------------------------------------------------------------------
 
-async function doPickImage(opts: any): Promise<{ coverPath: string | null }> {
-  if (!mainWindow) return { coverPath: null };
+async function doPickImage(opts: any): Promise<{ path: string }> {
+  if (!mainWindow) return { path: '' };
   const { instanceId } = opts;
 
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '选择封面图片',
     properties: ['openFile'],
-    filters: [
-      { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] },
-    ],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
   });
 
   if (result.canceled || result.filePaths.length === 0) {
-    return { coverPath: null };
+    return { path: '' };
   }
 
   const src = result.filePaths[0];
@@ -470,15 +421,15 @@ async function doPickImage(opts: any): Promise<{ coverPath: string | null }> {
   }
 
   utils.copyFile(src, dest);
-  return { coverPath: dest };
+  return { path: dest };
 }
 
 // ---------------------------------------------------------------------------
-// pickZipFile — 系统文件选择器选 zip
+// pickZipFile — 前端期望: { path, sizeBytes }
 // ---------------------------------------------------------------------------
 
-async function doPickZipFile(): Promise<{ path: string | null }> {
-  if (!mainWindow) return { path: null };
+async function doPickZipFile(): Promise<{ path: string; sizeBytes: number }> {
+  if (!mainWindow) return { path: '', sizeBytes: 0 };
 
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '选择 zip 文件',
@@ -486,98 +437,108 @@ async function doPickZipFile(): Promise<{ path: string | null }> {
     filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
   });
 
-  return { path: result.canceled ? null : result.filePaths[0] };
+  if (result.canceled || result.filePaths.length === 0) {
+    return { path: '', sizeBytes: 0 };
+  }
+
+  const p = result.filePaths[0];
+  const stat = fs.statSync(p);
+  return { path: p, sizeBytes: stat.size };
 }
 
 // ---------------------------------------------------------------------------
-// uninstallInstance — 删除实例目录 + 封面
+// uninstallInstance — 前端期望: { success, freedBytes }
 // ---------------------------------------------------------------------------
 
-function uninstallInstance(opts: any): { success: boolean } {
+function uninstallInstance(opts: any): { success: boolean; freedBytes: number } {
   const { instanceId } = opts;
   const dir = paths.serverDirFor(instanceId);
 
+  let freedBytes = 0;
   if (fs.existsSync(dir)) {
+    freedBytes = utils.dirSize(dir);
     utils.removeDir(dir);
   }
 
-  // 删除封面图
   for (const ext of ['.png', '.jpg', '.jpeg', '.webp', '.gif']) {
     const cover = path.join(paths.coversDir, `${instanceId}${ext}`);
     if (fs.existsSync(cover)) {
-      try { fs.unlinkSync(cover); } catch { /* ignore */ }
+      try {
+        freedBytes += fs.statSync(cover).size;
+        fs.unlinkSync(cover);
+      } catch { /* ignore */ }
     }
   }
 
-  return { success: true };
+  return { success: true, freedBytes };
 }
 
 // ---------------------------------------------------------------------------
-// cleanGarbage — 扫描孤立文件/缓存
+// cleanGarbage — 前端期望: { items: GarbageItem[], totalBytes }
+// GarbageItem: { path, type, sizeBytes, description }
 // ---------------------------------------------------------------------------
 
-function cleanGarbage(opts: any): any[] {
+function cleanGarbage(opts: any): { items: any[]; totalBytes: number } {
   const { dryRun = true } = opts;
   const items: any[] = [];
 
-  // 1. 孤立实例目录（servers/ 下不在 localStorage 中的）
+  // 孤立实例目录
   const serversDir = path.join(paths.bootstrapDir, 'servers');
   if (fs.existsSync(serversDir)) {
     for (const entry of fs.readdirSync(serversDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      // 简单扫描，前端会过滤已知实例
       const dir = path.join(serversDir, entry.name);
-      const pkgJson = path.join(dir, 'package.json');
-      if (!fs.existsSync(pkgJson)) {
+      if (!fs.existsSync(path.join(dir, 'package.json'))) {
         items.push({
-          type: 'orphan_instance',
           path: dir,
-          size: utils.dirSize(dir),
-          label: `孤立实例: ${entry.name}`,
+          type: 'orphan_instance',
+          sizeBytes: utils.dirSize(dir),
+          description: `孤立实例: ${entry.name}`,
         });
       }
     }
   }
 
-  // 2. 孤立封面图
+  // 孤立封面图
   if (fs.existsSync(paths.coversDir)) {
     for (const entry of fs.readdirSync(paths.coversDir)) {
-      const ext = path.extname(entry);
-      const id = path.basename(entry, ext);
+      const fp = path.join(paths.coversDir, entry);
       items.push({
+        path: fp,
         type: 'orphan_cover',
-        path: path.join(paths.coversDir, entry),
-        size: fs.statSync(path.join(paths.coversDir, entry)).size,
-        label: `封面图: ${entry}`,
+        sizeBytes: fs.statSync(fp).size,
+        description: `封面图: ${entry}`,
       });
     }
   }
 
-  // 3. 临时文件
+  // 临时文件
   if (fs.existsSync(paths.tmpDir)) {
     for (const entry of fs.readdirSync(paths.tmpDir)) {
       const fp = path.join(paths.tmpDir, entry);
       items.push({
-        type: 'temp',
         path: fp,
-        size: fs.statSync(fp).size,
-        label: `临时文件: ${entry}`,
+        type: 'temp_file',
+        sizeBytes: fs.statSync(fp).size,
+        description: `临时文件: ${entry}`,
       });
     }
   }
 
-  // 4. 日志文件
+  // 缓存（日志）
   if (fs.existsSync(paths.logsDir)) {
     for (const entry of fs.readdirSync(paths.logsDir)) {
       const fp = path.join(paths.logsDir, entry);
       items.push({
-        type: 'log',
         path: fp,
-        size: fs.statSync(fp).size,
-        label: `日志: ${entry}`,
+        type: 'cache',
+        sizeBytes: fs.statSync(fp).size,
+        description: `日志: ${entry}`,
       });
     }
   }
+
+  const totalBytes = items.reduce((sum, i) => sum + i.sizeBytes, 0);
 
   if (!dryRun) {
     for (const item of items) {
@@ -591,11 +552,11 @@ function cleanGarbage(opts: any): any[] {
     }
   }
 
-  return items;
+  return { items, totalBytes };
 }
 
 // ---------------------------------------------------------------------------
-// deleteGarbageItem — 按路径删除垃圾项
+// deleteGarbageItem — 前端期望: { success }
 // ---------------------------------------------------------------------------
 
 function deleteGarbageItem(opts: any): { success: boolean } {

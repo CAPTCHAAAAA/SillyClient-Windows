@@ -206,6 +206,7 @@ function createMainWindow(): void {
     frame: true,
     backgroundColor: DEFAULT_BG,
     title: 'SillyClient',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

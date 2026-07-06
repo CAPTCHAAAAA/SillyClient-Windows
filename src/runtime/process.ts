@@ -2,19 +2,35 @@
  * Windows 进程管理
  *
  * 从 Android TarvenProcessRunner.kt 移植。
- * Android 用 LD_LIBRARY_PATH + .so 伪装二进制，Windows 用 PATH + 系统 node.exe。
- * Android 用 /system/bin/sh，Windows 用 cmd.exe。
+ * 关键差异：Android 用 LD_LIBRARY_PATH + .so 伪装二进制，
+ * Windows 用系统 node.exe（优先）或 Electron 内置 Node（ELECTRON_RUN_AS_NODE=1）。
  */
 
-import { spawn, ChildProcess, execFile } from 'node:child_process';
+import { spawn, ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { getNodeBin, getNpmBin, tarvenHome, usrDir, tmpDir, logsDir } from './paths';
+import { getNodeBin, getNpmBin, isElectronNode, logsDir } from './paths';
 
-/** 当前运行的服务端进程 */
 let serverProcess: ChildProcess | null = null;
 
-/** 执行原生命令，收集输出（对应 Android executeNative） */
+/** 构建 spawn 环境变量 */
+function buildEnv(extra?: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {};
+  // 复制 process.env（过滤 undefined）
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined) env[k] = v;
+  }
+  // 如果用 Electron 内置 Node，必须设 ELECTRON_RUN_AS_NODE=1
+  if (isElectronNode()) {
+    env.ELECTRON_RUN_AS_NODE = '1';
+  } else {
+    delete env.ELECTRON_RUN_AS_NODE;
+  }
+  if (extra) Object.assign(env, extra);
+  return env;
+}
+
+/** 执行原生命令，收集输出 */
 export function executeNative(
   cmd: string,
   args: string[],
@@ -27,7 +43,7 @@ export function executeNative(
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      env: buildEnv(options.env),
       shell: false,
       windowsHide: true,
     });
@@ -57,7 +73,7 @@ export function executeNative(
   });
 }
 
-/** 冒烟测试 Node.js（对应 Android smokeTestNode） */
+/** 冒烟测试 Node.js */
 export async function smokeTestNode(): Promise<boolean> {
   try {
     const result = await executeNative(getNodeBin(), ['--version'], { timeout: 10000 });
@@ -67,22 +83,24 @@ export async function smokeTestNode(): Promise<boolean> {
   }
 }
 
-/** 运行 npm install（对应 Android runNpmInstall） */
+/** 运行 npm install */
 export async function runNpmInstall(
   cwd: string,
   onLog: (msg: string, level?: string) => void,
 ): Promise<void> {
   const npmBin = getNpmBin();
   const registry = 'https://registry.npmmirror.com';
+  const npmArgs = ['install', '--omit=dev', '--registry', registry, '--no-fund', '--no-audit'];
+
+  // npm.cmd 是批处理文件，需要通过 cmd.exe 运行
+  const isCmdFile = npmBin.toLowerCase().endsWith('.cmd');
+  const cmd = isCmdFile ? 'cmd.exe' : npmBin;
+  const args = isCmdFile ? ['/c', npmBin, ...npmArgs] : npmArgs;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     onLog(`npm install (尝试 ${attempt}/3)`);
     try {
-      const result = await executeNative(
-        npmBin,
-        ['install', '--omit=dev', '--registry', registry, '--no-fund', '--no-audit'],
-        { cwd, timeout: 600000 },
-      );
+      const result = await executeNative(cmd, args, { cwd, timeout: 600000 });
       if (result.code === 0) {
         onLog('npm install 完成', 'success');
         return;
@@ -97,7 +115,7 @@ export async function runNpmInstall(
   throw new Error('npm install 失败（3 次重试后放弃）');
 }
 
-/** 启动服务端（对应 Android startServer） */
+/** 启动服务端 */
 export function startServer(
   serverDir: string,
   instanceId: string,
@@ -107,16 +125,13 @@ export function startServer(
   const nodeBin = getNodeBin();
   const logFile = path.join(logsDir, `${instanceId}.log`);
 
-  // 环境变量（对应 Android startIfReady 中的 TARVEN_* 变量）
-  const env: Record<string, string> = {
-    ...process.env,
+  const env = buildEnv({
     NODE_ENV: 'production',
     AUTO_LAUNCH: 'false',
     NO_BROWSER: 'true',
-    ELECTRON_RUN_AS_NODE: '',
-  };
+  });
 
-  onLog(`启动: ${nodeBin} server.js (端口 ${port})`);
+  onLog(`启动: ${nodeBin} server.js (端口 ${port})${isElectronNode() ? ' [Electron Node]' : ''}`);
 
   serverProcess = spawn(nodeBin, ['server.js'], {
     cwd: serverDir,
@@ -125,7 +140,6 @@ export function startServer(
     windowsHide: false,
   });
 
-  // 日志重定向到文件 + 实时推送
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
   serverProcess.stdout?.on('data', (d: Buffer) => {
@@ -153,15 +167,17 @@ export function startServer(
 export function stopServer(): void {
   if (serverProcess) {
     try {
-      serverProcess.kill();
-    } catch {
-      // ignore
-    }
+      // Windows 上需要 taskkill /T 来杀子进程树
+      const pid = serverProcess.pid;
+      if (pid) {
+        spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+      }
+    } catch { /* ignore */ }
     serverProcess = null;
   }
 }
 
-/** 发送命令到 shell（对应 Android sendCommand — 用 /system/bin/sh -c） */
+/** 发送命令到 shell */
 export function sendCommand(
   text: string,
   cwd: string,

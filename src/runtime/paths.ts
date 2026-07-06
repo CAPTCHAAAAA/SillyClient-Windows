@@ -42,24 +42,42 @@ export const tmpDir = path.join(tarvenHome, 'tmp');
 /** 日志目录 */
 export const logsDir = path.join(tarvenHome, 'logs');
 
-/** 系统中 node.exe 路径（从 PATH 查找） */
+/** 系统中 node.exe 路径 */
 let _nodeBin: string | null = null;
+let _isElectronNode = false;
 
 export function getNodeBin(): string {
   if (_nodeBin) return _nodeBin;
-  // Windows: 直接用系统 node
-  _nodeBin = process.execPath; // Electron 内置的 Node
   // 优先用系统安装的 Node.js
   const systemNode = findInPath('node.exe');
-  if (systemNode) _nodeBin = systemNode;
+  if (systemNode) {
+    _nodeBin = systemNode;
+    _isElectronNode = false;
+    return _nodeBin;
+  }
+  // 回退到 Electron 内置 Node（需 ELECTRON_RUN_AS_NODE=1）
+  _nodeBin = process.execPath;
+  _isElectronNode = true;
   return _nodeBin;
 }
 
+/** 是否使用 Electron 内置 Node（而非系统 node.exe） */
+export function isElectronNode(): boolean {
+  if (!_nodeBin) getNodeBin();
+  return _isElectronNode;
+}
+
 export function getNpmBin(): string {
-  // npm 通常在 node 同目录
-  const nodeDir = path.dirname(getNodeBin());
-  const npmCmd = path.join(nodeDir, 'npm.cmd');
-  if (fs.existsSync(npmCmd)) return npmCmd;
+  if (!isElectronNode()) {
+    // 系统 node：npm 通常在同目录
+    const nodeDir = path.dirname(getNodeBin());
+    const npmCmd = path.join(nodeDir, 'npm.cmd');
+    if (fs.existsSync(npmCmd)) return npmCmd;
+  }
+  // Electron Node 或系统 npm 不在 node 目录：用 npx 或全局 npm
+  const systemNpm = findInPath('npm.cmd');
+  if (systemNpm) return systemNpm;
+  // 最后回退：用 node 运行 npm-cli.js
   return 'npm';
 }
 
