@@ -82,6 +82,30 @@ export async function handle(method: string, options: any): Promise<any> {
 }
 
 // ---------------------------------------------------------------------------
+// 端口检测 — 检查端口是否可用，不可用则递增
+// ---------------------------------------------------------------------------
+
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const net = require('node:net');
+    const tester = net.createServer();
+    tester.once('error', () => resolve(false));
+    tester.once('listening', () => {
+      tester.close(() => resolve(true));
+    });
+    tester.listen(port, '127.0.0.1');
+  });
+}
+
+async function findAvailablePort(startPort: number, log: (msg: string, level?: string) => void): Promise<number> {
+  for (let p = startPort; p < startPort + 100; p++) {
+    if (await isPortAvailable(p)) return p;
+  }
+  log(`端口 ${startPort}-${startPort + 99} 全部不可用，使用默认 ${startPort}`, 'error');
+  return startPort;
+}
+
+// ---------------------------------------------------------------------------
 // provisionAndStart — 配置并启动本地 Node 实例
 // 前端期望返回: { ready: boolean }
 // ---------------------------------------------------------------------------
@@ -114,6 +138,7 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
         log(`从本地 zip 安装: ${localZipPath}`);
         progress(15, '解压本地 zip');
         await utils.unzipToDir(localZipPath, targetServerDir);
+        flattenExtractedDir(targetServerDir);
       } else if (zipballUrl) {
         log(`下载: ${zipballUrl}`);
         progress(10, '下载源码');
@@ -134,24 +159,31 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
       await proc.runNpmInstall(targetServerDir, log);
     }
 
+    // 检测端口可用性，自动切换
+    const actualPort = await findAvailablePort(port, log);
+    if (actualPort !== port) {
+      log(`端口 ${port} 被占用或保留，改用 ${actualPort}`);
+    }
+    currentPort = actualPort;
+
     progress(85, '写入配置');
-    writeInstanceConfig(targetServerDir, port, config);
+    writeInstanceConfig(targetServerDir, actualPort, config);
 
     progress(90, '启动服务');
-    proc.startServer(targetServerDir, instanceId, port, log);
+    proc.startServer(targetServerDir, instanceId, actualPort, log);
 
     progress(95, '等待就绪');
-    const ready = await pollUntilReady(port, 180000, log);
+    const ready = await pollUntilReady(actualPort, 180000, log);
     if (!ready) {
       throw new Error('服务启动超时（180s）');
     }
 
     serverReady = true;
-    currentUrl = `http://127.0.0.1:${port}`;
+    currentUrl = `http://127.0.0.1:${actualPort}`;
     progress(100, '就绪');
     log('服务就绪', 'success');
 
-    notify('ready', { ready: true, url: currentUrl, port });
+    notify('ready', { ready: true, url: currentUrl, port: actualPort });
     return { ready: true };
   } catch (e: any) {
     log(`失败: ${e.message}`, 'error');

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, WebContentsView, shell, Menu, session } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, shell, Menu, session } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -64,7 +64,7 @@ const MIME_TYPES: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 let mainWindow: BrowserWindow | null = null;
-let tavernView: WebContentsView | null = null;
+let tavernWindow: BrowserWindow | null = null;
 let currentTavernUrl: string | null = null;
 let topColorTimer: ReturnType<typeof setInterval> | null = null;
 let frontendDistDir: string | null = null;
@@ -101,17 +101,21 @@ function pushMode(mode: 'launcher' | 'tavern'): void {
 // ---------------------------------------------------------------------------
 
 function resolveFrontendDist(): string | null {
-  // 1. Ask paths module (preferred — may know the exact build location)
+  // 1. Ask paths module (preferred — handles both dev and production)
   const fromPaths = paths.getFrontendDistDir?.() ?? null;
   if (fromPaths && fs.existsSync(fromPaths)) return fromPaths;
 
-  // 2. Local copy under web/capacitor-ui/dist (production build)
+  // 2. Bundled frontend-dist (production)
+  const bundled = path.join(__dirname, '..', 'frontend-dist');
+  if (fs.existsSync(bundled)) return bundled;
+
+  // 3. Local copy under web/capacitor-ui/dist (development build)
   const localCandidate = path.join(__dirname, '..', 'web', 'capacitor-ui', 'dist');
   if (fs.existsSync(localCandidate)) return localCandidate;
 
-  // 3. Android sibling directory (development: share the same frontend build)
+  // 4. Android sibling directory (development: share the same frontend build)
   const androidCandidate = path.join(
-    __dirname, '..', '..', 'SillyClient_Android', 'App', 'web', 'capacitor-ui', 'dist',
+    __dirname, '..', '..', '..', 'SillyClient_Android', 'App', 'web', 'capacitor-ui', 'dist',
   );
   if (fs.existsSync(androidCandidate)) return androidCandidate;
 
@@ -227,7 +231,7 @@ function createMainWindow(): void {
   });
 
   mainWindow.on('resize', () => {
-    syncTavernViewBounds();
+    // tavern 是独立窗口，无需同步
   });
 
   mainWindow.on('closed', () => {
@@ -238,21 +242,28 @@ function createMainWindow(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Immersive mode (tavern view via WebContentsView)
+// Tavern window — 独立窗口
 // ---------------------------------------------------------------------------
 
-function syncTavernViewBounds(): void {
-  if (!tavernView || !mainWindow) return;
-  const [width, height] = mainWindow.getContentSize();
-  tavernView.setBounds({ x: 0, y: 0, width, height });
-}
-
 function enterImmersive(url: string): void {
-  if (!mainWindow) return;
+  destroyTavernWindow();
 
-  destroyTavernView();
+  const [px, py, pw, ph] = mainWindow
+    ? [...mainWindow.getPosition(), ...mainWindow.getSize()]
+    : [100, 100, 1280, 800];
 
-  tavernView = new WebContentsView({
+  tavernWindow = new BrowserWindow({
+    width: pw,
+    height: ph,
+    x: px,
+    y: py,
+    minWidth: 800,
+    minHeight: 600,
+    frame: true,
+    backgroundColor: DEFAULT_BG,
+    title: 'SillyTavern',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -261,68 +272,69 @@ function enterImmersive(url: string): void {
     },
   });
 
-  syncTavernViewBounds();
-  mainWindow.contentView.addChildView(tavernView);
-
-  // Open external links in system browser
-  tavernView.webContents.setWindowOpenHandler(({ url: openUrl }) => {
+  // 外部链接在系统浏览器打开
+  tavernWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
     shell.openExternal(openUrl);
     return { action: 'deny' };
   });
 
-  tavernView.webContents.on('did-finish-load', () => {
+  tavernWindow.webContents.on('did-finish-load', () => {
     startTopColorPoll();
   });
 
+  tavernWindow.on('closed', () => {
+    stopTopColorPoll();
+    tavernWindow = null;
+    currentTavernUrl = null;
+    pushMode('launcher');
+  });
+
   currentTavernUrl = url;
-  tavernView.webContents.loadURL(url);
+  tavernWindow.loadURL(url);
+  tavernWindow.show();
+  tavernWindow.focus();
+
+  // 主窗口隐藏
+  if (mainWindow) mainWindow.hide();
 
   pushMode('tavern');
 }
 
 function exitImmersive(): void {
   stopTopColorPoll();
-  destroyTavernView();
+  destroyTavernWindow();
   currentTavernUrl = null;
 
+  // 恢复主窗口
   if (mainWindow) {
-    mainWindow.setBackgroundColor(DEFAULT_BG);
+    mainWindow.show();
+    mainWindow.focus();
   }
 
   pushMode('launcher');
 }
 
-function destroyTavernView(): void {
-  if (!tavernView) return;
-  const view = tavernView;
-  tavernView = null;
-  try {
-    mainWindow?.contentView.removeChildView(view);
-  } catch {
-    // ignore
-  }
-  try {
-    const wc = view.webContents as any;
-    if (wc && typeof wc.isDestroyed === 'function' && !wc.isDestroyed()) {
-      if (typeof wc.destroy === 'function') wc.destroy();
-    }
-  } catch {
-    // ignore
-  }
+function destroyTavernWindow(): void {
+  if (!tavernWindow) return;
+  stopTopColorPoll();
+  const win = tavernWindow;
+  tavernWindow = null;
+  try { win.destroy(); } catch { /* ignore */ }
 }
 
 function reloadTavern(): void {
-  if (tavernView) {
-    tavernView.webContents.reload();
+  if (tavernWindow) {
+    tavernWindow.webContents.reload();
   }
 }
 
 async function clearTavernData(): Promise<void> {
-  if (!tavernView) return;
   try {
     await session.fromPartition('persist:tavern').clearStorageData();
-    await tavernView.webContents.session.clearCache();
-    tavernView.webContents.clearHistory();
+    if (tavernWindow) {
+      await tavernWindow.webContents.session.clearCache();
+      tavernWindow.webContents.clearHistory();
+    }
   } catch {
     // ignore
   }
@@ -330,7 +342,7 @@ async function clearTavernData(): Promise<void> {
 
 function getStatus(): { mode: string; url: string | null; serverReady: boolean } {
   return {
-    mode: tavernView ? 'tavern' : 'launcher',
+    mode: tavernWindow ? 'tavern' : 'launcher',
     url: currentTavernUrl,
     serverReady: plugin.isServerReady?.() ?? false,
   };
@@ -355,7 +367,7 @@ function stopTopColorPoll(): void {
 }
 
 async function sampleTopColor(): Promise<void> {
-  if (!tavernView || !mainWindow) return;
+  if (!tavernWindow) return;
   try {
     const script = `
       (function() {
@@ -372,11 +384,11 @@ async function sampleTopColor(): Promise<void> {
         }
       })()
     `;
-    const result = await tavernView.webContents.executeJavaScript(script);
+    const result = await tavernWindow.webContents.executeJavaScript(script);
     if (result && typeof result === 'string') {
       const hex = rgbToHex(result);
       if (hex) {
-        mainWindow.setBackgroundColor(hex);
+        tavernWindow.setBackgroundColor(hex);
       }
     }
   } catch {
@@ -423,8 +435,8 @@ function registerIpc(): void {
         return getStatus();
 
       case 'getSafeInsets':
-        // Windows has no notch/status-bar cutout; return zero insets
-        return { top: 0, bottom: 0, left: 0, right: 0 };
+        // Windows 无挖孔，返回标题栏高度（约 32px）让前端停止轮询
+        return { top: 32, bottom: 0, left: 0, right: 0 };
 
       default:
         // All other methods routed to plugin module
@@ -458,13 +470,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopTopColorPoll();
-  destroyTavernView();
+  destroyTavernWindow();
   plugin.cleanup?.();
   app.quit();
 });
 
 app.on('before-quit', () => {
   stopTopColorPoll();
-  destroyTavernView();
+  destroyTavernWindow();
   plugin.cleanup?.();
 });

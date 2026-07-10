@@ -48,8 +48,8 @@ let _isElectronNode = false;
 
 export function getNodeBin(): string {
   if (_nodeBin) return _nodeBin;
-  // 优先用系统安装的 Node.js
-  const systemNode = findInPath('node.exe');
+  // 优先用系统安装的 Node.js（搜索 'node' 让 PATHEXT 匹配 node.exe）
+  const systemNode = findInPath('node');
   if (systemNode) {
     _nodeBin = systemNode;
     _isElectronNode = false;
@@ -74,19 +74,27 @@ export function getNpmBin(): string {
     const npmCmd = path.join(nodeDir, 'npm.cmd');
     if (fs.existsSync(npmCmd)) return npmCmd;
   }
-  // Electron Node 或系统 npm 不在 node 目录：用 npx 或全局 npm
-  const systemNpm = findInPath('npm.cmd');
+  // Electron Node 或系统 npm 不在 node 目录：从 PATH 查找
+  const systemNpm = findInPath('npm');
   if (systemNpm) return systemNpm;
-  // 最后回退：用 node 运行 npm-cli.js
+  // 最后回退：node 运行 npm-cli.js
+  const nodeDir = path.dirname(getNodeBin());
+  const npmCli = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  if (fs.existsSync(npmCli)) return npmCli;
   return 'npm';
 }
 
 /** 在 PATH 中查找可执行文件 */
 function findInPath(name: string): string | null {
   const PATH = process.env.PATH || '';
-  const exts = (process.env.PATHEXT || '.EXE').split(';');
+  const exts = (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';');
+
   for (const dir of PATH.split(path.delimiter)) {
     if (!dir) continue;
+    // 先尝试完整文件名（name 已包含扩展名的情况）
+    const direct = path.join(dir, name);
+    if (fs.existsSync(direct)) return direct;
+    // 再尝试追加 PATHEXT 扩展名
     for (const ext of exts) {
       const full = path.join(dir, name + ext);
       if (fs.existsSync(full)) return full;
@@ -111,11 +119,15 @@ export function ensureDirs(): void {
 
 /** 获取前端构建产物目录 */
 export function getFrontendDistDir(): string | null {
-  // 1. 本项目 web/capacitor-ui/dist
+  // 1. 打包后的 frontend-dist（生产环境）
+  const bundled = path.join(__dirname, '..', '..', 'frontend-dist');
+  if (fs.existsSync(bundled)) return bundled;
+
+  // 2. 本项目 web/capacitor-ui/dist（开发模式，junction 链接）
   const local = path.join(__dirname, '..', '..', 'web', 'capacitor-ui', 'dist');
   if (fs.existsSync(local)) return local;
 
-  // 2. 安卓端共享（开发模式）
+  // 3. 安卓端共享（开发模式）
   const android = path.join(
     __dirname, '..', '..', '..', 'SillyClient_Android', 'App', 'web', 'capacitor-ui', 'dist',
   );

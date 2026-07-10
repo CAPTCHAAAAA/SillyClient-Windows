@@ -16,3 +16,8 @@ web/
 Thumbs.db
 .vscode/
 .idea/
+
+# 构建用的前端副本
+frontend-dist/
+# electron-builder 产物
+dist/

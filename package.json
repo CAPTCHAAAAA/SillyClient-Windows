@@ -20,15 +20,19 @@
     "appId": "com.sillyclient",
     "productName": "SillyClient",
     "win": {
-      "target": [
-        "nsis"
-      ],
-      "icon": "build/icon.ico"
+      "target": ["nsis"],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
     },
     "files": [
       "dist/**/*",
-      "web/capacitor-ui/dist/**/*",
-      "bootstrap/**/*"
+      "frontend-dist/**/*",
+      "bootstrap/**/*",
+      "build/icon.png"
     ],
     "extraResources": []
   },
