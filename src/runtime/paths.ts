@@ -3,7 +3,8 @@
  *
  * 从 Android RuntimePaths.kt 移植，适配 Windows 文件系统。
  * Android 用 filesDir/tarven，Windows 用 %LOCALAPPDATA%/SillyClient。
- * Android 把 node/git 等 .so 伪装成 jniLibs，Windows 直接用系统 PATH 中的 node.exe。
+ *
+ * Node.js 运行时集成在应用 runtime/node 目录中，即开即用，不依赖系统安装。
  */
 
 import * as path from 'node:path';
@@ -42,59 +43,82 @@ export const tmpDir = path.join(tarvenHome, 'tmp');
 /** 日志目录 */
 export const logsDir = path.join(tarvenHome, 'logs');
 
-/** 系统中 node.exe 路径 */
-let _nodeBin: string | null = null;
-let _isElectronNode = false;
+// ---------------------------------------------------------------------------
+// 内置 Node.js 运行时（不依赖系统安装）
+// ---------------------------------------------------------------------------
 
+/** 内置 Node.js 运行时目录 */
+function getBundledNodeDir(): string {
+  // 开发模式: __dirname = dist/runtime/
+  // 生产模式: __dirname = resources/app/dist/runtime/
+  // runtime/node/ 在项目根目录下
+  return path.join(__dirname, '..', '..', 'runtime', 'node');
+}
+
+let _nodeBin: string | null = null;
+
+/**
+ * 获取 node.exe 路径 — 始终使用内置运行时
+ */
 export function getNodeBin(): string {
   if (_nodeBin) return _nodeBin;
-  // 优先用系统安装的 Node.js（搜索 'node' 让 PATHEXT 匹配 node.exe）
-  const systemNode = findInPath('node');
-  if (systemNode) {
-    _nodeBin = systemNode;
-    _isElectronNode = false;
+
+  const bundledDir = getBundledNodeDir();
+  const bundledNode = path.join(bundledDir, 'node.exe');
+
+  if (fs.existsSync(bundledNode)) {
+    _nodeBin = bundledNode;
     return _nodeBin;
   }
-  // 回退到 Electron 内置 Node（需 ELECTRON_RUN_AS_NODE=1）
+
+  // 后备：开发模式下可能 runtime/node 还没准备好，用系统 node
+  const systemNode = findInPath('node', ['.exe']);
+  if (systemNode) {
+    _nodeBin = systemNode;
+    return _nodeBin;
+  }
+
+  // 最后后备：Electron 内置 Node
   _nodeBin = process.execPath;
-  _isElectronNode = true;
   return _nodeBin;
 }
 
-/** 是否使用 Electron 内置 Node（而非系统 node.exe） */
+/** 是否使用 Electron 内置 Node（仅在极端后备情况） */
 export function isElectronNode(): boolean {
   if (!_nodeBin) getNodeBin();
-  return _isElectronNode;
+  return _nodeBin === process.execPath;
 }
 
+/**
+ * 获取 npm 路径 — 优先用 npm-cli.js（通过内置 node 运行）
+ */
 export function getNpmBin(): string {
-  if (!isElectronNode()) {
-    // 系统 node：npm 通常在同目录
-    const nodeDir = path.dirname(getNodeBin());
-    const npmCmd = path.join(nodeDir, 'npm.cmd');
-    if (fs.existsSync(npmCmd)) return npmCmd;
-  }
-  // Electron Node 或系统 npm 不在 node 目录：从 PATH 查找
-  const systemNpm = findInPath('npm');
-  if (systemNpm) return systemNpm;
-  // 最后回退：node 运行 npm-cli.js
-  const nodeDir = path.dirname(getNodeBin());
+  const nodeDir = getBundledNodeDir();
+
+  // 1. 内置 node_modules/npm/bin/npm-cli.js（最可靠）
   const npmCli = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
   if (fs.existsSync(npmCli)) return npmCli;
+
+  // 2. 内置 npm.cmd
+  const npmCmd = path.join(nodeDir, 'npm.cmd');
+  if (fs.existsSync(npmCmd)) return npmCmd;
+
+  // 3. 系统 PATH 中的 npm.cmd
+  const systemNpm = findInPath('npm', ['.cmd']);
+  if (systemNpm) return systemNpm;
+
   return 'npm';
 }
 
-/** 在 PATH 中查找可执行文件 */
-function findInPath(name: string): string | null {
+/**
+ * 在 PATH 中查找可执行文件（后备用）
+ */
+function findInPath(name: string, preferredExts?: string[]): string | null {
   const PATH = process.env.PATH || '';
-  const exts = (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';');
+  const exts = preferredExts || (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';');
 
   for (const dir of PATH.split(path.delimiter)) {
     if (!dir) continue;
-    // 先尝试完整文件名（name 已包含扩展名的情况）
-    const direct = path.join(dir, name);
-    if (fs.existsSync(direct)) return direct;
-    // 再尝试追加 PATHEXT 扩展名
     for (const ext of exts) {
       const full = path.join(dir, name + ext);
       if (fs.existsSync(full)) return full;

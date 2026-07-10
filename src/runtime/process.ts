@@ -2,8 +2,7 @@
  * Windows 进程管理
  *
  * 从 Android TarvenProcessRunner.kt 移植。
- * 关键差异：Android 用 LD_LIBRARY_PATH + .so 伪装二进制，
- * Windows 用系统 node.exe（优先）或 Electron 内置 Node（ELECTRON_RUN_AS_NODE=1）。
+ * 使用内置 Node.js 运行时（runtime/node/node.exe），即开即用不依赖系统安装。
  */
 
 import { spawn, ChildProcess } from 'node:child_process';
@@ -20,11 +19,18 @@ function buildEnv(extra?: Record<string, string>): Record<string, string> {
   for (const [k, v] of Object.entries(process.env)) {
     if (v !== undefined) env[k] = v;
   }
-  // 如果用 Electron 内置 Node，必须设 ELECTRON_RUN_AS_NODE=1
+  // 仅在使用 Electron 内置 Node 作为后备时设置
   if (isElectronNode()) {
     env.ELECTRON_RUN_AS_NODE = '1';
   } else {
     delete env.ELECTRON_RUN_AS_NODE;
+  }
+  // 把内置 node.exe 目录加入 PATH，确保 npm 子进程能找到 node
+  const nodeBin = getNodeBin();
+  const nodeDir = path.dirname(nodeBin);
+  const currentPath = env.PATH || '';
+  if (!currentPath.split(path.delimiter).some(p => p.toLowerCase() === nodeDir.toLowerCase())) {
+    env.PATH = nodeDir + path.delimiter + currentPath;
   }
   if (extra) Object.assign(env, extra);
   return env;
@@ -92,10 +98,28 @@ export async function runNpmInstall(
   const registry = 'https://registry.npmmirror.com';
   const npmArgs = ['install', '--omit=dev', '--registry', registry, '--no-fund', '--no-audit'];
 
-  // npm.cmd 是批处理文件，需要通过 cmd.exe 运行
-  const isCmdFile = npmBin.toLowerCase().endsWith('.cmd');
-  const cmd = isCmdFile ? 'cmd.exe' : npmBin;
-  const args = isCmdFile ? ['/c', npmBin, ...npmArgs] : npmArgs;
+  // 根据文件类型选择执行方式
+  const lowerNpm = npmBin.toLowerCase();
+  let cmd: string;
+  let args: string[];
+
+  if (lowerNpm.endsWith('.cmd')) {
+    // npm.cmd 是批处理文件，通过 cmd.exe 运行
+    cmd = 'cmd.exe';
+    args = ['/c', npmBin, ...npmArgs];
+  } else if (lowerNpm.endsWith('.js')) {
+    // npm-cli.js 用 node 运行
+    cmd = getNodeBin();
+    args = [npmBin, ...npmArgs];
+  } else {
+    // 直接执行（如 npm 可执行文件）
+    cmd = npmBin;
+    args = npmArgs;
+  }
+
+  onLog(`npm 路径: ${npmBin}`);
+  onLog(`工作目录: ${cwd}`);
+  onLog(`package.json 存在: ${fs.existsSync(path.join(cwd, 'package.json'))}`);
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     onLog(`npm install (尝试 ${attempt}/3)`);
@@ -106,7 +130,7 @@ export async function runNpmInstall(
         return;
       }
       onLog(`npm install 退出码 ${result.code}`, 'error');
-      if (result.stderr) onLog(result.stderr.slice(0, 200), 'error');
+      if (result.stderr) onLog(result.stderr.slice(0, 300), 'error');
     } catch (e: any) {
       onLog(`npm install 异常: ${e.message}`, 'error');
     }

@@ -137,8 +137,14 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
       if (localZipPath && fs.existsSync(localZipPath)) {
         log(`从本地 zip 安装: ${localZipPath}`);
         progress(15, '解压本地 zip');
+        // 清空目标目录，避免残留文件干扰
+        fs.rmSync(targetServerDir, { recursive: true, force: true });
+        fs.mkdirSync(targetServerDir, { recursive: true });
         await utils.unzipToDir(localZipPath, targetServerDir);
+        log(`解压完成，目录内容: ${fs.readdirSync(targetServerDir).slice(0, 5).join(', ')}`);
         flattenExtractedDir(targetServerDir);
+        log(`flatten 后，目录内容: ${fs.readdirSync(targetServerDir).slice(0, 5).join(', ')}`);
+        log(`package.json 存在: ${fs.existsSync(path.join(targetServerDir, 'package.json'))}`);
       } else if (zipballUrl) {
         log(`下载: ${zipballUrl}`);
         progress(10, '下载源码');
@@ -221,15 +227,63 @@ async function downloadWithMirrors(
   throw lastError || new Error('下载失败');
 }
 
+/**
+ * 如果解压后所有内容都在一个子目录中（如 SillyTavern-release/），
+ * 将该子目录的内容提升到父目录。
+ * 
+ * 关键：只处理"恰好一个子目录且该子目录是 zip 的顶层包名"的情况。
+ * 如果目录中已有其他文件（如残留的 node_modules），也要正确提升。
+ */
 function flattenExtractedDir(dir: string): void {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
-  if (entries.length === 1 && entries[0].isDirectory()) {
-    const subdir = path.join(dir, entries[0].name);
-    const subEntries = fs.readdirSync(subdir);
-    for (const entry of subEntries) {
-      fs.renameSync(path.join(subdir, entry), path.join(dir, entry));
+  
+  // 找到 zip 解压出的子目录（通常以项目名开头，且包含 package.json）
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const subdir = path.join(dir, entry.name);
+    // 检查子目录是否包含 package.json（确认是项目根目录）
+    if (fs.existsSync(path.join(subdir, 'package.json'))) {
+      // 提升子目录所有内容到父目录
+      const subEntries = fs.readdirSync(subdir, { withFileTypes: true });
+      for (const subEntry of subEntries) {
+        const src = path.join(subdir, subEntry.name);
+        const dst = path.join(dir, subEntry.name);
+        // 如果目标已存在且是目录，合并；否则直接移动
+        if (fs.existsSync(dst)) {
+          if (subEntry.isDirectory()) {
+            // 递归合并目录
+            mergeDir(src, dst);
+            fs.rmSync(src, { recursive: true, force: true });
+          } else {
+            fs.copyFileSync(src, dst);
+            fs.unlinkSync(src);
+          }
+        } else {
+          fs.renameSync(src, dst);
+        }
+      }
+      // 删除空子目录
+      try { fs.rmdirSync(subdir); } catch { /* 可能非空，忽略 */ }
+      return; // 只处理第一个匹配的子目录
     }
-    fs.rmdirSync(subdir);
+  }
+}
+
+/** 递归合并目录 */
+function mergeDir(src: string, dst: string): void {
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const dstPath = path.join(dst, entry.name);
+    if (fs.existsSync(dstPath)) {
+      if (entry.isDirectory()) {
+        mergeDir(srcPath, dstPath);
+      } else {
+        fs.copyFileSync(srcPath, dstPath);
+      }
+    } else {
+      fs.renameSync(srcPath, dstPath);
+    }
   }
 }
 
