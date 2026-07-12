@@ -1,6 +1,6 @@
 {
   "name": "sillyclient-windows",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "SillyClient Windows - SillyTavern 启动器",
   "main": "dist/main.js",
   "scripts": {
@@ -20,7 +20,9 @@
     "appId": "com.sillyclient",
     "productName": "SillyClient",
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/icon.png"
     },
     "nsis": {
@@ -31,17 +33,16 @@
     "files": [
       "dist/**/*",
       "frontend-dist/**/*",
-      "runtime/node/node.exe",
-      "runtime/node/npm",
-      "runtime/node/npm.cmd",
-      "runtime/node/npx",
-      "runtime/node/npx.cmd",
-      "runtime/node/node_modules/**/*",
+      "runtime/node/**/*",
       "build/icon.png"
+    ],
+    "asarUnpack": [
+      "runtime/node/**/*"
     ],
     "extraResources": []
   },
   "dependencies": {
-    "adm-zip": "^0.5.18"
+    "adm-zip": "^0.5.18",
+    "fast-json-stable-stringify": "^2.1.0"
   }
 }
