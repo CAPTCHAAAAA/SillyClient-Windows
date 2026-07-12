@@ -255,8 +255,8 @@ function enterImmersive(url: string): void {
   tavernWindow = new BrowserWindow({
     width: pw,
     height: ph,
-    x: px,
-    y: py,
+    x: px + 30,  // 轻微偏移，叠加效果
+    y: py + 30,
     minWidth: 800,
     minHeight: 600,
     frame: true,
@@ -286,7 +286,7 @@ function enterImmersive(url: string): void {
     stopTopColorPoll();
     tavernWindow = null;
     currentTavernUrl = null;
-    pushMode('launcher');
+    // 不切换 mode，主窗口一直在 launcher 模式
   });
 
   currentTavernUrl = url;
@@ -294,10 +294,7 @@ function enterImmersive(url: string): void {
   tavernWindow.show();
   tavernWindow.focus();
 
-  // 主窗口隐藏
-  if (mainWindow) mainWindow.hide();
-
-  pushMode('tavern');
+  // 主窗口保持可见，不隐藏
 }
 
 function exitImmersive(): void {
@@ -305,13 +302,9 @@ function exitImmersive(): void {
   destroyTavernWindow();
   currentTavernUrl = null;
 
-  // 恢复主窗口
   if (mainWindow) {
-    mainWindow.show();
     mainWindow.focus();
   }
-
-  pushMode('launcher');
 }
 
 function destroyTavernWindow(): void {
