@@ -2,14 +2,17 @@
 
 SillyClient 的 Windows 桌面端，基于 Electron 构建。复用安卓端的 React + Vite 前端代码（capacitor-ui），通过 Capacitor shim 桥接层让前端无需任何修改即可在 Electron 中运行。
 
-**版本：1.3.0**
+**版本：1.4.0**
 
 ## 核心特性
 
 - 内置 Node.js v22.16.0 运行时（`runtime/node/`），即开即用，不依赖系统安装 Node.js
 - 从本地 zip 安装 SillyTavern，自动解压、提升子目录、安装依赖
 - 自定义协议加载前端，Capacitor shim 无缝桥接
-- 独立窗口运行酒馆，关闭后自动回到启动器
+- 酒馆叠加窗口模式（主窗口保持可见，酒馆以偏移窗口叠加显示）
+- npm install 直接用 `node.exe npm-cli.js install`，不依赖 .cmd
+- 启动服务用 `start-server.bat`（Windows 原生批处理）
+- cmd.exe 使用 `process.env.ComSpec` 完整路径，避免 ENOENT
 - 自动检测可用端口（跳过 Hyper-V 保留端口）
 - NSIS 安装程序，支持自定义安装路径
 
@@ -17,17 +20,17 @@ SillyClient 的 Windows 桌面端，基于 Electron 构建。复用安卓端的 
 
 ```
 SillyClient_Windows/
-├── package.json              # 项目配置与构建脚本
+├── package.json              # 项目配置与构建脚本（v1.4.0）
 ├── tsconfig.json             # TypeScript 编译配置
 ├── .gitignore
 ├── README.md
 ├── src/
-│   ├── main.ts               # Electron 主进程（窗口、IPC、协议、沉浸式窗口）
+│   ├── main.ts               # Electron 主进程（窗口、IPC、协议、叠加窗口）
 │   ├── preload.ts            # 预加载脚本（Capacitor shim，桥接前端到 IPC）
 │   ├── plugin.ts             # 插件实现（实例管理、zip 安装、npm install）
 │   └── runtime/
-│       ├── paths.ts          # 路径管理（内置 Node.js 运行时、npm 路径解析）
-│       ├── process.ts        # 进程管理（spawn、npm install、服务启停）
+│       ├── paths.ts          # 路径管理（直接路径，无 PATH 搜索）
+│       ├── process.ts        # 进程管理（cmd.exe、npm install、服务启停）
 │       └── utils.ts          # 工具函数（zip 解压等）
 ├── runtime/
 │   └── node/                 # 内置 Node.js v22.16.0 运行时
@@ -60,7 +63,6 @@ SillyClient_Windows/
 ### 1. 安装依赖
 
 ```bash
-# 安装 Electron 项目依赖
 cd SillyClient_Windows
 npm install
 
@@ -105,8 +107,8 @@ npm run pack
 │                                                   │
 │  ┌─────────────┐    ┌──────────────────────┐     │
 │  │ MainWindow  │    │   TavernWindow        │     │
-│  │ 1280x800    │    │   独立 BrowserWindow   │     │
-│  │ frame:true  │    │   加载酒馆 URL         │     │
+│  │ 1280x800    │    │   叠加 BrowserWindow   │     │
+│  │ frame:true  │    │   偏移 30px 显示       │     │
 │  │ app:// 协议  │    │   persist:tavern      │     │
 │  └──────┬──────┘    └──────────────────────┘     │
 │         │                                         │
@@ -120,8 +122,8 @@ npm run pack
 │                            │                      │
 │                    ┌───────┴────────┐             │
 │                    │  runtime/      │             │
-│                    │  paths.ts      │ 内置 Node   │
-│                    │  process.ts    │ npm install │
+│                    │  paths.ts      │ 直接路径     │
+│                    │  process.ts    │ cmd.exe     │
 │                    │  utils.ts      │ zip 解压    │
 │                    └────────────────┘             │
 │                                                   │
@@ -133,10 +135,27 @@ npm run pack
 
 应用不依赖系统安装的 Node.js，而是在 `runtime/node/` 目录内置完整的 Node.js v22.16.0 运行时：
 
-- `getNodeBin()` 返回 `runtime/node/node.exe`
-- `getNpmBin()` 返回 `runtime/node/node_modules/npm/bin/npm-cli.js`
+- `getNodeExe()` 返回 `runtime/node/node.exe`
+- `getNpmCli()` 返回 `runtime/node/node_modules/npm/bin/npm-cli.js`
 - npm install 通过 `node.exe npm-cli.js install ...` 执行
-- `buildEnv()` 将 node 目录注入 PATH，确保 npm 子进程可用
+- `buildEnv()` 将 node 目录注入 PATH，npm 缓存指向用户目录
+
+### runtime/paths.ts（v1.4.0 重写）
+
+v1.4.0 移除了所有 PATH 搜索逻辑，改为直接路径：
+
+```typescript
+const bundledNodeDir = path.join(__dirname, '..', '..', 'runtime', 'node');
+export function getNodeExe(): string { return path.join(bundledNodeDir, 'node.exe'); }
+export function getNpmCli(): string { return path.join(bundledNodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'); }
+```
+
+### runtime/process.ts（v1.4.0 重写）
+
+- **cmd.exe**: 使用 `process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe'`，避免 ENOENT
+- **npm install**: `node.exe npm-cli.js install --omit=dev --registry https://registry.npmmirror.com`
+- **服务启动**: 生成 `start-server.bat`，通过 `cmd.exe /c` 执行
+- **停止服务**: `taskkill /PID <pid> /T /F`
 
 ### Capacitor Shim 机制
 
@@ -153,20 +172,22 @@ npm run pack
 | `app://` | 加载前端 | 服务 `frontend-dist` 静态资源，SPA 路由回退到 `index.html` |
 | `capacitor-file://` | 本地文件 | 替代安卓的 `Capacitor.convertFileSrc`，服务封面图等本地文件 |
 
-### 酒馆窗口模式
+### 酒馆叠加窗口模式（v1.4.0）
 
-- `enterImmersive(url)`：创建独立 `BrowserWindow` 加载酒馆 URL，推送 `mode: 'tavern'` 事件
-- `exitImmersive()`：关闭酒馆窗口，恢复主窗口，推送 `mode: 'launcher'` 事件
-- 关闭酒馆窗口自动回到启动器
+v1.4.0 将酒馆窗口从独立窗口改为叠加模式：
+
+- `enterImmersive(url)`：创建叠加 BrowserWindow（偏移 30px），主窗口保持可见
+- `exitImmersive()`：关闭酒馆窗口，聚焦主窗口
+- 不再推送 mode 事件（前端不需要知道模式切换）
 
 ### 实例安装流程
 
 1. 创建实例目录 `%LOCALAPPDATA%/SillyClient/tarven/bootstrap/servers/<id>`
 2. 清空目标目录，从本地 zip 解压
-3. `flattenExtractedDir`：查找含 `package.json` 的子目录，提升内容到根
+3. `flattenExtractedDir`：解压前已清空目录，单子目录直接提升
 4. `findAvailablePort`：检测可用端口（跳过 Hyper-V 保留端口）
 5. `runNpmInstall`：用内置 node.exe + npm-cli.js 执行 `npm install`（3 次重试，npmmirror 镜像）
-6. 启动 SillyTavern 服务
+6. 生成 `start-server.bat` 并启动 SillyTavern 服务
 
 ### 安全配置
 
@@ -194,13 +215,17 @@ main.ts 本地处理的 method：`enterImmersive`, `exitImmersive`, `reloadTaver
 ### runtime/paths.ts
 
 ```typescript
-export function getNodeBin(): string;      // 内置 node.exe 路径
-export function getNpmBin(): string;        // npm-cli.js 路径
-export function isElectronNode(): boolean;  // 是否回退到 Electron Node
+export function getNodeExe(): string;       // 内置 node.exe 路径
+export function getNpmCli(): string;         // npm-cli.js 路径
 export function getFrontendDistDir(): string | null;
-export const sillyClientHome: string;       // %LOCALAPPDATA%/SillyClient
+export function ensureDirs(): void;
+export const sillyClientHome: string;        // %LOCALAPPDATA%/SillyClient
 export const tarvenHome: string;
 export const bootstrapDir: string;
+export const usrDir: string;
+export const coversDir: string;
+export const tmpDir: string;
+export const logsDir: string;
 export function serverDirFor(id: string): string;
 ```
 
@@ -235,7 +260,8 @@ export function stopServer(): void;
 | 文件协议 | `Capacitor.convertFileSrc` | `capacitor-file://` 自定义协议 |
 | Node.js | 交叉编译的 node 二进制 | 内置 `runtime/node/node.exe` |
 | 状态栏避让 | `safe-area-inset-top` | 返回 top=32（标题栏高度） |
-| 酒馆窗口 | WebContentsView 覆盖 | 独立 BrowserWindow |
+| 酒馆窗口 | WebContentsView 覆盖 | 叠加 BrowserWindow |
+| 手势退出 | 返回启动器（实例继续运行） | 关闭酒馆窗口回到启动器 |
 
 ## 数据目录
 
@@ -247,6 +273,15 @@ export function stopServer(): void;
 | `tarven/covers/` | 封面图 |
 | `tarven/tmp/` | 临时文件 |
 | `tarven/logs/` | 日志 |
+
+## v1.4.0 更新内容
+
+- PC 端酒馆窗口改为叠加模式（不关闭主窗口）
+- 重写 runtime 层：paths.ts/process.ts 大幅简化
+- npm install 直接用 node.exe npm-cli.js，不走 .cmd
+- 启动服务改用 start-server.bat（Windows 原生方式）
+- cmd.exe 改用 process.env.ComSpec 完整路径
+- 封面图更换 bug 修复
 
 ## License
 
