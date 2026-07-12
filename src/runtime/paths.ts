@@ -39,8 +39,16 @@ export function ensureDirs(): void {
 // 内置 Node.js 运行时
 // ---------------------------------------------------------------------------
 
-/** 内置 runtime/node 目录（开发: 项目根/runtime/node, 生产: resources/app/runtime/node） */
-const bundledNodeDir = path.join(__dirname, '..', '..', 'runtime', 'node');
+/** 内置 runtime/node 目录（开发: 项目根/runtime/node, 生产: resources/app.asar.unpacked/runtime/node） */
+const bundledNodeDir = ((): string => {
+  const p = path.join(__dirname, '..', '..', 'runtime', 'node');
+  // 生产环境：electron-builder asarUnpack 将 runtime/node 解包到 app.asar.unpacked
+  // spawn 无法执行 asar 归档内的二进制文件，必须指向解包后的真实路径
+  if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) {
+    return p.replace('app.asar', 'app.asar.unpacked');
+  }
+  return p;
+})();
 
 /** node.exe 路径（始终用内置的） */
 export function getNodeExe(): string {
