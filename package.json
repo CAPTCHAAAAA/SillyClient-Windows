@@ -19,6 +19,9 @@
   "build": {
     "appId": "com.sillyclient",
     "productName": "SillyClient",
+    "directories": {
+      "output": "release"
+    },
     "win": {
       "target": [
         "nsis"
@@ -33,6 +36,7 @@
     "files": [
       "dist/**/*",
       "frontend-dist/**/*",
+<<<<<<< Updated upstream
       "runtime/node/**/*",
       "build/icon.png"
     ],
@@ -40,6 +44,17 @@
       "runtime/node/**/*"
     ],
     "extraResources": []
+=======
+      "build/icon.png"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime/node",
+        "to": "runtime/node",
+        "filter": ["**/*"]
+      }
+    ]
+>>>>>>> Stashed changes
   },
   "dependencies": {
     "adm-zip": "^0.5.18",

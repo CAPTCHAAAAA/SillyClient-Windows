@@ -1,4 +1,4 @@
-# SillyClient Windows
+`# SillyClient Windows
 
 SillyClient 的 Windows 桌面端，基于 Electron 构建。复用安卓端的 React + Vite 前端代码（capacitor-ui），通过 Capacitor shim 桥接层让前端无需任何修改即可在 Electron 中运行。
 
@@ -6,19 +6,25 @@ SillyClient 的 Windows 桌面端，基于 Electron 构建。复用安卓端的 
 
 ## 核心特性
 
-- 内置 Node.js v22.16.0 运行时（`runtime/node/`），即开即用，不依赖系统安装 Node.js
+- 内置 Node.js v22.16.0 运行时（\`runtime/node/\`），即开即用，不依赖系统安装 Node.js
 - 从本地 zip 安装 SillyTavern，自动解压、提升子目录、安装依赖
 - 自定义协议加载前端，Capacitor shim 无缝桥接
 - 酒馆叠加窗口模式（主窗口保持可见，酒馆以偏移窗口叠加显示）
+<<<<<<< Updated upstream
 - npm install 直接用 `node.exe npm-cli.js install`，不依赖 .cmd
 - 启动服务用 `start-server.bat`（Windows 原生批处理）
 - cmd.exe 使用 `process.env.ComSpec` 完整路径，避免 ENOENT
+=======
+- npm install 直接用 \`node.exe npm-cli.js install\`，不依赖 .cmd
+- 启动服务用 \`start-server.bat\`（Windows 原生批处理）
+- cmd.exe 使用 \`process.env.ComSpec\` 完整路径，避免 ENOENT
+>>>>>>> Stashed changes
 - 自动检测可用端口（跳过 Hyper-V 保留端口）
 - NSIS 安装程序，支持自定义安装路径
 
 ## 目录结构
 
-```
+\`\`\`
 SillyClient_Windows/
 ├── package.json              # 项目配置与构建脚本（v1.4.0）
 ├── tsconfig.json             # TypeScript 编译配置
@@ -45,7 +51,7 @@ SillyClient_Windows/
 └── build/
     ├── icon.png              # 应用图标 512x512（打包 + 运行时窗口图标）
     └── icon.ico              # 应用图标 256x256（NSIS 安装器）
-```
+\`\`\`
 
 ## 环境要求
 
@@ -62,7 +68,11 @@ SillyClient_Windows/
 
 ### 1. 安装依赖
 
+<<<<<<< Updated upstream
 ```bash
+=======
+\`\`\`bash
+>>>>>>> Stashed changes
 cd SillyClient_Windows
 npm install
 
@@ -70,38 +80,38 @@ npm install
 cd web/capacitor-ui
 pnpm install
 pnpm build
-```
+\`\`\`
 
 ### 2. 启动开发模式
 
-```bash
+\`\`\`bash
 npm run dev
 # 等价于：tsc && electron .
-```
+\`\`\`
 
 ### 3. 构建前端
 
-```bash
+\`\`\`bash
 npm run build:web
 # 等价于：cd web/capacitor-ui && pnpm build
-```
+\`\`\`
 
-构建后需将 `web/capacitor-ui/dist` 内容复制到 `frontend-dist/`（打包时从此目录读取）。
+构建后需将 \`web/capacitor-ui/dist\` 内容复制到 \`frontend-dist/\`（打包时从此目录读取）。
 
 ### 4. 打包安装程序
 
-```bash
+\`\`\`bash
 npm run pack
 # 等价于：tsc && electron-builder --win
-```
+\`\`\`
 
-输出 NSIS 安装程序到 `dist/` 目录，文件名格式 `SillyClient Setup X.X.X.exe`。
+输出 NSIS 安装程序到 \`dist/\` 目录，文件名格式 \`SillyClient Setup X.X.X.exe\`。
 
 ## 架构说明
 
 ### 整体架构
 
-```
+\`\`\`
 ┌─────────────────────────────────────────────────┐
 │              Electron 主进程 (main.ts)             │
 │                                                   │
@@ -129,12 +139,13 @@ npm run pack
 │                                                   │
 │  协议: app:// (前端)  capacitor-file:// (文件)     │
 └─────────────────────────────────────────────────┘
-```
+\`\`\`
 
 ### 内置 Node.js 运行时
 
-应用不依赖系统安装的 Node.js，而是在 `runtime/node/` 目录内置完整的 Node.js v22.16.0 运行时：
+应用不依赖系统安装的 Node.js，而是在 \`runtime/node/\` 目录内置完整的 Node.js v22.16.0 运行时：
 
+<<<<<<< Updated upstream
 - `getNodeExe()` 返回 `runtime/node/node.exe`
 - `getNpmCli()` 返回 `runtime/node/node_modules/npm/bin/npm-cli.js`
 - npm install 通过 `node.exe npm-cli.js install ...` 执行
@@ -156,11 +167,18 @@ export function getNpmCli(): string { return path.join(bundledNodeDir, 'node_mod
 - **npm install**: `node.exe npm-cli.js install --omit=dev --registry https://registry.npmmirror.com`
 - **服务启动**: 生成 `start-server.bat`，通过 `cmd.exe /c` 执行
 - **停止服务**: `taskkill /PID <pid> /T /F`
+=======
+- \`getNodeExe()\` 返回 \`runtime/node/node.exe\`
+- \`getNpmCli()\` 返回 \`runtime/node/node_modules/npm/bin/npm-cli.js\`
+- npm install 通过 \`node.exe npm-cli.js install ...\` 执行
+- \`buildEnv()\` 将 node 目录注入 PATH，npm 缓存指向用户目录
+>>>>>>> Stashed changes
 
-### Capacitor Shim 机制
+### runtime/paths.ts（v1.4.0 重写）
 
-前端代码使用 `@capacitor/core` 的 `registerPlugin` 和 `addListener`。在 Electron 中，preload.ts 安装一个伪造的 `window.Capacitor` 对象，通过三层保护确保不被 `@capacitor/core` 覆盖：
+v1.4.0 移除了所有 PATH 搜索逻辑，改为直接路径：
 
+<<<<<<< Updated upstream
 1. **设置 shim**：`window.Capacitor = capacitorShim`
 2. **属性保护**：对关键属性使用 `Object.defineProperty`（getter + 空 setter）
 3. **对象保护**：对 `window.Capacitor` 本身使用 `Object.defineProperty`，防止整体替换
@@ -286,3 +304,7 @@ export function stopServer(): void;
 ## License
 
 MIT
+=======
+\`\`\`typescript
+const bundledNodeDir = path.join(__dirname, '..', '..', 'runtime', 'node')
+>>>>>>> Stashed changes

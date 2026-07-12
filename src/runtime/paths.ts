@@ -39,6 +39,7 @@ export function ensureDirs(): void {
 // 内置 Node.js 运行时
 // ---------------------------------------------------------------------------
 
+<<<<<<< Updated upstream
 /** 内置 runtime/node 目录（开发: 项目根/runtime/node, 生产: resources/app.asar.unpacked/runtime/node） */
 const bundledNodeDir = ((): string => {
   const p = path.join(__dirname, '..', '..', 'runtime', 'node');
@@ -48,6 +49,21 @@ const bundledNodeDir = ((): string => {
     return p.replace('app.asar', 'app.asar.unpacked');
   }
   return p;
+=======
+/** 内置 runtime/node 目录
+ *  开发环境: 项目根/runtime/node
+ *  生产环境: resources/runtime/node（通过 extraResources 复制，不经过 asar 打包）
+ */
+const bundledNodeDir = ((): string => {
+  // 生产环境：extraResources 将 runtime/node 复制到 resources/runtime/node
+  // 不在 app.asar 内，spawn 可以直接执行
+  if (process.resourcesPath) {
+    const prodPath = path.join(process.resourcesPath, 'runtime', 'node');
+    if (fs.existsSync(prodPath)) return prodPath;
+  }
+  // 开发环境
+  return path.join(__dirname, '..', '..', 'runtime', 'node');
+>>>>>>> Stashed changes
 })();
 
 /** node.exe 路径（始终用内置的） */
