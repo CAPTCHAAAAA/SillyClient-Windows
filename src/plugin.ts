@@ -42,8 +42,24 @@ export function isServerReady(): boolean {
   return serverReady;
 }
 
+export function getCurrentUrl(): string | null {
+  return currentUrl;
+}
+
+export function stopCurrentServer(): void {
+  proc.stopServer();
+  serverReady = false;
+  currentUrl = null;
+  currentPort = 0;
+  notify('ready', { ready: false });
+  notify('mode', { mode: 'launcher', tavernRunning: false });
+}
+
 export function cleanup(): void {
   proc.stopServer();
+  serverReady = false;
+  currentUrl = null;
+  currentPort = 0;
 }
 
 export function notify(eventName: string, data: any): void {

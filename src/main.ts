@@ -17,6 +17,8 @@ interface PluginContract {
   setMainWindow?(win: BrowserWindow | null): void;
   notify?(eventName: string, data: any): void;
   isServerReady?(): boolean;
+  getCurrentUrl?(): string | null;
+  stopCurrentServer?(): void;
   cleanup?(): void;
 }
 
@@ -336,7 +338,7 @@ async function clearTavernData(): Promise<void> {
 function getStatus(): { mode: string; url: string | null; serverReady: boolean } {
   return {
     mode: tavernWindow ? 'tavern' : 'launcher',
-    url: currentTavernUrl,
+    url: currentTavernUrl || plugin.getCurrentUrl?.() || null,
     serverReady: plugin.isServerReady?.() ?? false,
   };
 }
@@ -414,6 +416,20 @@ function registerIpc(): void {
 
       case 'exitImmersive':
         exitImmersive();
+        return { success: true };
+
+      case 'returnToTavern': {
+        const url = currentTavernUrl || plugin.getCurrentUrl?.();
+        if (!url || !plugin.isServerReady?.()) {
+          throw new Error('当前没有正在运行的实例');
+        }
+        enterImmersive(url);
+        return { success: true };
+      }
+
+      case 'closeTavern':
+        exitImmersive();
+        plugin.stopCurrentServer?.();
         return { success: true };
 
       case 'reloadTavern':

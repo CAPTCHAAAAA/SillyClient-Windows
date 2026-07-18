@@ -24,7 +24,12 @@ export const tmpDir = path.join(tarvenHome, 'tmp');
 export const logsDir = path.join(tarvenHome, 'logs');
 
 export function serverDirFor(instanceId: string): string {
-  return path.join(bootstrapDir, 'servers', instanceId);
+  const safeId = instanceId
+    .trim()
+    .replace(/[^\p{L}\p{N}._-]+/gu, '-')
+    .replace(/^[._-]+|[._-]+$/g, '')
+    .slice(0, 80) || 'default';
+  return path.join(bootstrapDir, 'servers', safeId);
 }
 
 export function ensureDirs(): void {
@@ -39,17 +44,6 @@ export function ensureDirs(): void {
 // 内置 Node.js 运行时
 // ---------------------------------------------------------------------------
 
-<<<<<<< Updated upstream
-/** 内置 runtime/node 目录（开发: 项目根/runtime/node, 生产: resources/app.asar.unpacked/runtime/node） */
-const bundledNodeDir = ((): string => {
-  const p = path.join(__dirname, '..', '..', 'runtime', 'node');
-  // 生产环境：electron-builder asarUnpack 将 runtime/node 解包到 app.asar.unpacked
-  // spawn 无法执行 asar 归档内的二进制文件，必须指向解包后的真实路径
-  if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) {
-    return p.replace('app.asar', 'app.asar.unpacked');
-  }
-  return p;
-=======
 /** 内置 runtime/node 目录
  *  开发环境: 项目根/runtime/node
  *  生产环境: resources/runtime/node（通过 extraResources 复制，不经过 asar 打包）
@@ -63,7 +57,6 @@ const bundledNodeDir = ((): string => {
   }
   // 开发环境
   return path.join(__dirname, '..', '..', 'runtime', 'node');
->>>>>>> Stashed changes
 })();
 
 /** node.exe 路径（始终用内置的） */

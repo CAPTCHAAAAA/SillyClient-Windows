@@ -1,6 +1,6 @@
 {
   "name": "sillyclient-windows",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "SillyClient Windows - SillyTavern 启动器",
   "main": "dist/main.js",
   "scripts": {
@@ -36,15 +36,6 @@
     "files": [
       "dist/**/*",
       "frontend-dist/**/*",
-<<<<<<< Updated upstream
-      "runtime/node/**/*",
-      "build/icon.png"
-    ],
-    "asarUnpack": [
-      "runtime/node/**/*"
-    ],
-    "extraResources": []
-=======
       "build/icon.png"
     ],
     "extraResources": [
@@ -54,7 +45,6 @@
         "filter": ["**/*"]
       }
     ]
->>>>>>> Stashed changes
   },
   "dependencies": {
     "adm-zip": "^0.5.18",

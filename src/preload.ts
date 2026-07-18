@@ -220,6 +220,13 @@ const capacitorShim: Record<string, any> = {
 
 const win = window as any;
 
+Object.defineProperty(win, '__SILLYCLIENT_PLATFORM__', {
+  value: 'windows',
+  writable: false,
+  configurable: false,
+  enumerable: false,
+});
+
 // Step 1: Set the shim as window.Capacitor
 win.Capacitor = capacitorShim;
 
