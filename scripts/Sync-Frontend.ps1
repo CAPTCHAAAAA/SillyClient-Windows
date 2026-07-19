@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 $repository = Split-Path -Parent $PSScriptRoot
 if (-not $Source) {
     $workspace = Split-Path -Parent $repository
-    $Source = Join-Path $workspace "SillyClient_Android\App\web\capacitor-ui\dist"
+    $Source = Join-Path $workspace "SillyClient_Android\web\capacitor-ui\dist"
 }
 
 $sourceDirectory = [IO.Path]::GetFullPath($Source)

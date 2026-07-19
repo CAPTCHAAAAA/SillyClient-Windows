@@ -22,10 +22,10 @@ npm run prepare:runtime
 共享控制台在 Android 仓库构建。默认工作区结构下可以直接同步：
 
 ```powershell
-Set-Location ..\SillyClient_Android\App\web\capacitor-ui
+Set-Location ..\SillyClient_Android\web\capacitor-ui
 pnpm install --frozen-lockfile
 pnpm run build
-Set-Location ..\..\..\..\SillyClient_Windows
+Set-Location ..\..\..\SillyClient_Windows
 npm run sync:frontend
 ```
 
