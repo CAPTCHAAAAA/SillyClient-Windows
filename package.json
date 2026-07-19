@@ -1,14 +1,20 @@
 {
   "name": "sillyclient-windows",
   "version": "1.5.0",
-  "description": "SillyClient Windows - SillyTavern 启动器",
+  "description": "SillyClient for Windows",
   "main": "dist/main.js",
   "scripts": {
-    "dev": "tsc && electron .",
+    "dev": "npm run build && electron .",
+    "check": "tsc --noEmit",
     "build": "tsc",
-    "pack": "tsc && electron-builder --win",
-    "build:web": "cd web/capacitor-ui && pnpm build"
+    "pack": "npm run build && electron-builder --win",
+    "prepare:runtime": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-NodeRuntime.ps1",
+    "sync:frontend": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Sync-Frontend.ps1"
   },
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "packageManager": "npm@10.9.2",
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.0.0",
@@ -42,7 +48,9 @@
       {
         "from": "runtime/node",
         "to": "runtime/node",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ]
   },

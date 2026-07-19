@@ -1,70 +1,64 @@
 # SillyClient Windows
 
-SillyClient 的 Windows 桌面端，基于 Electron 和 TypeScript。它使用与 Android 相同的 React 前端，通过 Capacitor shim 将统一的 `TarvenEnv` 接口桥接到 Electron IPC。
+SillyClient 的 Windows 客户端。Electron 负责窗口、文件和进程，共享 React 控制台负责实例管理界面。
 
-## 功能
+应用使用随安装包分发的 Node.js 22，不读取系统 PATH。SillyTavern 在独立窗口中打开；关闭该窗口只会返回控制台，停止实例需要在控制台中明确操作。
 
-- 内置 Node.js 22 运行时，不依赖系统 Node.js
-- 下载或导入 SillyTavern zip，自动解压并安装依赖
-- 多实例目录、端口与运行状态管理
-- 独立 SillyTavern 窗口，关闭阅读窗口不会自动删除实例
-- NSIS 安装程序，支持自定义安装路径
+## 环境
 
-## 开发
+- Windows 10 或 11 x64
+- Node.js 22 与 npm 10（仅用于构建应用）
+- PowerShell 5.1 或更新版本
+
+## 首次准备
 
 ```powershell
-npm install
-npm run build
-npm run dev
+npm ci
+npm run prepare:runtime
 ```
 
-共享前端源码位于 Android 仓库的 `web/capacitor-ui/`。构建后将其 `dist/` 内容同步到本项目的 `frontend-dist/`：
+`prepare:runtime` 下载 Node.js 22.16.0 Windows x64 官方压缩包，并使用同目录的 `SHASUMS256.txt` 校验后写入 `runtime/node/`。
+
+共享控制台在 Android 仓库构建。默认工作区结构下可以直接同步：
 
 ```powershell
 Set-Location ..\SillyClient_Android\App\web\capacitor-ui
-pnpm install
-pnpm build
-Copy-Item -Recurse -Force .\dist\* ..\..\..\..\SillyClient_Windows\frontend-dist\
+pnpm install --frozen-lockfile
+pnpm run build
+Set-Location ..\..\..\..\SillyClient_Windows
+npm run sync:frontend
 ```
 
-打包 Windows 安装程序：
+独立克隆时，通过脚本参数指定构建目录：
 
 ```powershell
+.\scripts\Sync-Frontend.ps1 -Source D:\path\to\capacitor-ui\dist
+```
+
+## 开发与打包
+
+```powershell
+npm run check
+npm run build
+npm run dev
 npm run pack
 ```
 
-产物输出到 `release/`。
+`dev` 和 `pack` 都要求 `frontend-dist/` 已同步，`pack` 还要求 `runtime/node/` 已准备。NSIS 安装包输出到 `release/`。
 
-## 运行时
+## 目录
 
-`runtime/node/` 通过 electron-builder 的 `extraResources` 复制到 `resources/runtime/node/`，避免可执行文件进入 `app.asar`。生产路径由 `src/runtime/paths.ts` 使用 `process.resourcesPath` 定位。
+| 路径 | 内容 |
+| --- | --- |
+| `src/main.ts` | Electron 生命周期、协议和窗口 |
+| `src/plugin.ts` | `TarvenEnv` 的 Windows 实现 |
+| `src/runtime/` | 实例路径、下载、解压与 Node.js 进程 |
+| `scripts/` | 运行时准备和前端同步 |
+| `frontend-dist/` | 可再生的共享控制台副本，不提交 |
+| `runtime/node/` | 可再生的固定版本 Node.js，不提交 |
 
-用户数据位于：
-
-```text
-%LOCALAPPDATA%\SillyClient\tarven\
-```
-
-其中：
-
-- `bootstrap/servers/<instanceId>/`：实例目录
-- `covers/`：实例封面
-- `logs/`：日志
-- `tmp/`：临时下载
-- `usr/`：运行时缓存
-
-## 桥接接口
-
-前端统一调用 `TarvenEnv`。Electron 主进程处理窗口相关方法，其余方法转发给 `src/plugin.ts`。
-
-- 窗口：`enterImmersive`、`exitImmersive`、`returnToTavern`、`closeTavern`
-- 实例：`provisionAndStart`、`scanInstances`、`getInstanceInfo`、`uninstallInstance`
-- 工具：`fetchReleases`、`pickDirectory`、`pickImage`、`pickZipFile`、`pingUrl`
-
-## 发布
-
-平台仓库只保存源码。安装程序统一上传到主仓库 [SillyClient Releases](https://github.com/CAPTCHAAAAA/SillyClient/releases)。
+实现边界见 [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)，完整准备步骤见 [`docs/DEVELOPMENT.md`](./docs/DEVELOPMENT.md)。安装包统一发布到[主仓库 Releases](https://github.com/CAPTCHAAAAA/SillyClient/releases)。
 
 ## License
 
-MIT
+[MIT](./LICENSE)

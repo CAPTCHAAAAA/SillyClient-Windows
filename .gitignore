@@ -1,5 +1,10 @@
 node_modules/
 dist/
+release/
+out/
+frontend-dist/
+runtime/node/
+
 *.exe
 *.exe.blockmap
 *.nupkg
@@ -7,17 +12,9 @@ dist/
 *.appxbundle
 *.msix
 *.msixbundle
-release/
-out/
-# web/capacitor-ui 是指向安卓端的 junction 链接，不提交
-web/
 *.log
+
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
-# 构建用的前端副本
-frontend-dist/
-# electron-builder 产物
-dist/

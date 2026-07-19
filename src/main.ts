@@ -103,24 +103,8 @@ function pushMode(mode: 'launcher' | 'tavern'): void {
 // ---------------------------------------------------------------------------
 
 function resolveFrontendDist(): string | null {
-  // 1. Ask paths module (preferred — handles both dev and production)
   const fromPaths = paths.getFrontendDistDir?.() ?? null;
   if (fromPaths && fs.existsSync(fromPaths)) return fromPaths;
-
-  // 2. Bundled frontend-dist (production)
-  const bundled = path.join(__dirname, '..', 'frontend-dist');
-  if (fs.existsSync(bundled)) return bundled;
-
-  // 3. Local copy under web/capacitor-ui/dist (development build)
-  const localCandidate = path.join(__dirname, '..', 'web', 'capacitor-ui', 'dist');
-  if (fs.existsSync(localCandidate)) return localCandidate;
-
-  // 4. Android sibling directory (development: share the same frontend build)
-  const androidCandidate = path.join(
-    __dirname, '..', '..', '..', 'SillyClient_Android', 'App', 'web', 'capacitor-ui', 'dist',
-  );
-  if (fs.existsSync(androidCandidate)) return androidCandidate;
-
   return null;
 }
 
@@ -463,9 +447,7 @@ app.whenReady().then(() => {
 
   if (!frontendDistDir) {
     console.error(
-      '[SillyClient] Frontend dist not found. Build capacitor-ui first:\n' +
-      '  cd web/capacitor-ui && pnpm build\n' +
-      '  or ensure SillyClient_Android/App/web/capacitor-ui/dist exists.',
+      '[SillyClient] frontend-dist is missing. Build the shared UI, then run npm run sync:frontend.',
     );
   }
 

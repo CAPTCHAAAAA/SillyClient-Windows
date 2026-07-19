@@ -76,9 +76,5 @@ export function getNpmCli(): string {
 export function getFrontendDistDir(): string | null {
   const bundled = path.join(__dirname, '..', '..', 'frontend-dist');
   if (fs.existsSync(bundled)) return bundled;
-
-  const local = path.join(__dirname, '..', '..', 'web', 'capacitor-ui', 'dist');
-  if (fs.existsSync(local)) return local;
-
   return null;
 }
