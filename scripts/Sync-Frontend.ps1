@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Source
+    [string]$Source,
+    [string]$Manifest
 )
 
 Set-StrictMode -Version Latest
@@ -11,17 +12,16 @@ if (-not $Source) {
     $workspace = Split-Path -Parent $repository
     $Source = Join-Path $workspace "SillyClient_Android\web\capacitor-ui\dist"
 }
+if (-not $Manifest) {
+    $workspace = Split-Path -Parent $repository
+    $Manifest = Join-Path $workspace "SillyClient_Android\app\src\main\assets\public\sillyclient-build.json"
+}
 
 $sourceDirectory = [IO.Path]::GetFullPath($Source)
-$destination = Join-Path $repository "frontend-dist"
+$manifestFile = [IO.Path]::GetFullPath($Manifest)
+$syncScript = Join-Path $PSScriptRoot "sync-frontend.mjs"
 
-if (-not (Test-Path -LiteralPath (Join-Path $sourceDirectory "index.html"))) {
-    throw "Frontend build not found at $sourceDirectory. Build capacitor-ui first."
+& node $syncScript --source $sourceDirectory --manifest $manifestFile
+if ($LASTEXITCODE -ne 0) {
+    throw "Frontend sync failed."
 }
-
-if (Test-Path -LiteralPath $destination) {
-    Remove-Item -LiteralPath $destination -Recurse -Force
-}
-New-Item -ItemType Directory -Path $destination -Force | Out-Null
-Copy-Item -Path (Join-Path $sourceDirectory "*") -Destination $destination -Recurse -Force
-Write-Host "Synced $sourceDirectory -> $destination"

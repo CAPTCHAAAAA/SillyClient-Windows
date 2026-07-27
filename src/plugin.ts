@@ -5,7 +5,7 @@
  * 返回类型严格匹配前端 capacitor-plugin.ts 的接口定义。
  */
 
-import { BrowserWindow, dialog } from 'electron';
+import { BrowserWindow, dialog, net } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as https from 'node:https';
@@ -140,11 +140,14 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
 
   serverReady = false;
   currentPort = port;
+  let createdThisRun = false;
+  let targetServerDir = '';
+  let temporaryArchive = '';
 
   try {
     paths.ensureDirs();
 
-    const targetServerDir = paths.serverDirFor(instanceId);
+    targetServerDir = paths.serverDirFor(instanceId);
     if (!fs.existsSync(targetServerDir)) {
       fs.mkdirSync(targetServerDir, { recursive: true });
     }
@@ -154,33 +157,47 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
     const needInstall = !fs.existsSync(serverJs) || !fs.existsSync(nodeModules);
 
     if (needInstall) {
+      createdThisRun = true;
       progress(5, '安装中');
+      fs.rmSync(targetServerDir, { recursive: true, force: true });
+      fs.mkdirSync(targetServerDir, { recursive: true });
 
-      if (localZipPath && fs.existsSync(localZipPath)) {
+      if (localZipPath) {
+        if (!fs.existsSync(localZipPath)) {
+          throw new Error('选择的本地压缩包不存在');
+        }
         log(`从本地 zip 安装: ${localZipPath}`);
         progress(15, '解压本地 zip');
-        fs.rmSync(targetServerDir, { recursive: true, force: true });
-        fs.mkdirSync(targetServerDir, { recursive: true });
         await utils.unzipToDir(localZipPath, targetServerDir);
         flattenExtractedDir(targetServerDir);
       } else if (zipballUrl) {
         log(`下载: ${zipballUrl}`);
         progress(10, '下载源码');
 
-        const tmpZip = path.join(paths.tmpDir, `${instanceId}.zip`);
-        await downloadWithMirrors(zipballUrl, tmpZip, (pct) => {
+        temporaryArchive = path.join(paths.tmpDir, `${instanceId}.zip`);
+        await downloadWithMirrors(zipballUrl, temporaryArchive, (pct) => {
           progress(10 + Math.floor(pct * 0.4), '下载中');
         }, log);
 
         progress(50, '解压源码');
-        await utils.unzipToDir(tmpZip, targetServerDir);
+        await utils.unzipToDir(temporaryArchive, targetServerDir);
         flattenExtractedDir(targetServerDir);
 
-        try { fs.unlinkSync(tmpZip); } catch { /* ignore */ }
+        try { fs.unlinkSync(temporaryArchive); } catch { /* ignore */ }
+        temporaryArchive = '';
+      } else {
+        throw new Error('未获取到 SillyTavern 当前版本，请检查网络后重试');
+      }
+
+      if (!fs.existsSync(serverJs) || !fs.existsSync(path.join(targetServerDir, 'package.json'))) {
+        throw new Error('下载内容不完整，未找到 SillyTavern 启动文件');
       }
 
       progress(60, '安装依赖');
       await proc.runNpmInstall(targetServerDir, log);
+      if (!fs.existsSync(nodeModules)) {
+        throw new Error('运行依赖安装未完成');
+      }
     }
 
     // 检测端口可用性，自动切换
@@ -210,6 +227,12 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
     notify('ready', { ready: true, url: currentUrl, port: actualPort });
     return { ready: true };
   } catch (e: any) {
+    if (temporaryArchive) {
+      try { fs.unlinkSync(temporaryArchive); } catch { /* ignore */ }
+    }
+    if (createdThisRun && targetServerDir) {
+      fs.rmSync(targetServerDir, { recursive: true, force: true });
+    }
     log(`失败: ${e.message}`, 'error');
     notify('error', { message: e.message });
     return { ready: false };
@@ -224,9 +247,9 @@ async function downloadWithMirrors(
 ): Promise<void> {
   const mirrors = [
     originalUrl,
-    originalUrl.replace('https://github.com', 'https://ghfast.top/https://github.com'),
-    originalUrl.replace('https://github.com', 'https://gh-proxy.com/https://github.com'),
-    originalUrl.replace('https://github.com', 'https://ghproxy.net/https://github.com'),
+    `https://ghfast.top/${originalUrl}`,
+    `https://gh-proxy.com/${originalUrl}`,
+    `https://ghproxy.net/${originalUrl}`,
   ];
 
   let lastError: Error | null = null;
@@ -408,35 +431,49 @@ function pingUrl(opts: any): Promise<{ online: boolean; statusCode?: number; err
 // GithubRelease: { tag, zipballUrl, prerelease }
 // ---------------------------------------------------------------------------
 
-function fetchReleases(): Promise<{ releases: any[] }> {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'api.github.com',
-      path: '/repos/SillyTavern/SillyTavern/releases?per_page=20',
+async function fetchReleases(): Promise<{ releases: any[] }> {
+  const apiUrl = 'https://api.github.com/repos/SillyTavern/SillyTavern/releases?per_page=20';
+  const candidates = [
+    apiUrl,
+    `https://gh-proxy.com/${apiUrl}`,
+  ];
+  let lastError: Error | null = null;
+
+  for (const [index, url] of candidates.entries()) {
+    try {
+      const response = await net.fetch(url, {
       headers: {
         'User-Agent': 'SillyClient-Windows',
-        'Accept': 'application/vnd.github.v3+json',
+        'Accept': 'application/vnd.github+json',
       },
-    };
-
-    https.get(options, (res: any) => {
-      let data = '';
-      res.on('data', (chunk: any) => { data += chunk; });
-      res.on('end', () => {
-        try {
-          const raw = JSON.parse(data);
-          const releases = raw.map((r: any) => ({
-            tag: r.tag_name,
-            zipballUrl: r.zipball_url,
-            prerelease: r.prerelease,
-          }));
-          resolve({ releases });
-        } catch (e) {
-          reject(e);
-        }
+        signal: AbortSignal.timeout(index === 0 ? 8000 : 15000),
       });
-    }).on('error', reject);
-  });
+      const payload = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const raw = JSON.parse(payload);
+      if (!Array.isArray(raw)) {
+        throw new Error('GitHub 返回了无法识别的版本数据');
+      }
+
+      const releases = raw.filter((release: any) => release.tag_name && release.zipball_url)
+        .map((release: any) => ({
+          tag: release.tag_name,
+          zipballUrl: release.zipball_url,
+          prerelease: release.prerelease,
+        }));
+      if (releases.length === 0) {
+        throw new Error('GitHub 未返回可用的 SillyTavern 版本');
+      }
+      return { releases };
+    } catch (error: any) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw new Error(`无法获取 SillyTavern 版本：${lastError?.message || '网络请求失败'}`);
 }
 
 // ---------------------------------------------------------------------------

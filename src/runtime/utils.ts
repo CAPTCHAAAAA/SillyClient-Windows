@@ -11,6 +11,8 @@ import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import * as zlib from 'node:zlib';
 import { createWriteStream, createReadStream } from 'node:fs';
+import { once } from 'node:events';
+import { net } from 'electron';
 
 /** 解压 zip 到目标目录（对应 Android unzipStream，含 Zip Slip 防护） */
 export async function unzipToDir(zipPath: string, destDir: string): Promise<void> {
@@ -50,45 +52,45 @@ export async function downloadFile(
   destPath: string,
   onProgress?: (percent: number) => void,
 ): Promise<void> {
-  const https = require('node:https');
-  const http = require('node:http');
-
-  return new Promise((resolve, reject) => {
-    const protocol = url.startsWith('https') ? https : http;
-
-    protocol.get(url, (response: any) => {
-      // 处理重定向
-      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        downloadFile(response.headers.location, destPath, onProgress).then(resolve).catch(reject);
-        return;
-      }
-
-      if (response.statusCode !== 200) {
-        reject(new Error(`HTTP ${response.statusCode}`));
-        return;
-      }
-
-      const total = parseInt(response.headers['content-length'] || '0', 10);
-      let received = 0;
-      const stream = createWriteStream(destPath);
-
-      response.on('data', (chunk: Buffer) => {
-        received += chunk.length;
-        if (total && onProgress) {
-          onProgress(Math.round((received / total) * 100));
-        }
-      });
-
-      response.pipe(stream);
-
-      stream.on('finish', () => {
-        stream.close();
-        resolve();
-      });
-
-      stream.on('error', reject);
-    }).on('error', reject);
+  const response = await net.fetch(url, {
+    headers: {
+      'User-Agent': 'SillyClient-Windows',
+    },
+    signal: AbortSignal.timeout(300000),
   });
+  if (!response.ok || !response.body) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const total = Number(response.headers.get('content-length')) || 0;
+  const reader = response.body.getReader();
+  const output = createWriteStream(destPath);
+  let received = 0;
+  let streamError: Error | null = null;
+  output.on('error', (error) => {
+    streamError = error;
+  });
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (streamError) throw streamError;
+      received += value.byteLength;
+      if (!output.write(Buffer.from(value))) {
+        await once(output, 'drain');
+      }
+      if (total && onProgress) {
+        onProgress(Math.round((received / total) * 100));
+      }
+    }
+    if (streamError) throw streamError;
+    output.end();
+    await once(output, 'finish');
+  } catch (error) {
+    output.destroy();
+    throw error;
+  }
 }
 
 /** 复制文件 */

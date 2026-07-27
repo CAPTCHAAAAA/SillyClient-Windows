@@ -23,7 +23,10 @@ flowchart TD
 
 ## 可再生输入
 
-`frontend-dist/` 来自 Android 仓库中的共享前端源码。`runtime/node/` 来自固定版本的 Node.js 官方 Windows 压缩包。两者都不提交，但打包前必须存在并通过脚本准备。
+`frontend-dist/` 来自 Android 仓库中的共享前端源码。`frontend.lock.json` 记录其源码与
+构建摘要，Windows 适配仍通过同一套 `TarvenEnv` 接口完成，不在本仓库维护第二套 React
+页面。`runtime/node/` 来自固定版本的 Node.js 官方 Windows 压缩包。构建输入在打包前
+必须存在并通过脚本准备。
 
 应用运行时不回退到系统 Node.js，也不从 Android 或其他工作区路径即时加载前端。缺少打包输入时应明确失败，避免开发机上的偶然文件掩盖不完整安装包。
 

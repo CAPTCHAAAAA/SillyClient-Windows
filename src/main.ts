@@ -27,6 +27,8 @@ interface PathsContract {
   bootstrapDir?: string;
 }
 
+type ContentOpenMode = 'webview' | 'browser';
+
 const plugin = pluginModule as unknown as PluginContract;
 const paths = pathsModule as unknown as PathsContract;
 
@@ -70,6 +72,7 @@ let tavernWindow: BrowserWindow | null = null;
 let currentTavernUrl: string | null = null;
 let topColorTimer: ReturnType<typeof setInterval> | null = null;
 let frontendDistDir: string | null = null;
+let contentOpenMode: ContentOpenMode = 'webview';
 
 // ---------------------------------------------------------------------------
 // Register privileged schemes — MUST be called before app.ready
@@ -231,8 +234,45 @@ function createMainWindow(): void {
 // Tavern window — 独立窗口
 // ---------------------------------------------------------------------------
 
-function enterImmersive(url: string): void {
+function preferencesPath(): string {
+  return path.join(app.getPath('userData'), 'preferences.json');
+}
+
+function loadPreferences(): void {
+  try {
+    const stored = JSON.parse(fs.readFileSync(preferencesPath(), 'utf8'));
+    if (stored.contentOpenMode === 'webview' || stored.contentOpenMode === 'browser') {
+      contentOpenMode = stored.contentOpenMode;
+    }
+  } catch {
+    contentOpenMode = 'webview';
+  }
+}
+
+function saveContentOpenMode(mode: ContentOpenMode): ContentOpenMode {
+  if (mode !== 'webview' && mode !== 'browser') {
+    throw new Error('不支持的打开方式');
+  }
+
+  contentOpenMode = mode;
+  const target = preferencesPath();
+  const temporary = `${target}.tmp`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(temporary, `${JSON.stringify({ contentOpenMode: mode }, null, 2)}\n`, 'utf8');
+  fs.rmSync(target, { force: true });
+  fs.renameSync(temporary, target);
+  return mode;
+}
+
+async function enterImmersive(url: string): Promise<void> {
   destroyTavernWindow();
+  currentTavernUrl = url;
+
+  if (contentOpenMode === 'browser') {
+    await shell.openExternal(url);
+    mainWindow?.focus();
+    return;
+  }
 
   const [px, py, pw, ph] = mainWindow
     ? [...mainWindow.getPosition(), ...mainWindow.getSize()]
@@ -275,7 +315,6 @@ function enterImmersive(url: string): void {
     // 不切换 mode，主窗口一直在 launcher 模式
   });
 
-  currentTavernUrl = url;
   tavernWindow.loadURL(url);
   tavernWindow.show();
   tavernWindow.focus();
@@ -395,7 +434,7 @@ function registerIpc(): void {
     // Window/view methods handled locally (need BrowserWindow access)
     switch (method) {
       case 'enterImmersive':
-        enterImmersive(options?.url || '');
+        await enterImmersive(options?.url || '');
         return { success: true };
 
       case 'exitImmersive':
@@ -407,9 +446,15 @@ function registerIpc(): void {
         if (!url || !plugin.isServerReady?.()) {
           throw new Error('当前没有正在运行的实例');
         }
-        enterImmersive(url);
+        await enterImmersive(url);
         return { success: true };
       }
+
+      case 'getContentOpenMode':
+        return { mode: contentOpenMode };
+
+      case 'setContentOpenMode':
+        return { mode: saveContentOpenMode(options?.mode) };
 
       case 'closeTavern':
         exitImmersive();
@@ -444,6 +489,7 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   frontendDistDir = resolveFrontendDist();
+  loadPreferences();
 
   if (!frontendDistDir) {
     console.error(
