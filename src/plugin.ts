@@ -473,6 +473,34 @@ async function fetchReleases(): Promise<{ releases: any[] }> {
     }
   }
 
+  try {
+    const response = await net.fetch(
+      'https://data.jsdelivr.com/v1/package/gh/SillyTavern/SillyTavern',
+      {
+        headers: {
+          'User-Agent': 'SillyClient-Windows',
+          'Accept': 'application/json',
+        },
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    const raw = await response.json() as any;
+    if (!response.ok || !Array.isArray(raw?.versions)) {
+      throw new Error(`jsDelivr HTTP ${response.status}`);
+    }
+
+    const releases = raw.versions.slice(0, 20).map((version: string) => ({
+      tag: version,
+      zipballUrl: `https://github.com/SillyTavern/SillyTavern/archive/refs/tags/${encodeURIComponent(version)}.zip`,
+      prerelease: version.includes('-'),
+    }));
+    if (releases.length > 0) {
+      return { releases };
+    }
+  } catch (error: any) {
+    lastError = error instanceof Error ? error : new Error(String(error));
+  }
+
   throw new Error(`无法获取 SillyTavern 版本：${lastError?.message || '网络请求失败'}`);
 }
 
