@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as pluginModule from './plugin';
 // @ts-ignore — module './runtime/paths' is created separately.
 import * as pathsModule from './runtime/paths';
+import { loadRemoteBasicAuth } from './remote-auth';
 
 // ---------------------------------------------------------------------------
 // Module contracts (defensive: these modules are implemented by other agents)
@@ -38,7 +39,9 @@ const paths = pathsModule as unknown as PathsContract;
 
 const APP_PROTOCOL = 'app';
 const FILE_PROTOCOL = 'capacitor-file';
+const APP_USER_MODEL_ID = 'com.sillyclient';
 const DEFAULT_BG = '#070408';
+const WINDOW_ICON = path.join(__dirname, '..', 'build', 'icon.ico');
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -70,6 +73,7 @@ const MIME_TYPES: Record<string, string> = {
 let mainWindow: BrowserWindow | null = null;
 let tavernWindow: BrowserWindow | null = null;
 let currentTavernUrl: string | null = null;
+let currentTavernInstanceId: string | null = null;
 let topColorTimer: ReturnType<typeof setInterval> | null = null;
 let frontendDistDir: string | null = null;
 let contentOpenMode: ContentOpenMode = 'webview';
@@ -199,7 +203,7 @@ function createMainWindow(): void {
     frame: true,
     backgroundColor: DEFAULT_BG,
     title: 'SillyClient',
-    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    icon: WINDOW_ICON,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -264,9 +268,10 @@ function saveContentOpenMode(mode: ContentOpenMode): ContentOpenMode {
   return mode;
 }
 
-async function enterImmersive(url: string): Promise<void> {
+async function enterImmersive(url: string, instanceId?: string): Promise<void> {
   destroyTavernWindow();
   currentTavernUrl = url;
+  currentTavernInstanceId = instanceId || null;
 
   if (contentOpenMode === 'browser') {
     await shell.openExternal(url);
@@ -288,7 +293,7 @@ async function enterImmersive(url: string): Promise<void> {
     frame: true,
     backgroundColor: DEFAULT_BG,
     title: 'SillyTavern',
-    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    icon: WINDOW_ICON,
     show: false,
     webPreferences: {
       contextIsolation: true,
@@ -296,6 +301,23 @@ async function enterImmersive(url: string): Promise<void> {
       sandbox: true,
       partition: 'persist:tavern',
     },
+  });
+
+  const credentials = instanceId ? loadRemoteBasicAuth(instanceId) : null;
+  const targetOrigin = new URL(url).origin;
+  let authAttempted = false;
+
+  tavernWindow.webContents.on('login', (event, details, authInfo, callback) => {
+    if (!credentials || authInfo.isProxy || authAttempted) return;
+    try {
+      if (new URL(details.url).origin !== targetOrigin) return;
+    } catch {
+      return;
+    }
+
+    event.preventDefault();
+    authAttempted = true;
+    callback(credentials.username, credentials.password);
   });
 
   // 外部链接在系统浏览器打开
@@ -312,6 +334,7 @@ async function enterImmersive(url: string): Promise<void> {
     stopTopColorPoll();
     tavernWindow = null;
     currentTavernUrl = null;
+    currentTavernInstanceId = null;
     // 不切换 mode，主窗口一直在 launcher 模式
   });
 
@@ -326,6 +349,7 @@ function exitImmersive(): void {
   stopTopColorPoll();
   destroyTavernWindow();
   currentTavernUrl = null;
+  currentTavernInstanceId = null;
 
   if (mainWindow) {
     mainWindow.focus();
@@ -434,7 +458,7 @@ function registerIpc(): void {
     // Window/view methods handled locally (need BrowserWindow access)
     switch (method) {
       case 'enterImmersive':
-        await enterImmersive(options?.url || '');
+        await enterImmersive(options?.url || '', options?.instanceId);
         return { success: true };
 
       case 'exitImmersive':
@@ -446,7 +470,7 @@ function registerIpc(): void {
         if (!url || !plugin.isServerReady?.()) {
           throw new Error('当前没有正在运行的实例');
         }
-        await enterImmersive(url);
+        await enterImmersive(url, currentTavernInstanceId || undefined);
         return { success: true };
       }
 
@@ -486,6 +510,10 @@ function registerIpc(): void {
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+}
 
 app.whenReady().then(() => {
   frontendDistDir = resolveFrontendDist();

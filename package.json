@@ -1,6 +1,6 @@
 {
   "name": "sillyclient-windows",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "SillyClient for Windows",
   "main": "dist/main.js",
   "scripts": {
@@ -32,17 +32,20 @@
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "perMachine": false
+      "perMachine": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
     },
     "files": [
       "dist/**/*",
       "frontend-dist/**/*",
-      "build/icon.png"
+      "build/icon.png",
+      "build/icon.ico"
     ],
     "extraResources": [
       {

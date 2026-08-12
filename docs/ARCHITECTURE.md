@@ -21,6 +21,12 @@ flowchart TD
 
 控制台关闭阅读窗口时不终止服务。进程生命周期由实例操作控制，窗口生命周期不能顺带删除实例数据。
 
+## 远程连接认证
+
+远程实例可以配置 HTTP Basic Auth。共享 React 控制台只持久化“已配置”状态和用户名，不保存密码。`remote-auth.ts` 使用 Electron `safeStorage` 加密凭据，并把密文保存在应用 `userData` 目录；`plugin.ts` 负责原生预检，认证头只会发送给初始地址及其同源重定向。
+
+应用内阅读窗口通过 Electron `login` 事件响应目标源的认证挑战，不处理代理认证，也不会把密码拼入 URL。选择系统浏览器打开时不向浏览器传递凭据，由浏览器自行请求认证。删除远程实例会同步清除密文记录；公网地址应优先使用 HTTPS。
+
 ## 可再生输入
 
 `frontend-dist/` 来自 Android 仓库中的共享前端源码。`frontend.lock.json` 记录其源码与

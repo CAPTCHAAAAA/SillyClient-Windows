@@ -14,6 +14,13 @@ import * as http from 'node:http';
 import * as paths from './runtime/paths';
 import * as proc from './runtime/process';
 import * as utils from './runtime/utils';
+import {
+  clearRemoteBasicAuth,
+  getRemoteBasicAuthStatus,
+  loadRemoteBasicAuth,
+  RemoteBasicAuthCredentials,
+  saveRemoteBasicAuth,
+} from './remote-auth';
 
 // ---------------------------------------------------------------------------
 // 导出给 main.ts 用的接口（保持与之前兼容）
@@ -84,6 +91,15 @@ export async function handle(method: string, options: any): Promise<any> {
       return Promise.resolve();
     case 'pingUrl':
       return pingUrl(options);
+    case 'setRemoteBasicAuth': {
+      const credentials = saveRemoteBasicAuth(options.instanceId, options.username, options.password);
+      return { configured: true, username: credentials.username };
+    }
+    case 'getRemoteBasicAuthStatus':
+      return getRemoteBasicAuthStatus(options.instanceId);
+    case 'clearRemoteBasicAuth':
+      clearRemoteBasicAuth(options.instanceId);
+      return { success: true };
     case 'fetchReleases':
       return fetchReleases();
     case 'pickDirectory':
@@ -407,23 +423,77 @@ function doSendCommand(opts: any): void {
 }
 
 // ---------------------------------------------------------------------------
-// pingUrl — 前端期望: { online, statusCode?, error? }
+// pingUrl — 前端期望: { online, statusCode?, authRequired?, error? }
 // ---------------------------------------------------------------------------
 
-function pingUrl(opts: any): Promise<{ online: boolean; statusCode?: number; error?: string }> {
-  return new Promise((resolve) => {
-    const { url } = opts;
-    const protocol = url.startsWith('https') ? https : http;
+interface PingResult {
+  online: boolean;
+  statusCode?: number;
+  authRequired?: boolean;
+  error?: string;
+}
 
-    const req = protocol.request(url, { method: 'HEAD', timeout: 10000 }, (res: any) => {
+function probeUrl(
+  target: URL,
+  authOrigin: string,
+  credentials: RemoteBasicAuthCredentials | null,
+  redirects = 0,
+): Promise<PingResult> {
+  return new Promise((resolve) => {
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+      resolve({ online: false, error: '连接地址必须使用 HTTP 或 HTTPS' });
+      return;
+    }
+
+    const protocol = target.protocol === 'https:' ? https : http;
+    const headers: Record<string, string> = {};
+    if (credentials && target.origin === authOrigin) {
+      headers.Authorization = `Basic ${Buffer.from(`${credentials.username}:${credentials.password}`, 'utf8').toString('base64')}`;
+    }
+
+    const req = protocol.request(target, { method: 'HEAD', timeout: 10000, headers }, (res: any) => {
+      const statusCode = Number(res.statusCode || 0);
+      const location = res.headers.location as string | undefined;
       res.destroy();
-      resolve({ online: true, statusCode: res.statusCode });
+
+      if (statusCode >= 300 && statusCode < 400 && location && redirects < 5) {
+        const redirected = new URL(location, target);
+        void probeUrl(redirected, authOrigin, credentials, redirects + 1).then(resolve);
+        return;
+      }
+
+      if (statusCode === 401) {
+        resolve({
+          online: false,
+          statusCode,
+          authRequired: true,
+          error: credentials
+            ? 'Basic Auth 验证失败，请检查账号和密码'
+            : '该地址需要 Basic Auth 账号和密码',
+        });
+        return;
+      }
+
+      resolve({ online: statusCode >= 200 && statusCode <= 499, statusCode });
     });
 
     req.on('error', (e: any) => resolve({ online: false, error: e.message }));
     req.on('timeout', () => { req.destroy(); resolve({ online: false, error: 'timeout' }); });
     req.end();
   });
+}
+
+function pingUrl(opts: any): Promise<PingResult> {
+  try {
+    const target = new URL(String(opts.url || ''));
+    const hasTransientCredentials = typeof opts.username === 'string' && typeof opts.password === 'string';
+    const credentials = hasTransientCredentials
+      ? { username: opts.username, password: opts.password }
+      : opts.instanceId ? loadRemoteBasicAuth(String(opts.instanceId)) : null;
+    return probeUrl(target, target.origin, credentials);
+  } catch (error: any) {
+    return Promise.resolve({ online: false, error: error?.message || String(error) });
+  }
 }
 
 // ---------------------------------------------------------------------------
