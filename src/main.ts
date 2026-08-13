@@ -26,6 +26,7 @@ interface PluginContract {
 interface PathsContract {
   getFrontendDistDir?(): string | null;
   bootstrapDir?: string;
+  coversDir?: string;
 }
 
 type ContentOpenMode = 'webview' | 'browser';
@@ -39,6 +40,7 @@ const paths = pathsModule as unknown as PathsContract;
 
 const APP_PROTOCOL = 'app';
 const FILE_PROTOCOL = 'capacitor-file';
+const COVER_ROUTE_PREFIX = '__sillyclient_cover__/';
 const APP_USER_MODEL_ID = 'com.sillyclient';
 const DEFAULT_BG = '#070408';
 const WINDOW_ICON = path.join(__dirname, '..', 'build', 'icon.ico');
@@ -98,7 +100,9 @@ protocol.registerSchemesAsPrivileged([
 // ---------------------------------------------------------------------------
 
 function pushEvent(eventName: string, data: any): void {
-  mainWindow?.webContents.send(`tarven:${eventName}`, data);
+  const win = mainWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send(`tarven:${eventName}`, data);
 }
 
 function pushMode(mode: 'launcher' | 'tavern'): void {
@@ -128,6 +132,34 @@ function registerAppProtocol(): void {
     const url = new URL(request.url);
     const reqPath = decodeURIComponent(url.pathname).replace(/^\/+/, '');
 
+    if (reqPath.startsWith(COVER_ROUTE_PREFIX)) {
+      const requestedName = reqPath.slice(COVER_ROUTE_PREFIX.length);
+      const fileName = path.basename(requestedName);
+      const coversDir = paths.coversDir;
+      const ext = path.extname(fileName).toLowerCase();
+      if (
+        !coversDir
+        || !fileName
+        || fileName !== requestedName
+        || !['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)
+      ) {
+        return new Response('Forbidden', { status: 403 });
+      }
+
+      const filePath = path.join(coversDir, fileName);
+      try {
+        const data = await fs.promises.readFile(filePath);
+        return new Response(new Uint8Array(data), {
+          headers: {
+            'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
+            'Cache-Control': 'no-store, max-age=0',
+          },
+        });
+      } catch {
+        return new Response('Not found', { status: 404 });
+      }
+    }
+
     // Path traversal guard
     const resolved = path.resolve(frontendDistDir, reqPath || '.');
     if (!resolved.startsWith(frontendDistDir)) {
@@ -155,7 +187,12 @@ function registerAppProtocol(): void {
     try {
       const data = await fs.promises.readFile(filePath);
       const mime = MIME_TYPES[path.extname(filePath)] || 'application/octet-stream';
-      return new Response(new Uint8Array(data), { headers: { 'Content-Type': mime } });
+      return new Response(new Uint8Array(data), {
+        headers: {
+          'Content-Type': mime,
+          'Cache-Control': 'no-store, max-age=0',
+        },
+      });
     } catch {
       return new Response('Internal error', { status: 500 });
     }
@@ -183,7 +220,12 @@ function registerCapacitorFileProtocol(): void {
       const data = await fs.promises.readFile(filePath);
       const ext = path.extname(filePath).toLowerCase();
       const mime = MIME_TYPES[ext] || 'application/octet-stream';
-      return new Response(new Uint8Array(data), { headers: { 'Content-Type': mime } });
+      return new Response(new Uint8Array(data), {
+        headers: {
+          'Content-Type': mime,
+          'Cache-Control': 'no-store, max-age=0',
+        },
+      });
     } catch {
       return new Response('Internal error', { status: 500 });
     }
@@ -228,6 +270,7 @@ function createMainWindow(): void {
   });
 
   mainWindow.on('closed', () => {
+    plugin.setMainWindow?.(null);
     mainWindow = null;
   });
 
@@ -533,15 +576,20 @@ app.whenReady().then(() => {
   createMainWindow();
 });
 
-app.on('window-all-closed', () => {
+let cleanupCompleted = false;
+
+function cleanupBeforeQuit(): void {
+  if (cleanupCompleted) return;
+  cleanupCompleted = true;
   stopTopColorPoll();
   destroyTavernWindow();
   plugin.cleanup?.();
+}
+
+app.on('window-all-closed', () => {
   app.quit();
 });
 
 app.on('before-quit', () => {
-  stopTopColorPoll();
-  destroyTavernWindow();
-  plugin.cleanup?.();
+  cleanupBeforeQuit();
 });

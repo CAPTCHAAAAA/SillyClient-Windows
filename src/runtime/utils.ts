@@ -98,6 +98,19 @@ export function copyFile(src: string, dest: string): void {
   fs.copyFileSync(src, dest);
 }
 
+/** 用临时文件替换目标，支持 Windows 上连续覆盖同名封面。 */
+export function replaceFile(src: string, dest: string): void {
+  const temporary = `${dest}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.copyFileSync(src, temporary);
+    fs.rmSync(dest, { force: true });
+    fs.renameSync(temporary, dest);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
 /** 递归复制目录 */
 export function copyDir(src: string, dest: string): void {
   if (!fs.existsSync(dest)) {
@@ -138,8 +151,23 @@ export function dirSize(dirPath: string): number {
 /** 递归删除目录 */
 export function removeDir(dirPath: string): void {
   if (fs.existsSync(dirPath)) {
-    fs.rmSync(dirPath, { recursive: true, force: true });
+    fs.rmSync(dirPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
+}
+
+/** Windows 进程释放文件句柄可能稍有延迟，删除实例时等待并验证目录确实消失。 */
+export async function removeDirWithRetries(dirPath: string): Promise<void> {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (!fs.existsSync(dirPath)) return;
+    try {
+      await fs.promises.rm(dirPath, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      // 下一轮继续等待被释放的句柄。
+    }
+    if (!fs.existsSync(dirPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  if (fs.existsSync(dirPath)) throw new Error(`目录仍被占用：${dirPath}`);
 }
 
 /** 格式化文件大小 */

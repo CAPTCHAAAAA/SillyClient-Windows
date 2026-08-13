@@ -14,6 +14,7 @@ import * as http from 'node:http';
 import * as paths from './runtime/paths';
 import * as proc from './runtime/process';
 import * as utils from './runtime/utils';
+import * as instanceStore from './runtime/instances';
 import {
   clearRemoteBasicAuth,
   getRemoteBasicAuthStatus,
@@ -36,6 +37,11 @@ let mainWindow: BrowserWindow | null = null;
 let serverReady = false;
 let currentUrl: string | null = null;
 let currentPort = 0;
+let currentInstanceId: string | null = null;
+let currentServerDir: string | null = null;
+let staleUsageSessionsSettled = false;
+let usageCheckpointTimer: ReturnType<typeof setInterval> | null = null;
+let cleanupCompleted = false;
 
 // ---------------------------------------------------------------------------
 // 公开接口
@@ -43,6 +49,7 @@ let currentPort = 0;
 
 export function setMainWindow(win: BrowserWindow | null): void {
   mainWindow = win;
+  if (win) cleanupCompleted = false;
 }
 
 export function isServerReady(): boolean {
@@ -54,23 +61,57 @@ export function getCurrentUrl(): string | null {
 }
 
 export function stopCurrentServer(): void {
+  stopCurrentServerInternal(true);
+}
+
+function stopCurrentServerInternal(emitEvents: boolean): void {
+  const stoppedInstanceId = currentInstanceId;
+  stopUsageCheckpoint();
+  currentInstanceId = null;
+  currentServerDir = null;
   proc.stopServer();
+  const usage = stoppedInstanceId ? instanceStore.finishInstanceUsage(stoppedInstanceId) : null;
   serverReady = false;
   currentUrl = null;
   currentPort = 0;
-  notify('ready', { ready: false });
-  notify('mode', { mode: 'launcher', tavernRunning: false });
+  if (emitEvents) {
+    notify('ready', { ready: false });
+    notify('mode', {
+      mode: 'launcher',
+      tavernRunning: false,
+      instanceId: stoppedInstanceId,
+      lastUsedAt: usage?.lastUsedAt,
+      totalUsageMs: usage?.totalUsageMs,
+    });
+  }
+}
+
+function startUsageCheckpoint(instanceId: string): void {
+  stopUsageCheckpoint();
+  usageCheckpointTimer = setInterval(() => {
+    if (currentInstanceId === instanceId && proc.isServerRunning()) {
+      instanceStore.checkpointInstanceUsage(instanceId);
+    }
+  }, 15000);
+}
+
+function stopUsageCheckpoint(): void {
+  if (!usageCheckpointTimer) return;
+  clearInterval(usageCheckpointTimer);
+  usageCheckpointTimer = null;
 }
 
 export function cleanup(): void {
-  proc.stopServer();
-  serverReady = false;
-  currentUrl = null;
-  currentPort = 0;
+  if (cleanupCompleted) return;
+  cleanupCompleted = true;
+  stopCurrentServerInternal(false);
+  mainWindow = null;
 }
 
 export function notify(eventName: string, data: any): void {
-  mainWindow?.webContents.send(`tarven:${eventName}`, data);
+  const win = mainWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send(`tarven:${eventName}`, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -151,7 +192,8 @@ async function findAvailablePort(startPort: number, log: (msg: string, level?: s
 // ---------------------------------------------------------------------------
 
 async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
-  const { port, instanceId, version, zipballUrl, localZipPath, config } = opts;
+  const { port, instanceId, version, zipballUrl, localZipPath, config, installPath } = opts;
+  const safeInstanceId = paths.normalizeInstanceId(instanceId);
 
   const log = (msg: string, level?: string) => notify('log', { message: msg, level });
   const progress = (pct: number, text?: string) => notify('progress', { percent: pct, stage: text });
@@ -161,20 +203,39 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
   let createdThisRun = false;
   let targetServerDir = '';
   let temporaryArchive = '';
+  let preserveSelectedDirectory = false;
 
   try {
     paths.ensureDirs();
 
-    targetServerDir = paths.serverDirFor(instanceId);
+    if (proc.isServerRunning()) stopCurrentServer();
+
+    targetServerDir = resolveInstanceDir(safeInstanceId, installPath);
+    if (fs.existsSync(targetServerDir) && !fs.statSync(targetServerDir).isDirectory()) {
+      throw new Error('指定的安装路径不是目录');
+    }
+    preserveSelectedDirectory = Boolean(installPath && fs.existsSync(targetServerDir));
+    if (
+      installPath
+      && fs.existsSync(targetServerDir)
+      && fs.readdirSync(targetServerDir).length > 0
+      && (!fs.existsSync(path.join(targetServerDir, 'server.js'))
+        || !fs.existsSync(path.join(targetServerDir, 'package.json')))
+    ) {
+      throw new Error('选择的安装目录不是空目录，请选择空目录或已有的 SillyTavern 目录');
+    }
     if (!fs.existsSync(targetServerDir)) {
       fs.mkdirSync(targetServerDir, { recursive: true });
     }
 
     const serverJs = path.join(targetServerDir, 'server.js');
+    const packageJson = path.join(targetServerDir, 'package.json');
     const nodeModules = path.join(targetServerDir, 'node_modules');
-    const needInstall = !fs.existsSync(serverJs) || !fs.existsSync(nodeModules);
+    const needSource = !fs.existsSync(serverJs) || !fs.existsSync(packageJson);
+    const createdAt = instanceStore.getInstanceRecord(safeInstanceId)?.createdAt
+      || (needSource ? new Date().toISOString() : undefined);
 
-    if (needInstall) {
+    if (needSource) {
       createdThisRun = true;
       progress(5, '安装中');
       fs.rmSync(targetServerDir, { recursive: true, force: true });
@@ -192,7 +253,7 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
         log(`下载: ${zipballUrl}`);
         progress(10, '下载源码');
 
-        temporaryArchive = path.join(paths.tmpDir, `${instanceId}.zip`);
+        temporaryArchive = path.join(paths.tmpDir, `${safeInstanceId}.zip`);
         await downloadWithMirrors(zipballUrl, temporaryArchive, (pct) => {
           progress(10 + Math.floor(pct * 0.4), '下载中');
         }, log);
@@ -207,10 +268,12 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
         throw new Error('未获取到 SillyTavern 当前版本，请检查网络后重试');
       }
 
-      if (!fs.existsSync(serverJs) || !fs.existsSync(path.join(targetServerDir, 'package.json'))) {
+      if (!fs.existsSync(serverJs) || !fs.existsSync(packageJson)) {
         throw new Error('下载内容不完整，未找到 SillyTavern 启动文件');
       }
+    }
 
+    if (!fs.existsSync(nodeModules)) {
       progress(60, '安装依赖');
       await proc.runNpmInstall(targetServerDir, log);
       if (!fs.existsSync(nodeModules)) {
@@ -229,32 +292,66 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
     writeInstanceConfig(targetServerDir, actualPort, config);
 
     progress(90, '启动服务');
-    proc.startServer(targetServerDir, instanceId, actualPort, log);
+    currentInstanceId = safeInstanceId;
+    currentServerDir = targetServerDir;
+    proc.startServer(targetServerDir, safeInstanceId, actualPort, log, () => {
+      if (currentInstanceId !== safeInstanceId) return;
+      stopUsageCheckpoint();
+      currentInstanceId = null;
+      currentServerDir = null;
+      serverReady = false;
+      currentUrl = null;
+      currentPort = 0;
+      const usage = instanceStore.finishInstanceUsage(safeInstanceId);
+      notify('ready', { ready: false });
+      notify('mode', {
+        mode: 'launcher',
+        tavernRunning: false,
+        instanceId: safeInstanceId,
+        lastUsedAt: usage?.lastUsedAt,
+        totalUsageMs: usage?.totalUsageMs,
+      });
+    });
 
     progress(95, '等待就绪');
     const ready = await pollUntilReady(actualPort, 180000, log);
     if (!ready) {
       throw new Error('服务启动超时（180s）');
     }
+    if (!proc.isServerRunning() || currentInstanceId !== safeInstanceId) {
+      throw new Error('服务在完成启动前已退出');
+    }
 
     serverReady = true;
     currentUrl = `http://127.0.0.1:${actualPort}`;
+    instanceStore.registerInstance(safeInstanceId, targetServerDir, createdAt);
+    instanceStore.beginInstanceUsage(safeInstanceId, targetServerDir);
+    startUsageCheckpoint(safeInstanceId);
     progress(100, '就绪');
     log('服务就绪', 'success');
 
     notify('ready', { ready: true, url: currentUrl, port: actualPort });
     return { ready: true };
   } catch (e: any) {
+    if (currentInstanceId === safeInstanceId) stopCurrentServer();
     if (temporaryArchive) {
       try { fs.unlinkSync(temporaryArchive); } catch { /* ignore */ }
     }
     if (createdThisRun && targetServerDir) {
-      fs.rmSync(targetServerDir, { recursive: true, force: true });
+      fs.rmSync(targetServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      if (preserveSelectedDirectory) fs.mkdirSync(targetServerDir, { recursive: true });
     }
     log(`失败: ${e.message}`, 'error');
     notify('error', { message: e.message });
     return { ready: false };
   }
+}
+
+function resolveInstanceDir(instanceId: string, installPath?: string): string {
+  if (typeof installPath === 'string' && installPath.trim()) {
+    return paths.serverDirFor(instanceId, installPath);
+  }
+  return instanceStore.getInstanceRecord(instanceId)?.path || paths.serverDirFor(instanceId);
 }
 
 async function downloadWithMirrors(
@@ -349,23 +446,39 @@ function tryConnect(url: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 function scanInstances(): { instances: any[] } {
+  if (!staleUsageSessionsSettled) {
+    instanceStore.finishStaleUsageSessions();
+    staleUsageSessionsSettled = true;
+  }
   const serversDir = path.join(paths.bootstrapDir, 'servers');
-  if (!fs.existsSync(serversDir)) return { instances: [] };
-
+  const candidates = new Map<string, string>();
+  for (const record of instanceStore.listInstanceRecords()) {
+    if (fs.existsSync(record.path)) candidates.set(record.instanceId, record.path);
+  }
+  if (fs.existsSync(serversDir)) {
+    for (const entry of fs.readdirSync(serversDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || candidates.has(entry.name)) continue;
+      candidates.set(entry.name, path.join(serversDir, entry.name));
+    }
+  }
   const instances: any[] = [];
-  for (const entry of fs.readdirSync(serversDir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const dir = path.join(serversDir, entry.name);
+  for (const [instanceId, dir] of candidates) {
     const packageJsonPath = path.join(dir, 'package.json');
     if (!fs.existsSync(packageJsonPath)) continue;
 
     try {
       const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      instanceStore.registerInstance(instanceId, dir);
+      const usage = instanceStore.getInstanceUsage(instanceId);
       instances.push({
-        instanceId: entry.name,
+        instanceId,
         version: pkg.version || 'unknown',
+        path: dir,
         sizeBytes: utils.dirSize(dir),
         hasServer: fs.existsSync(path.join(dir, 'server.js')),
+        createdAt: usage.createdAt,
+        lastUsedAt: usage.lastUsedAt,
+        totalUsageMs: usage.totalUsageMs,
       });
     } catch { /* skip */ }
   }
@@ -379,11 +492,21 @@ function scanInstances(): { instances: any[] } {
 // ---------------------------------------------------------------------------
 
 function getInstanceInfo(opts: any): any {
-  const { instanceId, port } = opts;
-  const dir = paths.serverDirFor(instanceId);
+  const { instanceId, installPath, port } = opts;
+  const safeInstanceId = paths.normalizeInstanceId(instanceId);
+  const dir = resolveInstanceDir(safeInstanceId, installPath);
 
   if (!fs.existsSync(dir)) {
-    return { instanceId, version: 'unknown', path: dir, sizeBytes: 0, createdAt: '—', status: 'not_found' };
+    return {
+      instanceId: safeInstanceId,
+      version: 'unknown',
+      path: dir,
+      sizeBytes: 0,
+      createdAt: '',
+      lastUsedAt: '',
+      totalUsageMs: 0,
+      status: 'not_found',
+    };
   }
 
   let version = 'unknown';
@@ -394,20 +517,20 @@ function getInstanceInfo(opts: any): any {
     } catch { /* ignore */ }
   }
 
-  let createdAt = '—';
-  try {
-    const stat = fs.statSync(dir);
-    createdAt = stat.birthtime.toISOString().split('T')[0];
-  } catch { /* ignore */ }
-
-  const status = (proc.isServerRunning() && currentPort === port) ? 'running' : 'stopped';
+  instanceStore.registerInstance(safeInstanceId, dir);
+  const usage = instanceStore.getInstanceUsage(safeInstanceId);
+  const status = (proc.isServerRunning() && currentInstanceId === safeInstanceId && currentPort === port)
+    ? 'running'
+    : 'stopped';
 
   return {
-    instanceId,
+    instanceId: safeInstanceId,
     version,
     path: dir,
     sizeBytes: utils.dirSize(dir),
-    createdAt,
+    createdAt: usage.createdAt || '',
+    lastUsedAt: usage.lastUsedAt || '',
+    totalUsageMs: usage.totalUsageMs,
     status,
   };
 }
@@ -423,7 +546,7 @@ function doSendCommand(opts: any): void {
     notify('log', { message: '缺少实例标识，无法打开实例终端', level: 'error' });
     return;
   }
-  const cwd = paths.serverDirFor(normalizedId);
+  const cwd = resolveInstanceDir(normalizedId);
   if (!fs.existsSync(cwd)) {
     notify('log', { message: `实例目录不存在：${normalizedId}`, level: 'error' });
     return;
@@ -667,7 +790,7 @@ function compareVersions(left: string, right: string): number {
 // ---------------------------------------------------------------------------
 
 async function doPickDirectory(): Promise<{ name: string; path: string }> {
-  if (!mainWindow) return { name: '', path: '' };
+  if (!mainWindow || mainWindow.isDestroyed()) return { name: '', path: '' };
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
   });
@@ -682,8 +805,10 @@ async function doPickDirectory(): Promise<{ name: string; path: string }> {
 // pickImage — 前端期望: { path }
 // ---------------------------------------------------------------------------
 
-async function doPickImage(opts: any): Promise<{ path: string }> {
-  if (!mainWindow) return { path: '' };
+async function doPickImage(opts: any): Promise<{ path: string; url?: string }> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('主窗口不可用，无法打开图片选择器');
+  }
   const rawInstanceId = typeof opts?.instanceId === 'string' ? opts.instanceId : '';
   const instanceId = rawInstanceId.trim().replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^[._-]+|[._-]+$/g, '').slice(0, 80) || 'default';
 
@@ -698,24 +823,30 @@ async function doPickImage(opts: any): Promise<{ path: string }> {
   }
 
   const src = result.filePaths[0];
-  const ext = path.extname(src);
+  const ext = path.extname(src).toLowerCase();
 
   if (!fs.existsSync(paths.coversDir)) {
     fs.mkdirSync(paths.coversDir, { recursive: true });
   }
 
-  const dest = path.join(paths.coversDir, `${instanceId}${ext}`);
-  const tempDest = `${dest}.tmp-${Date.now()}`;
-  utils.copyFile(src, tempDest);
-  fs.renameSync(tempDest, dest);
-  // 新封面已经成功落盘后再清理旧扩展名，避免复制失败导致卡片丢图。
-  for (const oldExt of ['.png', '.jpg', '.jpeg', '.webp', '.gif']) {
-    const oldFile = path.join(paths.coversDir, `${instanceId}${oldExt}`);
-    if (oldFile !== dest && fs.existsSync(oldFile)) {
-      try { fs.unlinkSync(oldFile); } catch { /* ignore */ }
+  const dest = path.join(
+    paths.coversDir,
+    `${instanceId}--cover-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`,
+  );
+  utils.replaceFile(src, dest);
+  // 每次使用新文件名，避开 Chromium 图片缓存与 Windows 文件句柄。
+  for (const entry of fs.readdirSync(paths.coversDir)) {
+    if (entry === path.basename(dest)) continue;
+    const entryExt = path.extname(entry).toLowerCase();
+    const isLegacyCover = path.basename(entry, entryExt) === instanceId;
+    if (isLegacyCover || entry.startsWith(`${instanceId}--cover-`)) {
+      try { fs.unlinkSync(path.join(paths.coversDir, entry)); } catch { /* ignore */ }
     }
   }
-  return { path: dest };
+  return {
+    path: dest,
+    url: `app://localhost/__sillyclient_cover__/${encodeURIComponent(path.basename(dest))}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -744,25 +875,61 @@ async function doPickZipFile(): Promise<{ path: string; sizeBytes: number }> {
 // uninstallInstance — 前端期望: { success, freedBytes }
 // ---------------------------------------------------------------------------
 
-function uninstallInstance(opts: any): { success: boolean; freedBytes: number } {
-  const { instanceId } = opts;
-  const dir = paths.serverDirFor(instanceId);
+async function uninstallInstance(opts: any): Promise<{ success: boolean; freedBytes: number }> {
+  const instanceId = paths.normalizeInstanceId(opts?.instanceId || '');
+  const dir = resolveInstanceDir(instanceId, opts?.installPath);
+  const registeredPath = instanceStore.getInstanceRecord(instanceId)?.path;
+  const defaultPath = paths.serverDirFor(instanceId);
+  const isKnownPath = path.resolve(dir) === path.resolve(defaultPath)
+    || (registeredPath && path.resolve(dir) === path.resolve(registeredPath));
+  const looksLikeSillyTavern = fs.existsSync(path.join(dir, 'server.js'))
+    && fs.existsSync(path.join(dir, 'package.json'));
+  if (fs.existsSync(dir) && !isKnownPath && !looksLikeSillyTavern) {
+    throw new Error('拒绝删除未登记且无法识别的目录');
+  }
+
+  if (currentInstanceId === instanceId || currentServerDir === dir) {
+    stopCurrentServer();
+  }
+  proc.stopServerOnPort(Number(opts?.port));
+  proc.stopServerForDirectory(dir);
 
   let freedBytes = 0;
   if (fs.existsSync(dir)) {
     freedBytes = utils.dirSize(dir);
-    utils.removeDir(dir);
+    await utils.removeDirWithRetries(dir);
   }
 
-  for (const ext of ['.png', '.jpg', '.jpeg', '.webp', '.gif']) {
-    const cover = path.join(paths.coversDir, `${instanceId}${ext}`);
-    if (fs.existsSync(cover)) {
+  if (fs.existsSync(paths.coversDir)) {
+    for (const entry of fs.readdirSync(paths.coversDir)) {
+      const ext = path.extname(entry).toLowerCase();
+      if (!['.png', '.jpg', '.jpeg', '.webp', '.gif'].includes(ext)) continue;
+      if (path.basename(entry, ext) !== instanceId && !entry.startsWith(`${instanceId}--cover-`)) continue;
+      const cover = path.join(paths.coversDir, entry);
       try {
         freedBytes += fs.statSync(cover).size;
         fs.unlinkSync(cover);
       } catch { /* ignore */ }
     }
   }
+
+  const logFile = path.join(paths.logsDir, `${instanceId}.log`);
+  if (fs.existsSync(logFile)) {
+    try {
+      freedBytes += fs.statSync(logFile).size;
+      fs.rmSync(logFile, { force: true });
+    } catch { /* ignore */ }
+  }
+  const temporaryArchive = path.join(paths.tmpDir, `${instanceId}.zip`);
+  if (fs.existsSync(temporaryArchive)) {
+    try {
+      freedBytes += fs.statSync(temporaryArchive).size;
+      fs.rmSync(temporaryArchive, { force: true });
+    } catch { /* ignore */ }
+  }
+
+  if (fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
+  instanceStore.removeInstanceRecord(instanceId);
 
   return { success: true, freedBytes };
 }

@@ -7,7 +7,7 @@
  * - 环境变量: 把内置 node 目录注入 PATH，npm 子进程能找到 node
  */
 
-import { spawn, ChildProcess, exec } from 'node:child_process';
+import { spawn, ChildProcess, spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getNodeExe, getNpmCli, logsDir } from './paths';
@@ -84,6 +84,7 @@ export function startServer(
   instanceId: string,
   port: number,
   onLog: (msg: string, level?: string) => void,
+  onExit?: (code: number | null) => void,
 ): ChildProcess {
   const nodeExe = getNodeExe();
   const logFile = path.join(logsDir, `${instanceId}.log`);
@@ -102,33 +103,37 @@ export function startServer(
   });
 
   // 用 cmd.exe 运行 .bat
-  serverProcess = spawn(CMD_EXE, ['/c', batPath], {
+  const child = spawn(CMD_EXE, ['/c', batPath], {
     cwd: serverDir,
     env,
     windowsHide: false,
   });
+  serverProcess = child;
 
   const logStream = fs.createWriteStream(logFile, { flags: 'a' });
 
-  serverProcess.stdout?.on('data', (d: Buffer) => {
+  child.stdout?.on('data', (d: Buffer) => {
     const text = d.toString();
     logStream.write(text);
     text.split('\n').filter(Boolean).forEach((line) => onLog(line.trim()));
   });
 
-  serverProcess.stderr?.on('data', (d: Buffer) => {
+  child.stderr?.on('data', (d: Buffer) => {
     const text = d.toString();
     logStream.write(text);
     text.split('\n').filter(Boolean).forEach((line) => onLog(line.trim(), 'error'));
   });
 
-  serverProcess.on('exit', (code) => {
+  child.on('exit', (code) => {
     onLog(`服务端退出 (code=${code})`, code === 0 ? 'success' : 'error');
     logStream.end();
-    serverProcess = null;
+    if (serverProcess === child) {
+      serverProcess = null;
+      onExit?.(code);
+    }
   });
 
-  return serverProcess;
+  return child;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,15 +142,64 @@ export function startServer(
 
 export function stopServer(): void {
   if (serverProcess) {
+    const processToStop = serverProcess;
     try {
-      const pid = serverProcess.pid;
+      const pid = processToStop.pid;
       if (pid) {
-        // /T 杀子进程树，/F 强制
-        exec(`"${CMD_EXE}" /c taskkill /PID ${pid} /T /F`, { windowsHide: true });
+        // 同步等待整个进程树退出，避免删除实例时仍有文件句柄占用目录。
+        spawnSync('taskkill.exe', ['/PID', String(pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+          timeout: 15000,
+        });
       }
+    } catch { /* ignore */ }
+    try {
+      if (!processToStop.killed) processToStop.kill();
     } catch { /* ignore */ }
     serverProcess = null;
   }
+}
+
+/** 清理由指定实例目录启动、但不再由当前 Electron 进程跟踪的服务进程。 */
+export function stopServerForDirectory(serverDir: string): void {
+  const targetBatch = path.join(path.resolve(serverDir), 'start-server.bat');
+  const script = [
+    '$target = $env:SILLYCLIENT_TARGET_BATCH',
+    'if (-not $target) { exit 0 }',
+    'Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |',
+    '  Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($target, [StringComparison]::OrdinalIgnoreCase) -ge 0 } |',
+    '  ForEach-Object { & taskkill.exe /PID $_.ProcessId /T /F 2>$null | Out-Null }',
+  ].join('\n');
+
+  try {
+    spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      stdio: 'ignore',
+      timeout: 20000,
+      env: { ...process.env, SILLYCLIENT_TARGET_BATCH: targetBatch },
+    });
+  } catch { /* ignore */ }
+}
+
+/** 清理占用实例端口的遗留服务，覆盖应用异常退出后的删除场景。 */
+export function stopServerOnPort(port: number): void {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return;
+  const script = [
+    '$targetPort = [int]$env:SILLYCLIENT_TARGET_PORT',
+    'Get-NetTCPConnection -LocalPort $targetPort -State Listen -ErrorAction SilentlyContinue |',
+    '  Select-Object -ExpandProperty OwningProcess -Unique |',
+    '  ForEach-Object { & taskkill.exe /PID $_ /T /F 2>$null | Out-Null }',
+  ].join('\n');
+
+  try {
+    spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+      windowsHide: true,
+      stdio: 'ignore',
+      timeout: 20000,
+      env: { ...process.env, SILLYCLIENT_TARGET_PORT: String(port) },
+    });
+  } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------

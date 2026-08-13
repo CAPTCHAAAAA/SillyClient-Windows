@@ -22,13 +22,39 @@ export const usrDir = path.join(tarvenHome, 'usr');
 export const coversDir = path.join(tarvenHome, 'covers');
 export const tmpDir = path.join(tarvenHome, 'tmp');
 export const logsDir = path.join(tarvenHome, 'logs');
+export const instanceRegistryPath = path.join(tarvenHome, 'instances.json');
 
-export function serverDirFor(instanceId: string): string {
-  const safeId = instanceId
+export function normalizeInstanceId(instanceId: string): string {
+  return instanceId
     .trim()
     .replace(/[^\p{L}\p{N}._-]+/gu, '-')
     .replace(/^[._-]+|[._-]+$/g, '')
     .slice(0, 80) || 'default';
+}
+
+export function serverDirFor(instanceId: string, installPath?: string): string {
+  const safeId = normalizeInstanceId(instanceId);
+  if (installPath?.trim()) {
+    if (!path.isAbsolute(installPath)) {
+      throw new Error('安装目录必须使用绝对路径');
+    }
+    const resolved = path.resolve(installPath);
+    if (resolved === path.parse(resolved).root) {
+      throw new Error('不能把磁盘根目录直接设为实例目录');
+    }
+    if (fs.existsSync(resolved)) {
+      const stat = fs.statSync(resolved);
+      if (!stat.isDirectory()) throw new Error('指定的安装路径不是目录');
+
+      const isExistingInstance = fs.existsSync(path.join(resolved, 'server.js'))
+        && fs.existsSync(path.join(resolved, 'package.json'));
+      if (isExistingInstance) return resolved;
+
+      // 目录选择器返回的是已存在父目录，在其中创建独立实例目录。
+      return path.join(resolved, safeId);
+    }
+    return resolved;
+  }
   return path.join(bootstrapDir, 'servers', safeId);
 }
 

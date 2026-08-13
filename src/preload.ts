@@ -148,7 +148,7 @@ function createNoopPlugin(): Record<string, any> {
 //     ? Capacitor.convertFileSrc(path)
 //     : `file://${path}`;
 //
-// Since getPlatform() returns 'android', convertFileSrc is always called.
+// Since Windows is still reported as a native platform, convertFileSrc is called.
 // It converts "C:\Users\...\cover.png" → "capacitor-file:///C:/Users/.../cover.png"
 // which is served by the capacitor-file:// protocol handler in main.ts.
 // ---------------------------------------------------------------------------
@@ -168,11 +168,11 @@ function convertFileSrc(filePath: string): string {
 // ---------------------------------------------------------------------------
 
 const capacitorShim: Record<string, any> = {
-  // Platform identification — pretend to be Android so the frontend
-  // uses native code paths (isWeb=false, convertFileSrc enabled)
-  getPlatform: () => 'android',
+  // Platform identification — Windows uses the same native plugin paths
+  // without pretending to be Android.
+  getPlatform: () => 'windows',
   isNativePlatform: () => true,
-  getPlatformId: () => 'android',
+  getPlatformId: () => 'windows',
   isPluginAvailable: () => true,
 
   // File URL conversion for cover images
@@ -287,8 +287,3 @@ Object.defineProperty(win, 'Capacitor', {
   configurable: true,
   enumerable: true,
 });
-
-// Step 4: Provide androidBridge so @capacitor/core's getPlatformId() returns
-// 'android'. This is redundant (we already protect getPlatformId with our own
-// implementation) but included for maximum compatibility.
-win.androidBridge = {};
