@@ -2,13 +2,34 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  frontend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.16.0
+          cache: pnpm
+          cache-dependency-path: web/capacitor-ui/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: web/capacitor-ui
+        run: pnpm install --frozen-lockfile
+      - name: Build frontend
+        working-directory: web/capacitor-ui
+        run: pnpm run build
+      - name: Sync Windows frontend
+        run: node scripts/sync-frontend.mjs --source web/capacitor-ui/dist
+
   typescript:
     runs-on: windows-latest
     steps:

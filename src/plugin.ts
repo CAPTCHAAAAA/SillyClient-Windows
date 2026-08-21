@@ -10,6 +10,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as https from 'node:https';
 import * as http from 'node:http';
+import * as nodeNet from 'node:net';
 
 import * as paths from './runtime/paths';
 import * as proc from './runtime/process';
@@ -151,6 +152,8 @@ export async function handle(method: string, options: any): Promise<any> {
       return doPickImage(options);
     case 'pickZipFile':
       return doPickZipFile();
+    case 'saveTextFile':
+      return doSaveTextFile(options);
     case 'uninstallInstance':
       return uninstallInstance(options);
     case 'cleanGarbage':
@@ -168,8 +171,7 @@ export async function handle(method: string, options: any): Promise<any> {
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
-    const net = require('node:net');
-    const tester = net.createServer();
+    const tester = nodeNet.createServer();
     tester.once('error', () => resolve(false));
     tester.once('listening', () => {
       tester.close(() => resolve(true));
@@ -869,6 +871,44 @@ async function doPickZipFile(): Promise<{ path: string; sizeBytes: number }> {
   const p = result.filePaths[0];
   const stat = fs.statSync(p);
   return { path: p, sizeBytes: stat.size };
+}
+
+// ---------------------------------------------------------------------------
+// saveTextFile — 前端期望: Promise<void>
+// ---------------------------------------------------------------------------
+
+async function doSaveTextFile(opts: any): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('主窗口不可用，无法打开保存位置');
+  }
+  if (opts?.content == null) {
+    throw new Error('缺少导出内容');
+  }
+
+  const rawName = typeof opts.fileName === 'string' ? opts.fileName : '';
+  const safeName = rawName
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    .replace(/^[._]+/, '')
+    .trim()
+    .slice(0, 180) || 'sillyclient-export.json';
+
+  paths.ensureDirs();
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: '导出',
+    defaultPath: path.join(paths.tmpDir, safeName),
+  });
+  if (result.canceled || !result.filePath) return;
+
+  const temporary = path.join(
+    path.dirname(result.filePath),
+    `.sillyclient-${process.pid}-${Date.now()}.tmp`,
+  );
+  try {
+    fs.writeFileSync(temporary, String(opts.content), 'utf8');
+    utils.replaceFile(temporary, result.filePath);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------

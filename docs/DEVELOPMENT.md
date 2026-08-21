@@ -10,9 +10,8 @@ npm run check
 npm run build
 ```
 
-默认同步路径要求 `SillyClient_Android` 与本仓库处在同一工作区。其他布局使用 `Sync-Frontend.ps1 -Source <dist>`。
-同步会校验 Android 生成的 `sillyclient-build.json`，并更新 Windows 仓库中的
-`frontend.lock.json`。使用其他布局时同时传入 `-Manifest <manifest>`。
+默认同步路径使用本仓库 `web/capacitor-ui/dist`。同步会计算本仓库前端源码与构建摘要，
+并更新 Windows 仓库中的 `frontend.lock.json`。需要沿用外部 manifest 时传入 `-Manifest <manifest>`。
 
 ## 开发运行
 

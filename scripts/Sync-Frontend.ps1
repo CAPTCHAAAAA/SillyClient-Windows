@@ -10,18 +10,18 @@ $ErrorActionPreference = "Stop"
 $repository = Split-Path -Parent $PSScriptRoot
 if (-not $Source) {
     $workspace = Split-Path -Parent $repository
-    $Source = Join-Path $workspace "SillyClient_Android\web\capacitor-ui\dist"
-}
-if (-not $Manifest) {
-    $workspace = Split-Path -Parent $repository
-    $Manifest = Join-Path $workspace "SillyClient_Android\app\src\main\assets\public\sillyclient-build.json"
+    $Source = Join-Path $repository "web\capacitor-ui\dist"
 }
 
 $sourceDirectory = [IO.Path]::GetFullPath($Source)
-$manifestFile = [IO.Path]::GetFullPath($Manifest)
+$manifestFile = if ($Manifest) { [IO.Path]::GetFullPath($Manifest) } else { "" }
 $syncScript = Join-Path $PSScriptRoot "sync-frontend.mjs"
 
-& node $syncScript --source $sourceDirectory --manifest $manifestFile
+$syncArgs = @("--source", $sourceDirectory)
+if ($manifestFile) {
+    $syncArgs += @("--manifest", $manifestFile)
+}
+& node $syncScript @syncArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Frontend sync failed."
 }

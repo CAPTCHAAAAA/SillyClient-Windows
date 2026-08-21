@@ -77,6 +77,8 @@ let tavernWindow: BrowserWindow | null = null;
 let currentTavernUrl: string | null = null;
 let currentTavernInstanceId: string | null = null;
 let topColorTimer: ReturnType<typeof setInterval> | null = null;
+let lastTopColorHex: string | null = null;
+let samplingTopColor = false;
 let frontendDistDir: string | null = null;
 let contentOpenMode: ContentOpenMode = 'webview';
 
@@ -265,10 +267,6 @@ function createMainWindow(): void {
     pushMode('launcher');
   });
 
-  mainWindow.on('resize', () => {
-    // tavern 是独立窗口，无需同步
-  });
-
   mainWindow.on('closed', () => {
     plugin.setMainWindow?.(null);
     mainWindow = null;
@@ -365,7 +363,13 @@ async function enterImmersive(url: string, instanceId?: string): Promise<void> {
 
   // 外部链接在系统浏览器打开
   tavernWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-    shell.openExternal(openUrl);
+    if (contentOpenMode === 'browser') {
+      shell.openExternal(openUrl);
+      return { action: 'deny' };
+    }
+    if (/^https?:/i.test(openUrl)) {
+      tavernWindow?.loadURL(openUrl);
+    }
     return { action: 'deny' };
   });
 
@@ -402,6 +406,7 @@ function exitImmersive(): void {
 function destroyTavernWindow(): void {
   if (!tavernWindow) return;
   stopTopColorPoll();
+  lastTopColorHex = null;
   const win = tavernWindow;
   tavernWindow = null;
   try { win.destroy(); } catch { /* ignore */ }
@@ -453,6 +458,8 @@ function stopTopColorPoll(): void {
 
 async function sampleTopColor(): Promise<void> {
   if (!tavernWindow) return;
+  if (samplingTopColor) return;
+  samplingTopColor = true;
   try {
     const script = `
       (function() {
@@ -472,12 +479,15 @@ async function sampleTopColor(): Promise<void> {
     const result = await tavernWindow.webContents.executeJavaScript(script);
     if (result && typeof result === 'string') {
       const hex = rgbToHex(result);
-      if (hex) {
+      if (hex && hex !== lastTopColorHex) {
+        lastTopColorHex = hex;
         tavernWindow.setBackgroundColor(hex);
       }
     }
   } catch {
     // ignore sampling errors
+  } finally {
+    samplingTopColor = false;
   }
 }
 

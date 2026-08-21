@@ -19,13 +19,13 @@ npm run prepare:runtime
 
 `prepare:runtime` 下载 Node.js 22.16.0 Windows x64 官方压缩包，并使用同目录的 `SHASUMS256.txt` 校验后写入 `runtime/node/`。
 
-共享控制台在 Android 仓库构建。默认工作区结构下可以直接同步：
+本仓库维护 Windows 适配后的前端源码，默认工作区结构下可以直接构建同步：
 
 ```powershell
-Set-Location ..\SillyClient_Android\web\capacitor-ui
+Set-Location .\web\capacitor-ui
 pnpm install --frozen-lockfile
 pnpm run build
-Set-Location ..\..\..\SillyClient_Windows
+Set-Location ..\..
 npm run sync:frontend
 ```
 

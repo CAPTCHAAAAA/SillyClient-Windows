@@ -12,10 +12,19 @@ for (let index = 2; index < process.argv.length; index += 2) {
 }
 
 const source = path.resolve(argumentsMap.get('--source') || '');
-const manifestPath = path.resolve(argumentsMap.get('--manifest') || '');
+const manifestArgument = argumentsMap.get('--manifest');
+const manifestPath = manifestArgument ? path.resolve(manifestArgument) : '';
 const destination = path.join(repository, 'frontend-dist');
 const lockPath = path.join(repository, 'frontend.lock.json');
 const manifestName = 'sillyclient-build.json';
+const ignoredSourceDirectories = new Set([
+  'dist',
+  'node_modules',
+  '.vite-temp',
+  '.microcompact',
+  '.todo',
+  '.plan',
+]);
 const textExtensions = new Set([
   '.css', '.html', '.js', '.json', '.md', '.mjs', '.toml',
   '.ts', '.tsx', '.txt', '.yaml', '.yml',
@@ -24,13 +33,15 @@ const textExtensions = new Set([
 if (!fs.existsSync(path.join(source, 'index.html'))) {
   throw new Error(`Frontend build not found at ${source}`);
 }
-if (!fs.existsSync(manifestPath)) {
-  throw new Error(`Frontend manifest not found at ${manifestPath}`);
-}
+const sourceRoot = path.dirname(source);
+const manifest = manifestPath && fs.existsSync(manifestPath)
+  ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  : null;
 
-function collectFiles(directory) {
+function collectFiles(directory, { sourceTree = false } = {}) {
   const files = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (sourceTree && ignoredSourceDirectories.has(entry.name)) continue;
     if (entry.isSymbolicLink()) continue;
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) files.push(...collectFiles(absolutePath));
@@ -43,9 +54,9 @@ function collectFiles(directory) {
   });
 }
 
-function digestTree(directory) {
+function digestTree(directory, options) {
   const hash = crypto.createHash('sha256');
-  for (const filePath of collectFiles(directory)) {
+  for (const filePath of collectFiles(directory, options)) {
     const relativePath = path.relative(directory, filePath).split(path.sep).join('/');
     const extension = path.extname(filePath).toLowerCase();
     const raw = fs.readFileSync(filePath);
@@ -62,22 +73,23 @@ function digestTree(directory) {
   return hash.digest('hex');
 }
 
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const assetsSha256 = digestTree(source);
-if (manifest.schema !== 1 || manifest.assetsSha256 !== assetsSha256) {
-  throw new Error('Frontend build does not match the Android frontend manifest.');
+if (manifest && (manifest.schema !== 1 || manifest.assetsSha256 !== assetsSha256)) {
+  throw new Error('Frontend build does not match the provided frontend manifest.');
 }
 
 fs.rmSync(destination, { recursive: true, force: true });
 fs.cpSync(source, destination, { recursive: true });
-fs.copyFileSync(manifestPath, path.join(destination, manifestName));
+if (manifestPath && fs.existsSync(manifestPath)) {
+  fs.copyFileSync(manifestPath, path.join(destination, manifestName));
+}
 
 const lock = {
   schema: 1,
-  sourceRepository: 'CAPTCHAAAAA/SillyClient-Android',
+  sourceRepository: 'CAPTCHAAAAA/SillyClient-Windows',
   sourcePath: 'web/capacitor-ui',
-  sourceSha256: manifest.sourceSha256,
-  assetsSha256: manifest.assetsSha256,
+  sourceSha256: manifest?.sourceSha256 || digestTree(sourceRoot, { sourceTree: true }),
+  assetsSha256,
 };
 fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 console.log(`Verified and synced ${source} -> ${destination}`);
