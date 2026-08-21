@@ -5,7 +5,7 @@
  * 返回类型严格匹配前端 capacitor-plugin.ts 的接口定义。
  */
 
-import { app, BrowserWindow, dialog, net } from 'electron';
+import { BrowserWindow, dialog, net } from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as https from 'node:https';
@@ -144,8 +144,6 @@ export async function handle(method: string, options: any): Promise<any> {
       return { success: true };
     case 'fetchReleases':
       return fetchReleases();
-    case 'checkAppUpdate':
-      return checkAppUpdate();
     case 'pickDirectory':
       return doPickDirectory();
     case 'pickImage':
@@ -708,83 +706,6 @@ async function fetchReleases(): Promise<{ releases: any[] }> {
   }
 
   throw new Error(`无法获取 SillyTavern 版本：${lastError?.message || '网络请求失败'}`);
-}
-
-// checkAppUpdate — 检查 SillyClient 主仓库的最新正式版本。
-async function checkAppUpdate(): Promise<{
-  currentVersion: string;
-  latestVersion: string;
-  updateAvailable: boolean;
-  releaseUrl?: string;
-  publishedAt?: string;
-}> {
-  const currentVersion = app.getVersion();
-  const apiUrl = 'https://api.github.com/repos/CAPTCHAAAAA/SillyClient/releases/latest';
-  let release: any = null;
-  let lastError: Error | null = null;
-  for (const [index, url] of [apiUrl, `https://gh-proxy.com/${apiUrl}`].entries()) {
-    try {
-      const response = await net.fetch(url, {
-        headers: {
-          'User-Agent': 'SillyClient-Windows',
-          'Accept': 'application/vnd.github+json',
-        },
-        signal: AbortSignal.timeout(index === 0 ? 8000 : 15000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      release = await response.json() as any;
-      if (release?.tag_name) break;
-    } catch (error: any) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      release = null;
-    }
-  }
-
-  let latestVersion = String(release?.tag_name || '').replace(/^v/i, '').trim();
-  let releaseUrl = typeof release?.html_url === 'string' ? release.html_url : undefined;
-  let publishedAt = typeof release?.published_at === 'string' ? release.published_at : undefined;
-  if (!latestVersion) {
-    try {
-      const response = await net.fetch('https://data.jsdelivr.com/v1/package/gh/CAPTCHAAAAA/SillyClient', {
-        headers: {
-          'User-Agent': 'SillyClient-Windows',
-          'Accept': 'application/json',
-        },
-        signal: AbortSignal.timeout(15000),
-      });
-      const metadata = await response.json() as any;
-      if (!response.ok || !Array.isArray(metadata?.versions) || metadata.versions.length === 0) {
-        throw new Error(`jsDelivr HTTP ${response.status}`);
-      }
-      latestVersion = String(metadata.versions[0] || '').replace(/^v/i, '').trim();
-      releaseUrl = 'https://github.com/CAPTCHAAAAA/SillyClient/releases/latest';
-      publishedAt = undefined;
-    } catch (error: any) {
-      const fallbackError = error instanceof Error ? error : new Error(String(error));
-      throw new Error(`无法检查 SillyClient 更新：${fallbackError.message || lastError?.message || '网络请求失败'}`);
-    }
-  }
-  if (!latestVersion) throw new Error('未找到最新版本');
-  return {
-    currentVersion,
-    latestVersion,
-    updateAvailable: compareVersions(currentVersion, latestVersion) < 0,
-    releaseUrl,
-    publishedAt,
-  };
-}
-
-function compareVersions(left: string, right: string): number {
-  const parts = (value: string) => value.replace(/^v/i, '').split('-')[0]
-    .split('.')
-    .map((part) => Number.parseInt(part, 10) || 0);
-  const a = parts(left);
-  const b = parts(right);
-  for (let index = 0; index < 3; index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
