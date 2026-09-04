@@ -16,6 +16,8 @@ import * as paths from './runtime/paths';
 import * as proc from './runtime/process';
 import * as utils from './runtime/utils';
 import * as instanceStore from './runtime/instances';
+import { installCompanionPreset } from './runtime/companion-presets';
+import type { CompanionPresetTransaction } from './runtime/companion-presets';
 import {
   clearRemoteBasicAuth,
   getRemoteBasicAuthStatus,
@@ -192,7 +194,7 @@ async function findAvailablePort(startPort: number, log: (msg: string, level?: s
 // ---------------------------------------------------------------------------
 
 async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
-  const { port, instanceId, version, zipballUrl, localZipPath, config, installPath } = opts;
+  const { port, instanceId, version, zipballUrl, localZipPath, config, installPath, companionPreset } = opts;
   const safeInstanceId = paths.normalizeInstanceId(instanceId);
 
   const log = (msg: string, level?: string) => notify('log', { message: msg, level });
@@ -204,6 +206,7 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
   let targetServerDir = '';
   let temporaryArchive = '';
   let preserveSelectedDirectory = false;
+  let companionPresetTransaction: CompanionPresetTransaction | null = null;
 
   try {
     paths.ensureDirs();
@@ -281,6 +284,12 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
       }
     }
 
+    if (companionPreset) {
+      progress(82, '应用主题预设');
+      companionPresetTransaction = installCompanionPreset(targetServerDir, companionPreset);
+      log(companionPresetTransaction.applied ? '已应用 SC Bordeaux 主题预设' : 'SC Bordeaux 主题预设已就绪');
+    }
+
     // 检测端口可用性，自动切换
     const actualPort = await findAvailablePort(port, log);
     if (actualPort !== port) {
@@ -327,6 +336,7 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
     instanceStore.registerInstance(safeInstanceId, targetServerDir, createdAt);
     instanceStore.beginInstanceUsage(safeInstanceId, targetServerDir);
     startUsageCheckpoint(safeInstanceId);
+    companionPresetTransaction?.commit();
     progress(100, '就绪');
     log('服务就绪', 'success');
 
@@ -334,6 +344,7 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
     return { ready: true };
   } catch (e: any) {
     if (currentInstanceId === safeInstanceId) stopCurrentServer();
+    companionPresetTransaction?.rollback();
     if (temporaryArchive) {
       try { fs.unlinkSync(temporaryArchive); } catch { /* ignore */ }
     }
