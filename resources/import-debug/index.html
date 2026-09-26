@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+  <title>目录导入 · 调试</title>
+  <style>
+    :root { color-scheme: light dark; font: 14px system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 20px; }
+    form { display: grid; gap: 14px; }
+    label { display: block; margin-bottom: 5px; }
+    .path { display: grid; grid-template-columns: minmax(0, 1fr) 62px; gap: 8px; }
+    input:not([type=radio]) { width: 100%; min-width: 0; padding: 6px; }
+    button { min-height: 30px; cursor: pointer; }
+    button:disabled { cursor: default; }
+    .actions { display: flex; gap: 8px; }
+    progress { width: 100%; height: 7px; }
+    output { display: block; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 76px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <form>
+    <fieldset>
+      <legend>接入方式</legend>
+      <label><input type="radio" name="mode" value="copy" checked>复制迁移</label>
+      <label><input type="radio" name="mode" value="in-place">原地接管（不推荐）</label>
+    </fieldset>
+    <strong id="mode-notice"></strong>
+    <details>
+      <summary>复制范围、原地接管风险与旧文件夹清理</summary>
+      <p data-notice="scope" data-copy-only></p>
+      <p data-notice="takeover"></p>
+      <p data-notice="cleanup" data-copy-only></p>
+      <p data-notice="responsibility"></p>
+    </details>
+    <div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+        <label for="source" style="margin-bottom: 0;">旧酒馆路径（文件夹或备份 ZIP）</label>
+        <button type="button" id="btn-discover" style="font-size: 12px; padding: 2px 8px; min-height: 24px;">🔍 自动扫描发现</button>
+      </div>
+      <div id="discover-container" hidden style="margin-bottom: 8px;">
+        <select id="discover-select" style="width: 100%; padding: 6px; font-size: 13px;">
+          <option value="">-- 请选择扫描到的旧酒馆 --</option>
+        </select>
+      </div>
+      <div class="path" style="grid-template-columns: minmax(0, 1fr) 70px 70px;">
+        <input id="source" required placeholder="请选择旧酒馆目录或 .zip 压缩包">
+        <button type="button" data-pick="source">选目录</button>
+        <button type="button" data-pick="zip" data-copy-only>选 ZIP</button>
+      </div>
+    </div>
+
+    <div id="destination-row" data-copy-only><label for="destination">导入副本保存到</label><div class="path"><input id="destination" required><button type="button" data-pick="destination">选择</button></div></div>
+    <div class="actions"><button type="submit" disabled>开始复制迁移</button><button type="button" id="cancel" disabled>取消</button></div>
+    <progress value="0" max="100" aria-label="导入进度"></progress>
+    <output role="status">等待选择旧酒馆文件夹</output>
+  </form>
+  <script src="window.js"></script>
+</body>
+</html>

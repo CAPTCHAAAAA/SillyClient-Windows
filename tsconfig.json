@@ -14,7 +14,15 @@
     "resolveJsonModule": true,
     "declaration": false,
     "sourceMap": true,
-    "types": ["node"]
+    "types": ["node"],
+    "typeRoots": [
+      "../../Local/cache/windows/node_modules/@types",
+      "node_modules/@types"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "electron": ["../../Local/cache/windows/node_modules/electron"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "web"]

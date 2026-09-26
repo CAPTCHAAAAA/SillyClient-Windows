@@ -8,6 +8,20 @@ import * as pluginModule from './plugin';
 // @ts-ignore — module './runtime/paths' is created separately.
 import * as pathsModule from './runtime/paths';
 import { loadRemoteBasicAuth } from './remote-auth';
+import { distribution, sillyClientHome } from './runtime/paths';
+import { beginImport, cancelImport, isImportRunning } from './windows-import';
+import { showImportDebugWindow } from './import-debug';
+import { chatLabelScript, resolveLocalChatInstanceId } from './chat-labels';
+import { getInstanceRecord } from './runtime/instances';
+import { IMPORT_SETTINGS } from './runtime/import-instance';
+
+if (distribution.isTest) {
+  const profile = path.join(sillyClientHome, 'electron-profile');
+  fs.mkdirSync(profile, { recursive: true });
+  app.setName(distribution.productName);
+  app.setPath('userData', profile);
+  app.setPath('sessionData', profile);
+}
 
 // ---------------------------------------------------------------------------
 // Module contracts (defensive: these modules are implemented by other agents)
@@ -19,6 +33,7 @@ interface PluginContract {
   notify?(eventName: string, data: any): void;
   isServerReady?(): boolean;
   getCurrentUrl?(): string | null;
+  getRunningInstance?(): { instanceId: string; url: string } | null;
   stopCurrentServer?(): void;
   cleanup?(): void;
 }
@@ -41,7 +56,7 @@ const paths = pathsModule as unknown as PathsContract;
 const APP_PROTOCOL = 'app';
 const FILE_PROTOCOL = 'capacitor-file';
 const COVER_ROUTE_PREFIX = '__sillyclient_cover__/';
-const APP_USER_MODEL_ID = 'com.sillyclient';
+const APP_USER_MODEL_ID = distribution.appId;
 const DEFAULT_BG = '#070408';
 const WINDOW_ICON = path.join(__dirname, '..', 'build', 'icon.ico');
 
@@ -154,7 +169,7 @@ function registerAppProtocol(): void {
         return new Response(new Uint8Array(data), {
           headers: {
             'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-            'Cache-Control': 'no-store, max-age=0',
+            'Cache-Control': 'public, max-age=86400',
           },
         });
       } catch {
@@ -177,22 +192,27 @@ function registerAppProtocol(): void {
       exists = false;
     }
 
-    if (!exists) {
-      // SPA fallback: no-extension paths serve index.html
-      const ext = path.extname(reqPath);
-      if (ext) {
-        return new Response('Not found', { status: 404 });
-      }
+    const isSpaFallback = !exists && !path.extname(reqPath);
+    if (!exists && !isSpaFallback) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    if (isSpaFallback) {
       filePath = path.join(frontendDistDir, 'index.html');
     }
 
     try {
       const data = await fs.promises.readFile(filePath);
-      const mime = MIME_TYPES[path.extname(filePath)] || 'application/octet-stream';
+      const ext = path.extname(filePath).toLowerCase();
+      const mime = MIME_TYPES[ext] || 'application/octet-stream';
+      const isHtml = ext === '.html';
+      const cacheControl = isHtml
+        ? 'no-cache'
+        : 'public, max-age=31536000, immutable';
       return new Response(new Uint8Array(data), {
         headers: {
           'Content-Type': mime,
-          'Cache-Control': 'no-store, max-age=0',
+          'Cache-Control': cacheControl,
         },
       });
     } catch {
@@ -225,7 +245,7 @@ function registerCapacitorFileProtocol(): void {
       return new Response(new Uint8Array(data), {
         headers: {
           'Content-Type': mime,
-          'Cache-Control': 'no-store, max-age=0',
+          'Cache-Control': 'public, max-age=86400',
         },
       });
     } catch {
@@ -246,7 +266,7 @@ function createMainWindow(): void {
     minHeight: 600,
     frame: true,
     backgroundColor: DEFAULT_BG,
-    title: 'SillyClient',
+    title: distribution.productName,
     icon: WINDOW_ICON,
     show: false,
     webPreferences: {
@@ -257,6 +277,9 @@ function createMainWindow(): void {
     },
   });
 
+  if (distribution.isTest) {
+    mainWindow.on('page-title-updated', event => event.preventDefault());
+  }
   mainWindow.loadURL(`${APP_PROTOCOL}://localhost/`);
 
   mainWindow.once('ready-to-show', () => {
@@ -270,6 +293,12 @@ function createMainWindow(): void {
   mainWindow.on('closed', () => {
     plugin.setMainWindow?.(null);
     mainWindow = null;
+  });
+  mainWindow.on('close', event => {
+    if (isImportRunning()) {
+      event.preventDefault();
+      cancelImport();
+    }
   });
 
   plugin.setMainWindow?.(mainWindow);
@@ -373,9 +402,28 @@ async function enterImmersive(url: string, instanceId?: string): Promise<void> {
     return { action: 'deny' };
   });
 
+  const openedWindow = tavernWindow;
+  const injectChatAdapter = () => {
+    try {
+      const loadedUrl = openedWindow.webContents.getURL();
+      if (!loadedUrl || new URL(loadedUrl).origin !== targetOrigin) return;
+      const localId = resolveLocalChatInstanceId(loadedUrl, instanceId, plugin.getRunningInstance?.() ?? null);
+      if (localId) {
+        void openedWindow.webContents.executeJavaScript(chatLabelScript()).catch(() => {
+          console.warn('[SillyClient] Chat display adapter could not be loaded.');
+        });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   tavernWindow.webContents.on('did-finish-load', () => {
     startTopColorPoll();
+    injectChatAdapter();
   });
+  tavernWindow.webContents.on('dom-ready', injectChatAdapter);
+
 
   tavernWindow.on('closed', () => {
     stopTopColorPoll();
@@ -507,6 +555,11 @@ function rgbToHex(rgb: string): string | null {
 function registerIpc(): void {
   ipcMain.handle('tarven-env', async (_event, payload: { method: string; options?: any }) => {
     const { method, options } = payload || {};
+    if (isImportRunning() && [
+      'provisionAndStart', 'uninstallInstance', 'cleanGarbage', 'deleteGarbageItem',
+    ].includes(method)) {
+      throw new Error('正在导入旧酒馆，请等待完成或先取消导入。');
+    }
 
     // Window/view methods handled locally (need BrowserWindow access)
     switch (method) {
@@ -582,8 +635,26 @@ app.whenReady().then(() => {
   registerCapacitorFileProtocol();
   registerIpc();
 
-  Menu.setApplicationMenu(null);
+  Menu.setApplicationMenu(Menu.buildFromTemplate([{
+    label: '文件',
+    submenu: [
+      {
+        id: 'import-old-tavern', label: '导入旧酒馆…', accelerator: 'Ctrl+Shift+I',
+        click: () => {
+          if (mainWindow) void beginImport(mainWindow, pluginModule.isRuntimeBusy);
+        },
+      },
+      { id: 'cancel-data-import', label: '取消导入', enabled: false, click: cancelImport },
+      {
+        id: 'import-debug', label: '目录导入调试…', accelerator: 'Ctrl+Shift+M',
+        click: () => { if (mainWindow) showImportDebugWindow(mainWindow, pluginModule.isRuntimeBusy); },
+      },
+    ],
+  }]));
   createMainWindow();
+  if (mainWindow && process.argv.includes('--import-debug')) {
+    showImportDebugWindow(mainWindow, pluginModule.isRuntimeBusy);
+  }
 });
 
 let cleanupCompleted = false;
@@ -600,6 +671,11 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', event => {
+  if (isImportRunning()) {
+    event.preventDefault();
+    cancelImport();
+    return;
+  }
   cleanupBeforeQuit();
 });

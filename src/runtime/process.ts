@@ -85,6 +85,7 @@ export function startServer(
   port: number,
   onLog: (msg: string, level?: string) => void,
   onExit?: (code: number | null) => void,
+  externalConfigPath?: string,
 ): ChildProcess {
   const nodeExe = getNodeExe();
   const logFile = path.join(logsDir, `${instanceId}.log`);
@@ -92,9 +93,9 @@ export function startServer(
   // 生成 start-server.bat
   const batContent = `@echo off\r\ncd /d "${serverDir}"\r\nset NODE_ENV=production\r\nset AUTO_LAUNCH=false\r\nset NO_BROWSER=true\r\n"${nodeExe}" server.js\r\n`;
   const batPath = path.join(serverDir, 'start-server.bat');
-  fs.writeFileSync(batPath, batContent, 'utf-8');
+  if (!externalConfigPath) fs.writeFileSync(batPath, batContent, 'utf-8');
 
-  onLog(`启动: start-server.bat (端口 ${port})`);
+  onLog(externalConfigPath ? `原地启动，使用独立配置 (端口 ${port})` : `启动: start-server.bat (端口 ${port})`);
 
   const env = buildEnv({
     NODE_ENV: 'production',
@@ -102,11 +103,16 @@ export function startServer(
     NO_BROWSER: 'true',
   });
 
-  // 用 cmd.exe 运行 .bat
-  const child = spawn(CMD_EXE, ['/c', batPath], {
+  // 保持写入 start-server.bat 以便用户在目录中直接手动双击运行；
+  // 但 SillyClient 内部直接通过 nodeExe 执行 server.js，避开 cmd.exe 中介进程开销与进程树信号中断。
+  const serverArgs = externalConfigPath
+    ? [path.join(serverDir, 'server.js'), '--configPath', externalConfigPath]
+    : [path.join(serverDir, 'server.js')];
+  const child = spawn(nodeExe, serverArgs, {
     cwd: serverDir,
     env,
-    windowsHide: false,
+    windowsHide: true,
+    shell: false,
   });
   serverProcess = child;
 
@@ -126,12 +132,19 @@ export function startServer(
 
   child.on('exit', (code) => {
     onLog(`服务端退出 (code=${code})`, code === 0 ? 'success' : 'error');
-    logStream.end();
     if (serverProcess === child) {
       serverProcess = null;
       onExit?.(code);
     }
   });
+  child.on('error', () => {
+    onLog('无法启动内置 Node.js，请检查运行时和原目录依赖。', 'error');
+    if (serverProcess === child) {
+      serverProcess = null;
+      onExit?.(null);
+    }
+  });
+  child.on('close', () => logStream.end());
 
   return child;
 }

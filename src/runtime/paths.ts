@@ -8,6 +8,7 @@
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
+import { resolveDistribution } from './distribution';
 
 // ---------------------------------------------------------------------------
 // 数据目录（%LOCALAPPDATA%/SillyClient/tarven/...）
@@ -15,7 +16,10 @@ import * as fs from 'node:fs';
 
 const LOCAL_APP = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
 
-export const sillyClientHome = path.join(LOCAL_APP, 'SillyClient');
+export const distribution = resolveDistribution(JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
+));
+export const sillyClientHome = path.join(LOCAL_APP, distribution.dataDirectoryName);
 export const tarvenHome = path.join(sillyClientHome, 'tarven');
 export const bootstrapDir = path.join(tarvenHome, 'bootstrap');
 export const usrDir = path.join(tarvenHome, 'usr');
@@ -30,6 +34,23 @@ export function normalizeInstanceId(instanceId: string): string {
     .replace(/[^\p{L}\p{N}._-]+/gu, '-')
     .replace(/^[._-]+|[._-]+$/g, '')
     .slice(0, 80) || 'default';
+}
+
+export function assertManagedInstancePath(directory: string): string {
+  const resolved = path.resolve(directory);
+  if (!distribution.isTest) return resolved;
+  const root = path.join(bootstrapDir, 'servers');
+  const relative = path.relative(root, resolved);
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('测试版只管理独立测试数据目录中的实例，请勿选择正式版或旧酒馆目录。');
+  }
+  for (let current = resolved; ; current = path.dirname(current)) {
+    if (fs.existsSync(current) && fs.lstatSync(current).isSymbolicLink()) {
+      throw new Error('测试版实例目录不能经过目录链接。');
+    }
+    if (current === path.parse(current).root) break;
+  }
+  return resolved;
 }
 
 export function serverDirFor(instanceId: string, installPath?: string): string {
@@ -48,14 +69,14 @@ export function serverDirFor(instanceId: string, installPath?: string): string {
 
       const isExistingInstance = fs.existsSync(path.join(resolved, 'server.js'))
         && fs.existsSync(path.join(resolved, 'package.json'));
-      if (isExistingInstance) return resolved;
+      if (isExistingInstance) return assertManagedInstancePath(resolved);
 
       // 目录选择器返回的是已存在父目录，在其中创建独立实例目录。
-      return path.join(resolved, safeId);
+      return assertManagedInstancePath(path.join(resolved, safeId));
     }
-    return resolved;
+    return assertManagedInstancePath(resolved);
   }
-  return path.join(bootstrapDir, 'servers', safeId);
+  return assertManagedInstancePath(path.join(bootstrapDir, 'servers', safeId));
 }
 
 export function ensureDirs(): void {
