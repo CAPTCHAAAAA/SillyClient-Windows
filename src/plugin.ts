@@ -63,6 +63,10 @@ export function getCurrentUrl(): string | null {
   return currentUrl;
 }
 
+export function getCurrentInstanceId(): string | null {
+  return currentInstanceId;
+}
+
 export function stopCurrentServer(): void {
   stopCurrentServerInternal(true);
 }

@@ -19,6 +19,7 @@ interface PluginContract {
   notify?(eventName: string, data: any): void;
   isServerReady?(): boolean;
   getCurrentUrl?(): string | null;
+  getCurrentInstanceId?(): string | null;
   stopCurrentServer?(): void;
   cleanup?(): void;
 }
@@ -520,10 +521,11 @@ function registerIpc(): void {
 
       case 'returnToTavern': {
         const url = currentTavernUrl || plugin.getCurrentUrl?.();
+        const instanceId = currentTavernInstanceId || plugin.getCurrentInstanceId?.();
         if (!url || !plugin.isServerReady?.()) {
           throw new Error('当前没有正在运行的实例');
         }
-        await enterImmersive(url, currentTavernInstanceId || undefined);
+        await enterImmersive(url, instanceId || undefined);
         return { success: true };
       }
 
