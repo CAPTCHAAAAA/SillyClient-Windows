@@ -122,8 +122,43 @@ function resolveFrontendDist(): string | null {
   return null;
 }
 
+const frontendFileCache = new Map<string, { data: Buffer; mime: string; cacheControl: string }>();
+
+function preloadFrontendDist(distDir: string): void {
+  frontendFileCache.clear();
+  try {
+    const walk = (currentDir: string, relativePrefix: string) => {
+      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        const relPath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walk(fullPath, relPath);
+        } else {
+          try {
+            const data = fs.readFileSync(fullPath);
+            const ext = path.extname(entry.name).toLowerCase();
+            const mime = MIME_TYPES[ext] || 'application/octet-stream';
+            // Vite 哈希静态资源和字体完全不可变，开启强缓存以激活 Chromium V8 Bytecode 缓存
+            const isImmutable = relPath.startsWith('assets/') || relPath.startsWith('fonts/');
+            const cacheControl = isImmutable
+              ? 'public, max-age=31536000, immutable'
+              : 'no-cache';
+            frontendFileCache.set(relPath, { data, mime, cacheControl });
+          } catch {
+            // ignore
+          }
+        }
+      }
+    };
+    walk(distDir, '');
+  } catch (e) {
+    console.error('[SillyClient] Failed to preload frontend dist', e);
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Custom protocol: app:// (serves frontend dist with SPA fallback)
+// Custom protocol: app:// (serves frontend dist with in-memory V8 cache)
 // ---------------------------------------------------------------------------
 
 function registerAppProtocol(): void {
@@ -155,7 +190,7 @@ function registerAppProtocol(): void {
         return new Response(new Uint8Array(data), {
           headers: {
             'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-            'Cache-Control': 'no-store, max-age=0',
+            'Cache-Control': 'public, max-age=86400',
           },
         });
       } catch {
@@ -163,41 +198,45 @@ function registerAppProtocol(): void {
       }
     }
 
-    // Path traversal guard
+    // 内存极速匹配 (0ms 零磁盘 IO，直接内存命中)
+    const cached = frontendFileCache.get(reqPath || 'index.html');
+    if (cached) {
+      return new Response(new Uint8Array(cached.data), {
+        headers: {
+          'Content-Type': cached.mime,
+          'Cache-Control': cached.cacheControl,
+        },
+      });
+    }
+
+    // SPA fallback (无扩展名路径返回 index.html)
+    const fallback = frontendFileCache.get('index.html');
+    if (fallback && !path.extname(reqPath)) {
+      return new Response(new Uint8Array(fallback.data), {
+        headers: {
+          'Content-Type': fallback.mime,
+          'Cache-Control': fallback.cacheControl,
+        },
+      });
+    }
+
+    // 路径遍历检查与磁盘兜底
     const resolved = path.resolve(frontendDistDir, reqPath || '.');
     if (!resolved.startsWith(frontendDistDir)) {
       return new Response('Forbidden', { status: 403 });
     }
 
-    let filePath = resolved;
-    let exists = false;
     try {
-      const stat = fs.statSync(filePath);
-      exists = !stat.isDirectory();
-    } catch {
-      exists = false;
-    }
-
-    if (!exists) {
-      // SPA fallback: no-extension paths serve index.html
-      const ext = path.extname(reqPath);
-      if (ext) {
-        return new Response('Not found', { status: 404 });
-      }
-      filePath = path.join(frontendDistDir, 'index.html');
-    }
-
-    try {
-      const data = await fs.promises.readFile(filePath);
-      const mime = MIME_TYPES[path.extname(filePath)] || 'application/octet-stream';
+      const data = await fs.promises.readFile(resolved);
+      const mime = MIME_TYPES[path.extname(resolved)] || 'application/octet-stream';
       return new Response(new Uint8Array(data), {
         headers: {
           'Content-Type': mime,
-          'Cache-Control': 'no-store, max-age=0',
+          'Cache-Control': 'no-cache',
         },
       });
     } catch {
-      return new Response('Internal error', { status: 500 });
+      return new Response('Not found', { status: 404 });
     }
   });
 }
@@ -260,9 +299,16 @@ function createMainWindow(): void {
 
   mainWindow.loadURL(`${APP_PROTOCOL}://localhost/`);
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-  });
+  let shown = false;
+  const showWindow = () => {
+    if (shown || !mainWindow || mainWindow.isDestroyed()) return;
+    shown = true;
+    mainWindow.show();
+  };
+
+  mainWindow.once('ready-to-show', showWindow);
+  // 400ms 保底显示，杜绝冷启动等待
+  setTimeout(showWindow, 400);
 
   mainWindow.webContents.on('did-finish-load', () => {
     pushMode('launcher');
@@ -568,13 +614,20 @@ function registerIpc(): void {
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_USER_MODEL_ID);
+  // 消除 Windows 原生窗口遮挡判断造成的 200-500ms 延迟，开启硬件 GPU 光栅化加速
+  app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
+  app.commandLine.appendSwitch('enable-zero-copy');
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');
 }
 
 app.whenReady().then(() => {
   frontendDistDir = resolveFrontendDist();
   loadPreferences();
 
-  if (!frontendDistDir) {
+  if (frontendDistDir) {
+    preloadFrontendDist(frontendDistDir);
+  } else {
     console.error(
       '[SillyClient] frontend-dist is missing. Build the shared UI, then run npm run sync:frontend.',
     );

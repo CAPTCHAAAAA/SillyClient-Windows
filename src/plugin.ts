@@ -164,6 +164,8 @@ export async function handle(method: string, options: any): Promise<any> {
       return cleanGarbage(options);
     case 'deleteGarbageItem':
       return deleteGarbageItem(options);
+    case 'migrateInstance':
+      return doMigrateInstance(options);
     default:
       throw new Error(`未知方法: ${method}`);
   }
@@ -489,7 +491,7 @@ function scanInstances(): { instances: any[] } {
         instanceId,
         version: pkg.version || 'unknown',
         path: dir,
-        sizeBytes: utils.dirSize(dir),
+        sizeBytes: 0, // 启动自检不阻塞递归扫描磁盘；具体大小在关于页由 getInstanceInfo 获取
         hasServer: fs.existsSync(path.join(dir, 'server.js')),
         createdAt: usage.createdAt,
         lastUsedAt: usage.lastUsedAt,
@@ -1012,4 +1014,82 @@ function deleteGarbageItem(opts: any): { success: boolean } {
   } catch {
     return { success: false };
   }
+}
+
+// ---------------------------------------------------------------------------
+// doMigrateInstance — 数据迁移
+// ---------------------------------------------------------------------------
+
+async function doMigrateInstance(options: any): Promise<{ success: boolean; instanceId: string }> {
+  const { sourcePath, instanceId = `migrated-${Date.now()}`, mode = 'copy', includeSecrets = false } = options || {};
+  if (!sourcePath) throw new Error('缺少来源路径');
+
+  const safeInstanceId = paths.normalizeInstanceId(instanceId);
+  const targetDir = path.join(paths.bootstrapDir, 'servers', safeInstanceId);
+
+  notify('log', { message: `【数据迁移】开始${mode === 'takeover' ? '原地接管' : '复制迁移'}: ${sourcePath}`, level: 'info' });
+  notify('progress', { percent: 10, message: 'Validating migration source' });
+
+  if (mode === 'takeover') {
+    if (!fs.existsSync(sourcePath)) throw new Error('原地接管目录不存在');
+    instanceStore.registerInstance(safeInstanceId, sourcePath);
+    notify('progress', { percent: 100, message: 'Takeover complete' });
+    notify('log', { message: `【成功】已原地接管目录: ${sourcePath}`, level: 'success' });
+    return { success: true, instanceId: safeInstanceId };
+  }
+
+  // 复制迁移模式
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+
+  const isZip = sourcePath.toLowerCase().endsWith('.zip');
+  if (isZip) {
+    notify('progress', { percent: 30, message: 'Extracting backup archive' });
+    await utils.unzipToDir(sourcePath, targetDir);
+    notify('progress', { percent: 70, message: 'Archive extracted' });
+  } else {
+    notify('progress', { percent: 30, message: 'Copying data' });
+    const copyFilter = (src: string, dest: string) => {
+      const entries = fs.readdirSync(src, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.cache') continue;
+        if (!includeSecrets && (entry.name === 'secrets.json' || entry.name === 'secrets.json.enc')) continue;
+        const s = path.join(src, entry.name);
+        const d = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+          if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+          copyFilter(s, d);
+        } else {
+          fs.copyFileSync(s, d);
+        }
+      }
+    };
+    copyFilter(sourcePath, targetDir);
+    notify('progress', { percent: 70, message: 'Data copied' });
+  }
+
+  // 补齐底座（若是纯数据备份）
+  if (!fs.existsSync(path.join(targetDir, 'server.js'))) {
+    const defaultServer = path.join(paths.bootstrapDir, 'servers', 'default');
+    if (fs.existsSync(path.join(defaultServer, 'server.js'))) {
+      const entries = fs.readdirSync(defaultServer, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name === 'data' || entry.name === '.git' || entry.name === 'node_modules') continue;
+        const s = path.join(defaultServer, entry.name);
+        const d = path.join(targetDir, entry.name);
+        if (entry.isDirectory()) {
+          if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+          utils.copyDir(s, d);
+        } else if (!fs.existsSync(d)) {
+          fs.copyFileSync(s, d);
+        }
+      }
+    }
+  }
+
+  instanceStore.registerInstance(safeInstanceId, targetDir);
+  notify('progress', { percent: 100, message: 'Migration verified' });
+  notify('log', { message: `【成功】数据迁移完成，实例 [${safeInstanceId}] 已就绪！`, level: 'success' });
+  return { success: true, instanceId: safeInstanceId };
 }

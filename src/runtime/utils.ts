@@ -128,22 +128,29 @@ export function copyDir(src: string, dest: string): void {
   }
 }
 
-/** 计算目录大小（字节） */
-export function dirSize(dirPath: string): number {
+/** 计算目录大小（字节），默认跳过 node_modules 和 .git 避免递归 30000+ 文件引起严重主线程阻塞 */
+export function dirSize(dirPath: string, includeHeavy = false): number {
   if (!fs.existsSync(dirPath)) return 0;
   let size = 0;
-  const entries = fs.readdirSync(dirPath, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    if (entry.isDirectory()) {
-      size += dirSize(fullPath);
-    } else {
-      try {
-        size += fs.statSync(fullPath).size;
-      } catch {
-        // ignore
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!includeHeavy && (entry.name === 'node_modules' || entry.name === '.git' || entry.name === '.cache')) {
+        continue;
+      }
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        size += dirSize(fullPath, includeHeavy);
+      } else {
+        try {
+          size += fs.statSync(fullPath).size;
+        } catch {
+          // ignore
+        }
       }
     }
+  } catch {
+    // ignore
   }
   return size;
 }
