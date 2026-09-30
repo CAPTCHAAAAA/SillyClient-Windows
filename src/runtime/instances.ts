@@ -10,6 +10,7 @@ export interface InstanceRecord {
   lastUsedAt?: string;
   totalUsageMs: number;
   sessionStartedAt?: string;
+  isTakeover?: boolean;
 }
 
 interface InstanceRegistry {
@@ -38,6 +39,7 @@ function readRegistry(): InstanceRegistry {
         lastUsedAt: typeof record.lastUsedAt === 'string' ? record.lastUsedAt : undefined,
         totalUsageMs: Number.isFinite(record.totalUsageMs) ? Math.max(0, Number(record.totalUsageMs)) : 0,
         sessionStartedAt: typeof record.sessionStartedAt === 'string' ? record.sessionStartedAt : undefined,
+        isTakeover: record.isTakeover === true,
       };
     }
     return { version: 1, instances };
@@ -85,7 +87,12 @@ export function finishStaleUsageSessions(): void {
   if (changed) writeRegistry(registry);
 }
 
-export function registerInstance(instanceId: string, instancePath: string, createdAt?: string): InstanceRecord {
+export function registerInstance(
+  instanceId: string,
+  instancePath: string,
+  createdAt?: string,
+  isTakeover?: boolean,
+): InstanceRecord {
   const safeId = normalizeInstanceId(instanceId);
   const resolvedPath = path.resolve(instancePath);
   const registry = readRegistry();
@@ -97,6 +104,7 @@ export function registerInstance(instanceId: string, instancePath: string, creat
     lastUsedAt: existing?.lastUsedAt,
     totalUsageMs: existing?.totalUsageMs || 0,
     sessionStartedAt: existing?.sessionStartedAt,
+    isTakeover: isTakeover !== undefined ? isTakeover : existing?.isTakeover,
   };
   registry.instances[safeId] = record;
   writeRegistry(registry);

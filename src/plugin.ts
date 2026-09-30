@@ -158,6 +158,8 @@ export async function handle(method: string, options: any): Promise<any> {
       return doPickZipFile();
     case 'saveTextFile':
       return doSaveTextFile(options);
+    case 'readTextFile':
+      return doReadTextFile(options);
     case 'uninstallInstance':
       return uninstallInstance(options);
     case 'cleanGarbage':
@@ -850,6 +852,33 @@ async function doSaveTextFile(opts: any): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// readTextFile — 前端期望: Promise<{ content: string; fileName: string }>
+// ---------------------------------------------------------------------------
+
+async function doReadTextFile(opts: any): Promise<{ content: string; fileName: string }> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('主窗口不可用');
+  }
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '选择导入文件',
+    filters: [
+      { name: 'JSON 备份文件', extensions: ['json'] },
+      { name: '所有文件', extensions: ['*'] }
+    ],
+    properties: ['openFile']
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    throw new Error('cancelled');
+  }
+  const filePath = result.filePaths[0];
+  const content = await fs.promises.readFile(filePath, 'utf-8');
+  return {
+    content,
+    fileName: path.basename(filePath)
+  };
+}
+
+// ---------------------------------------------------------------------------
 // uninstallInstance — 前端期望: { success, freedBytes }
 // ---------------------------------------------------------------------------
 
@@ -872,8 +901,11 @@ async function uninstallInstance(opts: any): Promise<{ success: boolean; freedBy
   proc.stopServerOnPort(Number(opts?.port));
   proc.stopServerForDirectory(dir);
 
+  const record = instanceStore.getInstanceRecord(instanceId);
+  const isTakeover = record?.isTakeover === true;
+
   let freedBytes = 0;
-  if (fs.existsSync(dir)) {
+  if (!isTakeover && fs.existsSync(dir)) {
     freedBytes = utils.dirSize(dir);
     await utils.removeDirWithRetries(dir);
   }
@@ -906,7 +938,7 @@ async function uninstallInstance(opts: any): Promise<{ success: boolean; freedBy
     } catch { /* ignore */ }
   }
 
-  if (fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
+  if (!isTakeover && fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
   instanceStore.removeInstanceRecord(instanceId);
 
   return { success: true, freedBytes };
@@ -1021,18 +1053,20 @@ function deleteGarbageItem(opts: any): { success: boolean } {
 // ---------------------------------------------------------------------------
 
 async function doMigrateInstance(options: any): Promise<{ success: boolean; instanceId: string }> {
-  const { sourcePath, instanceId = `migrated-${Date.now()}`, mode = 'copy', includeSecrets = false } = options || {};
+  const { sourcePath, targetPath, instanceId = `migrated-${Date.now()}`, mode = 'copy', includeSecrets = false } = options || {};
   if (!sourcePath) throw new Error('缺少来源路径');
 
   const safeInstanceId = paths.normalizeInstanceId(instanceId);
-  const targetDir = path.join(paths.bootstrapDir, 'servers', safeInstanceId);
+  const targetDir = (typeof targetPath === 'string' && targetPath.trim())
+    ? path.resolve(targetPath.trim())
+    : path.join(paths.bootstrapDir, 'servers', safeInstanceId);
 
   notify('log', { message: `【数据迁移】开始${mode === 'takeover' ? '原地接管' : '复制迁移'}: ${sourcePath}`, level: 'info' });
   notify('progress', { percent: 10, message: 'Validating migration source' });
 
   if (mode === 'takeover') {
     if (!fs.existsSync(sourcePath)) throw new Error('原地接管目录不存在');
-    instanceStore.registerInstance(safeInstanceId, sourcePath);
+    instanceStore.registerInstance(safeInstanceId, sourcePath, undefined, true);
     notify('progress', { percent: 100, message: 'Takeover complete' });
     notify('log', { message: `【成功】已原地接管目录: ${sourcePath}`, level: 'success' });
     return { success: true, instanceId: safeInstanceId };
@@ -1047,6 +1081,7 @@ async function doMigrateInstance(options: any): Promise<{ success: boolean; inst
   if (isZip) {
     notify('progress', { percent: 30, message: 'Extracting backup archive' });
     await utils.unzipToDir(sourcePath, targetDir);
+    flattenExtractedDir(targetDir);
     notify('progress', { percent: 70, message: 'Archive extracted' });
   } else {
     notify('progress', { percent: 30, message: 'Copying data' });
@@ -1088,7 +1123,7 @@ async function doMigrateInstance(options: any): Promise<{ success: boolean; inst
     }
   }
 
-  instanceStore.registerInstance(safeInstanceId, targetDir);
+  instanceStore.registerInstance(safeInstanceId, targetDir, undefined, false);
   notify('progress', { percent: 100, message: 'Migration verified' });
   notify('log', { message: `【成功】数据迁移完成，实例 [${safeInstanceId}] 已就绪！`, level: 'success' });
   return { success: true, instanceId: safeInstanceId };
