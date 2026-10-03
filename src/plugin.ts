@@ -370,7 +370,24 @@ function resolveInstanceDir(instanceId: string, installPath?: string): string {
   if (typeof installPath === 'string' && installPath.trim()) {
     return paths.serverDirFor(instanceId, installPath);
   }
-  return instanceStore.getInstanceRecord(instanceId)?.path || paths.serverDirFor(instanceId);
+  const recorded = instanceStore.getInstanceRecord(instanceId)?.path;
+  if (recorded && fs.existsSync(recorded)) return recorded;
+  const defaultDir = paths.serverDirFor(instanceId);
+  if (fs.existsSync(defaultDir)) return defaultDir;
+  if (instanceId.startsWith('local-')) {
+    const fallbackId = instanceId.replace('local-', 'new-');
+    const fallbackRecord = instanceStore.getInstanceRecord(fallbackId)?.path;
+    if (fallbackRecord && fs.existsSync(fallbackRecord)) return fallbackRecord;
+    const fallbackDir = paths.serverDirFor(fallbackId);
+    if (fs.existsSync(fallbackDir)) return fallbackDir;
+  } else if (instanceId.startsWith('new-')) {
+    const fallbackId = instanceId.replace('new-', 'local-');
+    const fallbackRecord = instanceStore.getInstanceRecord(fallbackId)?.path;
+    if (fallbackRecord && fs.existsSync(fallbackRecord)) return fallbackRecord;
+    const fallbackDir = paths.serverDirFor(fallbackId);
+    if (fs.existsSync(fallbackDir)) return fallbackDir;
+  }
+  return defaultDir;
 }
 
 async function downloadWithMirrors(
@@ -1052,24 +1069,36 @@ function deleteGarbageItem(opts: any): { success: boolean } {
 // doMigrateInstance — 数据迁移
 // ---------------------------------------------------------------------------
 
-async function doMigrateInstance(options: any): Promise<{ success: boolean; instanceId: string }> {
+async function doMigrateInstance(options: any): Promise<{ success: boolean; instanceId: string; targetPath?: string }> {
   const { sourcePath, targetPath, instanceId = `migrated-${Date.now()}`, mode = 'copy', includeSecrets = false } = options || {};
-  if (!sourcePath) throw new Error('缺少来源路径');
+  const cleanSourcePath = (typeof sourcePath === 'string') ? sourcePath.trim().replace(/^["']|["']$/g, '').trim() : '';
+  if (!cleanSourcePath) throw new Error('缺少来源路径');
 
   const safeInstanceId = paths.normalizeInstanceId(instanceId);
-  const targetDir = (typeof targetPath === 'string' && targetPath.trim())
-    ? path.resolve(targetPath.trim())
+  const cleanTargetPath = (typeof targetPath === 'string') ? targetPath.trim().replace(/^["']|["']$/g, '').trim() : '';
+  const targetDir = cleanTargetPath
+    ? path.resolve(cleanTargetPath)
     : path.join(paths.bootstrapDir, 'servers', safeInstanceId);
 
-  notify('log', { message: `【数据迁移】开始${mode === 'takeover' ? '原地接管' : '复制迁移'}: ${sourcePath}`, level: 'info' });
+  notify('log', { message: `【数据迁移】开始${mode === 'takeover' ? '原地接管' : '复制迁移'}: ${cleanSourcePath}`, level: 'info' });
   notify('progress', { percent: 10, message: 'Validating migration source' });
 
   if (mode === 'takeover') {
-    if (!fs.existsSync(sourcePath)) throw new Error('原地接管目录不存在');
-    instanceStore.registerInstance(safeInstanceId, sourcePath, undefined, true);
+    if (!fs.existsSync(cleanSourcePath)) throw new Error('原地接管目录不存在');
+    let realTakeoverPath = cleanSourcePath;
+    if (!fs.existsSync(path.join(realTakeoverPath, 'server.js'))) {
+      try {
+        const subEntries = fs.readdirSync(realTakeoverPath, { withFileTypes: true });
+        const foundSub = subEntries.find(e => e.isDirectory() && fs.existsSync(path.join(realTakeoverPath, e.name, 'server.js')));
+        if (foundSub) {
+          realTakeoverPath = path.join(realTakeoverPath, foundSub.name);
+        }
+      } catch {}
+    }
+    instanceStore.registerInstance(safeInstanceId, realTakeoverPath, undefined, true);
     notify('progress', { percent: 100, message: 'Takeover complete' });
-    notify('log', { message: `【成功】已原地接管目录: ${sourcePath}`, level: 'success' });
-    return { success: true, instanceId: safeInstanceId };
+    notify('log', { message: `【成功】已原地接管目录: ${realTakeoverPath}`, level: 'success' });
+    return { success: true, instanceId: safeInstanceId, targetPath: realTakeoverPath };
   }
 
   // 复制迁移模式
@@ -1077,10 +1106,10 @@ async function doMigrateInstance(options: any): Promise<{ success: boolean; inst
     fs.mkdirSync(targetDir, { recursive: true });
   }
 
-  const isZip = sourcePath.toLowerCase().endsWith('.zip');
+  const isZip = cleanSourcePath.toLowerCase().endsWith('.zip');
   if (isZip) {
     notify('progress', { percent: 30, message: 'Extracting backup archive' });
-    await utils.unzipToDir(sourcePath, targetDir);
+    await utils.unzipToDir(cleanSourcePath, targetDir);
     flattenExtractedDir(targetDir);
     notify('progress', { percent: 70, message: 'Archive extracted' });
   } else {
@@ -1100,7 +1129,7 @@ async function doMigrateInstance(options: any): Promise<{ success: boolean; inst
         }
       }
     };
-    copyFilter(sourcePath, targetDir);
+    copyFilter(cleanSourcePath, targetDir);
     notify('progress', { percent: 70, message: 'Data copied' });
   }
 
@@ -1126,5 +1155,5 @@ async function doMigrateInstance(options: any): Promise<{ success: boolean; inst
   instanceStore.registerInstance(safeInstanceId, targetDir, undefined, false);
   notify('progress', { percent: 100, message: 'Migration verified' });
   notify('log', { message: `【成功】数据迁移完成，实例 [${safeInstanceId}] 已就绪！`, level: 'success' });
-  return { success: true, instanceId: safeInstanceId };
+  return { success: true, instanceId: safeInstanceId, targetPath: targetDir };
 }
