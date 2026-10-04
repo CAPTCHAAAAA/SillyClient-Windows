@@ -264,6 +264,30 @@ export const nativePreview: TarvenEnvPlugin = {
     migrated.set(options.instanceId, targetPath);
     return { success: true, instanceId: options.instanceId, targetPath };
   },
+  async checkLegacyInstances() {
+    record("checkLegacyInstances", {});
+    return { instances: [] };
+  },
+  async relocateInstance(options) {
+    record("relocateInstance", options);
+    const newPath = options.targetPath || exactInstallTarget(syntheticRoot(), "root", options.instanceId)!;
+    return { success: true, instanceId: options.instanceId, oldPath: "C:\\AppData\\Legacy", newPath };
+  },
+  async migrateLegacyInstances(options = {}) {
+    record("migrateLegacyInstances", options);
+    return { success: true, results: [] };
+  },
+  async renameInstance(options) {
+    record("renameInstance", options);
+    const newId = options.newName.trim().replace(/[\\/:*?"<>|\x00-\x1f]/g, "-").slice(0, 100) || "instance";
+    return {
+      success: true,
+      oldId: options.instanceId,
+      newId,
+      oldPath: options.installPath || `D:\\Software\\AI\\Entertainment\\SillyClient\\instances\\${options.instanceId}`,
+      newPath: `D:\\Software\\AI\\Entertainment\\SillyClient\\instances\\${newId}`,
+    };
+  },
 };
 
 export function installNativePreview() {

@@ -32,6 +32,7 @@ export interface ManageInstanceModalProps {
   onTriggerDelete: (instance: TavernInstance) => void;
   onPickCover: (instance: TavernInstance) => void;
   onOpenMaintenance?: (instance: TavernInstance) => void;
+  onOpenRelocate?: (instance: TavernInstance) => void;
   // 快照管理
   snapshots: Record<string, InstanceSnapshot[]>;
   onCreateSnapshot: () => void;
@@ -168,6 +169,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   onTriggerDelete,
   onPickCover,
   onOpenMaintenance,
+  onOpenRelocate,
   snapshots,
   onCreateSnapshot,
   onRestoreSnapshot,
@@ -991,6 +993,45 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       更换插图
                     </button>
                   </div>
+                  {mp.type === "local" && onOpenRelocate && (
+                    <div
+                      className={cn(
+                        "flex items-center justify-between gap-4 rounded-xl px-4 py-3",
+                        isLight ? "bg-black/[0.025]" : "bg-white/[0.025]"
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <div
+                          className={cn(
+                            "text-xs font-medium",
+                            isLight ? "text-[#1a1625]/70" : "text-white/70"
+                          )}
+                        >
+                          存储迁移
+                        </div>
+                        <div
+                          className={cn(
+                            "mt-1 truncate text-[10px]",
+                            isLight ? "text-[#1a1625]/30" : "text-white/30"
+                          )}
+                        >
+                          无损搬迁至新目录或软件默认路径
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onOpenRelocate(mp)}
+                        className={cn(
+                          "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                          isLight
+                            ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
+                            : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
+                        )}
+                      >
+                        迁移目录
+                      </button>
+                    </div>
+                  )}
                   {mp.type === "local" && onOpenMaintenance && (
                     <ManageItem label="实例维护" isLight={isLight}>
                       <button type="button" onClick={() => onOpenMaintenance(mp)}
@@ -1283,6 +1324,19 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       : "text-white/55 hover:text-white/80"
                   )}>
                     实例维护
+                  </button>
+                )}
+                {mp.type === "local" && onOpenRelocate && (
+                  <button type="button" onClick={() => {
+                    setManageMoreOpen(false);
+                    onOpenRelocate(mp);
+                  }} className={cn(
+                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
+                    isLight
+                      ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
+                      : "text-white/55 hover:text-white/80"
+                  )}>
+                    迁移目录
                   </button>
                 )}
                 <button

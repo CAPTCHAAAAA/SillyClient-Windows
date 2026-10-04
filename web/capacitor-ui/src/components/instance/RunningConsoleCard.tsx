@@ -184,7 +184,7 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
 
       {/* 底部按钮栏：向导风格实色按钮，与上方元素边框完全垂直对齐 */}
       <div className="flex items-center justify-between gap-2 flex-shrink-0">
-        {/* 返回酒馆（主动作，实色白色胶囊） */}
+        {/* 返回酒馆（主动作，低饱和沉稳胶囊，避免深色纯白刺眼光斑） */}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -193,15 +193,15 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
           className={cn(
             "motion-control px-4 h-8 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 transition-all border active:scale-[0.98]",
             isLight
-              ? "bg-[#1a1625] border-[#1a1625] text-white hover:bg-[#1a1625]/90 active:bg-[#1a1625]/80 shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
-              : "bg-white border-white text-[#14101e] hover:bg-white/90 active:bg-white/80 shadow-[0_2px_10px_rgba(255,255,255,0.12)]"
+              ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14] active:bg-black/[0.18]"
+              : "bg-white/20 border-white/15 text-white hover:bg-white/30 active:bg-white/35"
           )}
         >
           <Play className="w-3 h-3 fill-current" />
           返回酒馆
         </button>
 
-        {/* 关闭（次动作，向导次级实色胶囊，仅文字使用红色字体） */}
+        {/* 关闭（次动作，统一低饱和规范红） */}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -210,8 +210,8 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
           className={cn(
             "motion-control px-3.5 h-8 rounded-full text-xs font-medium transition-all border active:scale-[0.98]",
             isLight
-              ? "bg-black/[0.04] border-black/[0.06] text-red-600 hover:bg-black/[0.08]"
-              : "bg-white/[0.08] border-white/[0.06] text-rose-400 hover:bg-white/[0.14] hover:text-rose-300"
+              ? "bg-black/[0.04] border-black/[0.06] text-red-900/50 hover:text-red-900/80 hover:bg-black/[0.08]"
+              : "bg-white/[0.08] border-white/[0.06] text-red-400/55 hover:text-red-300/90 hover:bg-white/[0.14]"
           )}
         >
           关闭

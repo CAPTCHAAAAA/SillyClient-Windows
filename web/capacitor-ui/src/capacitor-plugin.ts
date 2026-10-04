@@ -281,6 +281,56 @@ export interface TarvenEnvPlugin {
     preinstall?: PreinstallSelection
   }): Promise<{ success: boolean; instanceId: string; targetPath?: string }>
 
+  /** 检测保存在旧版路径（如 C 盘 AppData）的待迁移实例 */
+  checkLegacyInstances(): Promise<{
+    instances: Array<{
+      instanceId: string
+      name: string
+      currentPath: string
+      targetPath: string
+      version?: string
+    }>
+  }>
+
+  /** 单个实例无损迁移 / 路径重定位 */
+  relocateInstance(options: {
+    instanceId: string
+    targetPath?: string
+  }): Promise<{
+    success: boolean
+    instanceId: string
+    oldPath: string
+    newPath: string
+    unchanged?: boolean
+  }>
+
+  /** 一键批量无损迁移旧路径实例至当前客户端默认实例目录 */
+  migrateLegacyInstances(options?: {
+    instanceIds?: string[]
+  }): Promise<{
+    success: boolean
+    results: Array<{
+      success: boolean
+      instanceId: string
+      oldPath: string
+      newPath: string
+      unchanged?: boolean
+    }>
+  }>
+
+  /** 重命名实例并同步修改底层物理存储文件夹与注册表 */
+  renameInstance(options: {
+    instanceId: string
+    newName: string
+    installPath?: string
+  }): Promise<{
+    success: boolean
+    oldId: string
+    newId: string
+    oldPath: string
+    newPath: string
+  }>
+
   addListener(
     eventName: 'log' | 'progress' | 'ready' | 'mode' | 'error',
     listenerFunc: (data: TarvenEvent) => void,

@@ -26,6 +26,8 @@ import { copyMigration, directoryContentIdentity, resolveTakeoverSource } from '
 import { ensureInstanceDependencies } from './runtime/dependencies';
 import { InstanceMaintenanceService } from './runtime/instance-maintenance';
 import { resolveInstanceDataRoot } from './runtime/instance-config';
+import { checkLegacyInstances, relocateInstance, migrateLegacyInstances } from './runtime/relocate';
+import { renameInstance } from './runtime/rename';
 import {
   installPreselectedExtensions, validatePreinstallSelection, ExtensionInstallTransaction,
 } from './runtime/preinstalled-extensions';
@@ -267,6 +269,14 @@ export async function handle(method: string, options: any): Promise<any> {
       return maintenance.restore(options?.instanceId, options?.recoveryId, options?.token);
     case 'migrateInstance':
       return doMigrateInstance(options);
+    case 'checkLegacyInstances':
+      return checkLegacyInstances();
+    case 'relocateInstance':
+      return relocateInstance(options, currentInstanceId);
+    case 'migrateLegacyInstances':
+      return migrateLegacyInstances(options, currentInstanceId);
+    case 'renameInstance':
+      return renameInstance(options, currentInstanceId);
     default:
       throw new Error(`未知方法: ${method}`);
   }
