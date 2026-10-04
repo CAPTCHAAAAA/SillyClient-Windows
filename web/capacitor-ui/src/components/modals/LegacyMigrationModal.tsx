@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { X, FolderSync, CheckCircle2, AlertCircle, ArrowRight, Loader2 } from "lucide-react";
+import { X, AlertCircle, Loader2, Info } from "lucide-react";
 import { cn, formatDisplayVersion } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { LayerBackdrop } from "../common/LayerBackdrop";
@@ -25,8 +25,10 @@ export interface LegacyMigrationModalProps {
 
 /**
  * 新版本旧路径实例全屏一键迁移向导 (LegacyMigrationModal)
- * 在 WhatsNewModal 之后呈现，100% 同构轻拟物材质与毛玻璃质感，
- * 引导用户将 C 盘 AppData 的旧实例无损迁移至软件目录 instances/ 统一管理。
+ * 1. 采用阻断级 Z-Index 与物理弹簧入场动画 (.animate-modal-dialog)；
+ * 2. 拔除全部多重嵌套卡片方框与对勾图标，控件与字阶 100% 对齐向导；
+ * 3. 仅保留用于产品设计哲学说明的单 Info 图标；
+ * 4. 完美支持无旧实例时的优雅空状态展示，便于审查走查。
  */
 export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
   isOpen,
@@ -34,7 +36,7 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
   onClose,
   isLight,
   glassBg,
-  legacyInstances,
+  legacyInstances = [],
   onMigrationComplete,
 }) => {
   const [migrating, setMigrating] = useState(false);
@@ -75,61 +77,51 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
 
   return (
     <>
-      {/* 全屏虚化遮罩 */}
+      {/* 阻断级虚化遮罩 */}
       <LayerBackdrop
         isOpen={isOpen}
         isClosing={isClosing}
         onClick={migrating ? undefined : onClose}
-        zIndex={LAYERS.MODAL_BACKDROP}
-        blur={false}
+        zIndex={LAYERS.DIALOG_BACKDROP}
+        blur={true}
         className={cn(
           "transition-all duration-300",
-          isLight ? "bg-black/25 backdrop-blur-[36px]" : "bg-black/60 backdrop-blur-[36px]"
+          isLight ? "bg-black/25 backdrop-blur-[12px]" : "bg-black/55 backdrop-blur-[12px]"
         )}
       />
 
       {/* 居中任务画布 */}
       <div
         className={cn(
-          "ios-task-surface fixed rounded-3xl flex flex-col overflow-hidden backdrop-blur-[40px] saturate-180",
+          "ios-task-surface fixed rounded-2xl flex flex-col overflow-hidden backdrop-blur-[40px] saturate-180",
           glassBg,
           isLight && "is-light",
-          isClosing ? "animate-clone-panel-exit" : "animate-clone-panel"
+          isClosing ? "animate-modal-dialog-exit" : "animate-modal-dialog"
         )}
         style={{
-          zIndex: LAYERS.MODAL_SURFACE,
+          zIndex: LAYERS.DIALOG_SURFACE,
           top: "50%",
           left: "50%",
           transform: "translate(-50%, -50%)",
-          width: "min(580px, calc(100vw - 2rem))",
-          maxHeight: "min(84vh, calc(100vh - 3.5rem))",
+          width: "min(480px, calc(100vw - 2rem))",
+          maxHeight: "min(85vh, calc(100vh - 4rem))",
         }}
       >
         {/* 顶部标题栏 */}
         <div
           className={cn(
-            "flex items-center justify-between px-6 h-14 flex-shrink-0 border-b",
+            "flex items-center justify-between px-5 h-12 flex-shrink-0 border-b",
             isLight ? "border-black/[0.06]" : "border-white/[0.06]"
           )}
         >
-          <div className="flex items-center gap-2.5">
-            <span
-              className={cn(
-                "p-1.5 rounded-xl border-0 flex items-center justify-center",
-                isLight ? "bg-black/[0.05] text-[#1a1625]" : "bg-white/[0.08] text-white"
-              )}
-            >
-              <FolderSync className="w-4 h-4" />
-            </span>
-            <span className={cn("text-sm font-semibold tracking-tight", isLight ? "text-[#1a1625]" : "text-white")}>
-              检测到旧版实例 · 一键无损迁移
-            </span>
-          </div>
+          <span className={cn("text-sm font-semibold", isLight ? "text-[#1a1625]" : "text-white")}>
+            旧版实例存储迁移
+          </span>
           {!migrating && (
             <button
               onClick={onClose}
               className={cn(
-                "p-1.5 rounded-full transition-colors",
+                "p-1.5 rounded-lg transition-colors",
                 isLight
                   ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
                   : "hover:bg-white/5 text-white/30 hover:text-white/60"
@@ -142,124 +134,123 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
         </div>
 
         {/* 正文区域 */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 scrollbar-subtle">
-          {/* 说明卡片 */}
-          <div
-            className={cn(
-              "rounded-2xl p-4 text-xs leading-relaxed border",
-              isLight
-                ? "bg-black/[0.025] border-black/[0.05] text-[#1a1625]/75"
-                : "bg-white/[0.03] border-white/[0.06] text-white/75"
-            )}
-          >
-            新版本优化了实例目录架构，默认实例由系统 <code className="px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">AppData</code> 迁移至客户端运行根目录下的 <code className="px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">instances/</code> 文件夹，不仅释放 C 盘空间，更便于数据独立备份与统一管理。
-            <div className="mt-1.5 text-[11px] opacity-70">
-              迁移将无损保留所有聊天记录、角色、扩展与配置，并自动同步底层注册表，迁移后可直接启动继续使用。
-            </div>
-          </div>
-
-          {/* 待迁移列表 */}
-          <div className="space-y-2">
-            <div className={cn("text-xs font-medium px-1", isLight ? "text-[#1a1625]/60" : "text-white/60")}>
-              待迁移实例 ({legacyInstances.length})
+        <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-hidden text-xs">
+          {/* 实例列表或空状态 (完全平铺，无嵌套厚边框卡片) */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className={cn("text-xs font-medium", isLight ? "text-[#1a1625]/70" : "text-white/70")}>
+                待迁移实例 ({legacyInstances.length})
+              </label>
             </div>
 
-            <div className="space-y-2">
-              {legacyInstances.map((item) => {
-                const isCompleted = completedIds.includes(item.instanceId);
-                const isCurrent = currentMigratingId === item.instanceId;
+            {legacyInstances.length === 0 ? (
+              <div className="py-7 text-center space-y-1.5">
+                <div className={cn("text-xs font-medium", isLight ? "text-[#1a1625]/70" : "text-white/70")}>
+                  未检测到需要迁移的旧版实例
+                </div>
+                <p className={cn("text-[11px] opacity-45 max-w-xs mx-auto leading-relaxed", isLight ? "text-[#1a1625]" : "text-white")}>
+                  当前所有受管实例均已处于统一规范目录结构下，无需执行额外迁移。
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-black/[0.05] dark:divide-white/[0.05]">
+                {legacyInstances.map((item) => {
+                  const isCompleted = completedIds.includes(item.instanceId);
+                  const isCurrent = currentMigratingId === item.instanceId;
 
-                return (
-                  <div
-                    key={item.instanceId}
-                    className={cn(
-                      "rounded-xl p-3 border transition-all text-xs",
-                      isLight
-                        ? "bg-black/[0.02] border-black/[0.06]"
-                        : "bg-white/[0.03] border-white/[0.06]"
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className={cn("font-semibold", isLight ? "text-[#1a1625]" : "text-white")}>
-                          {item.name}
-                        </span>
-                        {item.version && (
-                          <span
-                            className={cn(
-                              "px-1.5 py-0.5 rounded text-[10px] border",
-                              isLight
-                                ? "bg-black/[0.04] text-[#1a1625]/60 border-black/[0.06]"
-                                : "bg-white/[0.06] text-white/60 border-white/[0.08]"
-                            )}
-                          >
-                            {formatDisplayVersion(item.version)}
+                  return (
+                    <div
+                      key={item.instanceId}
+                      className="py-2.5 space-y-1 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 truncate">
+                          <span className={cn("font-medium text-xs truncate", isLight ? "text-[#1a1625]" : "text-white")}>
+                            {item.name}
+                          </span>
+                          {item.version && (
+                            <span
+                              className={cn(
+                                "px-2 py-0.5 rounded-md text-[10px] font-semibold tracking-wide border flex-shrink-0",
+                                isLight
+                                  ? "bg-black/[0.06] text-[#1a1625]/55 border-black/[0.08]"
+                                  : "bg-white/[0.08] text-white/50 border-white/[0.08]"
+                              )}
+                            >
+                              {formatDisplayVersion(item.version)}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* 状态徽标 (无对勾图标) */}
+                        {isCompleted ? (
+                          <span className="text-[11px] text-emerald-500 font-medium flex-shrink-0">
+                            已就绪
+                          </span>
+                        ) : isCurrent ? (
+                          <span className="text-[11px] text-amber-500 font-medium flex-shrink-0 flex items-center gap-1">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            迁移中
+                          </span>
+                        ) : (
+                          <span className={cn("text-[11px] flex-shrink-0 opacity-40", isLight ? "text-[#1a1625]" : "text-white")}>
+                            待迁移
                           </span>
                         )}
                       </div>
 
-                      {/* 状态徽标 */}
-                      {isCompleted ? (
-                        <span className="flex items-center gap-1 text-[11px] text-emerald-500 font-medium">
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          已就绪
+                      {/* 路径变化 */}
+                      <div className="flex items-center gap-1.5 font-mono text-[10.5px] truncate opacity-50">
+                        <span className="truncate max-w-[45%]" title={item.currentPath}>
+                          {item.currentPath}
                         </span>
-                      ) : isCurrent ? (
-                        <span className="flex items-center gap-1 text-[11px] text-amber-500 font-medium animate-pulse">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          搬迁中
+                        <span className="opacity-40">→</span>
+                        <span className="truncate max-w-[45%]" title={item.targetPath}>
+                          {item.targetPath}
                         </span>
-                      ) : (
-                        <span className={cn("text-[11px]", isLight ? "text-[#1a1625]/40" : "text-white/40")}>
-                          待迁移
-                        </span>
-                      )}
+                      </div>
                     </div>
-
-                    {/* 路径变化 */}
-                    <div className="flex items-center gap-1.5 font-mono text-[10.5px] truncate opacity-70">
-                      <span className="truncate max-w-[45%]" title={item.currentPath}>
-                        {item.currentPath}
-                      </span>
-                      <ArrowRight className="w-3 h-3 flex-shrink-0 opacity-40" />
-                      <span className="truncate max-w-[45%] text-emerald-500/90" title={item.targetPath}>
-                        {item.targetPath}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          {/* 错误提示 */}
+          {/* 异常提示 */}
           {errorMsg && (
             <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
+
+          {/* 底部小字解释说明（仅保留单一 information 图标） */}
+          <div className="flex items-start gap-2 pt-1 text-[11px] leading-relaxed opacity-55">
+            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <p>
+              新版本实例统一归集至客户端根目录下的 <code className="px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[10.5px]">instances/</code> 文件夹，消除 C 盘 AppData 空间碎片并支持便携备份。受管实例在迁移过程中将自动同步底层注册表与配置，一步到位无损继续运行。
+            </p>
+          </div>
         </div>
 
-        {/* 底部按钮操作栏 */}
+        {/* 底部按钮栏 */}
         <div
           className={cn(
-            "p-5 flex-shrink-0 border-t flex items-center justify-end gap-2.5",
+            "px-5 py-4 flex-shrink-0 border-t flex items-center justify-end gap-2.5",
             isLight ? "border-black/[0.06] bg-black/[0.01]" : "border-white/[0.06] bg-white/[0.01]"
           )}
         >
-          {isAllDone ? (
+          {isAllDone || legacyInstances.length === 0 ? (
             <button
               onClick={onClose}
               className={cn(
-                "motion-control px-6 h-9 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 transition-all border",
+                "motion-control px-5 h-8 rounded-full text-xs font-medium transition-all border",
                 isLight
                   ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
                   : "bg-white/20 border-white/15 text-white hover:bg-white/30"
               )}
             >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              全部迁移完成 · 进入控制台
+              进入控制台
             </button>
           ) : (
             <>
@@ -268,21 +259,21 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
                   type="button"
                   onClick={onClose}
                   className={cn(
-                    "motion-control px-4 h-9 rounded-full text-xs font-medium transition-all border",
+                    "motion-control px-4 h-8 rounded-full text-xs font-medium transition-all border disabled:opacity-40",
                     isLight
-                      ? "bg-black/[0.04] border-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.08]"
-                      : "bg-white/[0.08] border-white/[0.06] text-white/60 hover:bg-white/[0.14]"
+                      ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:bg-black/[0.04]"
+                      : "bg-transparent border-white/[0.08] text-white/60 hover:bg-white/[0.04]"
                   )}
                 >
-                  稍后在管理面板迁移
+                  稍后处理
                 </button>
               )}
               <button
                 type="button"
-                disabled={migrating || legacyInstances.length === 0}
+                disabled={migrating}
                 onClick={handleStartMigration}
                 className={cn(
-                  "motion-control px-5 h-9 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 transition-all border disabled:opacity-50",
+                  "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-all border disabled:opacity-40",
                   isLight
                     ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14] active:bg-black/[0.18]"
                     : "bg-white/20 border-white/15 text-white hover:bg-white/30 active:bg-white/35"
@@ -294,10 +285,7 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
                     正在搬迁数据与更新注册表...
                   </>
                 ) : (
-                  <>
-                    <FolderSync className="w-3.5 h-3.5" />
-                    一键无损迁移全部实例
-                  </>
+                  "开始一键迁移"
                 )}
               </button>
             </>

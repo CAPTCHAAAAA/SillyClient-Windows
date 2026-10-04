@@ -59,6 +59,7 @@ const ONBOARDING_KEY = "sillyclient.onboarding.version";
 const ONBOARDING_VERSION = "3";
 const WHATS_NEW_KEY = "sillyclient.whatsnew.version";
 const WHATS_NEW_VERSION = APP_VERSION;
+const LEGACY_MIGRATION_KEY = "sillyclient.legacy_migration.version";
 const CURRENT_VERSION = 2;
 const BACKGROUND_PANEL_EXIT_MS = 300;
 const PANEL_EXIT_MS = 300;
@@ -2146,10 +2147,31 @@ function SillyClientLauncher() {
     setShowOnboarding(false);
     if (localStorage.getItem(WHATS_NEW_KEY) !== WHATS_NEW_VERSION) {
       setTimeout(() => setShowWhatsNew(true), 150);
+    } else if (isWindows && localStorage.getItem(LEGACY_MIGRATION_KEY) !== APP_VERSION) {
+      setTimeout(() => {
+        if (TarvenEnv.checkLegacyInstances) {
+          TarvenEnv.checkLegacyInstances()
+            .then(({ instances }) => {
+              setLegacyMigrationList(instances || []);
+              setShowLegacyMigration(true);
+              setIsLegacyMigrationClosing(false);
+            })
+            .catch(() => {
+              setLegacyMigrationList([]);
+              setShowLegacyMigration(true);
+              setIsLegacyMigrationClosing(false);
+            });
+        } else {
+          setLegacyMigrationList([]);
+          setShowLegacyMigration(true);
+          setIsLegacyMigrationClosing(false);
+        }
+      }, 150);
     }
-  }, []);
+  }, [isWindows]);
 
   const dismissLegacyMigration = useCallback(() => {
+    localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
     setIsLegacyMigrationClosing(true);
     setTimeout(() => {
       setShowLegacyMigration(false);
@@ -2158,6 +2180,7 @@ function SillyClientLauncher() {
   }, []);
 
   const handleLegacyMigrationComplete = useCallback(() => {
+    localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
     if (TarvenEnv.scanInstances) {
       TarvenEnv.scanInstances()
         .then(({ instances: scanned }) => {
@@ -2190,17 +2213,25 @@ function SillyClientLauncher() {
       setShowWhatsNew(false);
       setIsWhatsNewClosing(false);
 
-      // 公告关闭后，检测是否需要一键迁移旧版路径实例
-      if (isWindows && TarvenEnv.checkLegacyInstances) {
-        TarvenEnv.checkLegacyInstances()
-          .then(({ instances }) => {
-            if (instances && instances.length > 0) {
-              setLegacyMigrationList(instances);
+      // 公告关闭后，弹出旧版路径实例迁移向导 (无论是否有需要迁移的实例均弹出，空则展示优雅空态供审查)
+      if (isWindows) {
+        if (TarvenEnv.checkLegacyInstances) {
+          TarvenEnv.checkLegacyInstances()
+            .then(({ instances }) => {
+              setLegacyMigrationList(instances || []);
               setShowLegacyMigration(true);
               setIsLegacyMigrationClosing(false);
-            }
-          })
-          .catch(() => {});
+            })
+            .catch(() => {
+              setLegacyMigrationList([]);
+              setShowLegacyMigration(true);
+              setIsLegacyMigrationClosing(false);
+            });
+        } else {
+          setLegacyMigrationList([]);
+          setShowLegacyMigration(true);
+          setIsLegacyMigrationClosing(false);
+        }
       }
     }, PANEL_EXIT_MS);
   }, [isWindows]);
@@ -2277,6 +2308,33 @@ function SillyClientLauncher() {
     }
   }, [showManagePanel]);
 
+  // 本版本更新后开屏弹窗检测：若无引导与公告，且本版本尚未展示过旧版迁移弹窗，则自动弹出（无旧实例时展示优雅空态供审查）
+  useEffect(() => {
+    if (
+      !showOnboarding &&
+      !showWhatsNew &&
+      isWindows &&
+      localStorage.getItem(LEGACY_MIGRATION_KEY) !== APP_VERSION
+    ) {
+      if (TarvenEnv.checkLegacyInstances) {
+        TarvenEnv.checkLegacyInstances()
+          .then(({ instances }) => {
+            setLegacyMigrationList(instances || []);
+            setShowLegacyMigration(true);
+            setIsLegacyMigrationClosing(false);
+          })
+          .catch(() => {
+            setLegacyMigrationList([]);
+            setShowLegacyMigration(true);
+            setIsLegacyMigrationClosing(false);
+          });
+      } else {
+        setLegacyMigrationList([]);
+        setShowLegacyMigration(true);
+        setIsLegacyMigrationClosing(false);
+      }
+    }
+  }, [showOnboarding, showWhatsNew, isWindows]);
 
   const openVersionDropdown = useCallback((trigger: HTMLElement) => {
     const r = trigger.getBoundingClientRect();
@@ -2352,6 +2410,14 @@ function SillyClientLauncher() {
   useEffect(() => {
     if (activeCardMenu) return registerLayer("card_menu", closeCardMenu);
   }, [activeCardMenu, registerLayer, closeCardMenu]);
+
+  useEffect(() => {
+    if (showLegacyMigration) return registerLayer("legacy_migration", dismissLegacyMigration);
+  }, [showLegacyMigration, registerLayer, dismissLegacyMigration]);
+
+  useEffect(() => {
+    if (showRelocateModal) return registerLayer("relocate_modal", closeRelocateModal);
+  }, [showRelocateModal, registerLayer, closeRelocateModal]);
 
   return (
     <div
@@ -3146,6 +3212,15 @@ function SillyClientLauncher() {
             className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/90 hover:bg-white/20 active:bg-white/25 font-medium transition-all"
           >
             更新画布
+          </button>
+          <button
+            onClick={() => {
+              setShowLegacyMigration(true);
+              setIsLegacyMigrationClosing(false);
+            }}
+            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/90 hover:bg-white/20 active:bg-white/25 font-medium transition-all"
+          >
+            旧版迁移
           </button>
           <button
             onClick={() => {
