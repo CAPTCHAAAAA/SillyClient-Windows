@@ -1,4 +1,7 @@
-import { app, BrowserWindow, ipcMain, protocol, shell, Menu, session } from 'electron';
+import {
+  app, BrowserWindow, ipcMain, protocol, shell, Menu, session,
+  type IpcMainInvokeEvent, type WebContents,
+} from 'electron';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -8,6 +11,10 @@ import * as pluginModule from './plugin';
 // @ts-ignore — module './runtime/paths' is created separately.
 import * as pathsModule from './runtime/paths';
 import { loadRemoteBasicAuth } from './remote-auth';
+import {
+  decideLauncherNavigation, decideTavernNavigation, isLauncherUrl, parseHttpUrl,
+  type NavigationDecision,
+} from './external-navigation';
 
 // ---------------------------------------------------------------------------
 // Module contracts (defensive: these modules are implemented by other agents)
@@ -20,8 +27,10 @@ interface PluginContract {
   isServerReady?(): boolean;
   getCurrentUrl?(): string | null;
   getCurrentInstanceId?(): string | null;
-  stopCurrentServer?(): void;
-  cleanup?(): void;
+  getCurrentOperationId?(): string | null;
+  canCloseTavern?(options?: { instanceId?: string; operationId?: string }): boolean;
+  stopCurrentServer?(options?: { instanceId?: string; operationId?: string }): Promise<void>;
+  cleanup?(): Promise<void>;
 }
 
 interface PathsContract {
@@ -77,6 +86,7 @@ let mainWindow: BrowserWindow | null = null;
 let tavernWindow: BrowserWindow | null = null;
 let currentTavernUrl: string | null = null;
 let currentTavernInstanceId: string | null = null;
+let tavernViewRevision = 0;
 let topColorTimer: ReturnType<typeof setInterval> | null = null;
 let lastTopColorHex: string | null = null;
 let samplingTopColor = false;
@@ -278,6 +288,55 @@ function registerCapacitorFileProtocol(): void {
 // Main window
 // ---------------------------------------------------------------------------
 
+function validatedExternalUrl(value: unknown): string {
+  const target = parseHttpUrl(value);
+  if (!target) throw new Error('Only absolute HTTP(S) URLs without credentials are supported');
+  return target.href;
+}
+
+async function openExternalUrl(value: unknown): Promise<void> {
+  await shell.openExternal(validatedExternalUrl(value));
+}
+
+function dispatchExternalNavigation(url: string): void {
+  void openExternalUrl(url).catch(() => {
+    console.error('[SillyClient] Failed to open an external page in the system browser.');
+  });
+}
+
+function installNavigationPolicy(
+  contents: WebContents,
+  decide: (url: unknown, isMainFrame: boolean) => NavigationDecision,
+  isCurrent: () => boolean,
+): void {
+  const navigate = (event: { url: string; isMainFrame: boolean; preventDefault(): void }) => {
+    if (!isCurrent()) return;
+    const decision = decide(event.url, event.isMainFrame === true);
+    if (decision.action === 'allow') return;
+    event.preventDefault();
+    if (decision.action === 'external') dispatchExternalNavigation(decision.url);
+  };
+  contents.on('will-navigate', navigate);
+  contents.on('will-redirect', navigate);
+  contents.setWindowOpenHandler(({ url }) => {
+    const target = isCurrent() ? parseHttpUrl(url) : null;
+    if (target) dispatchExternalNavigation(target.href);
+    return { action: 'deny' };
+  });
+}
+
+function requireLauncherCaller(event: IpcMainInvokeEvent): void {
+  const win = mainWindow;
+  const frame = event.senderFrame;
+  if (
+    !win || win.isDestroyed() || win.webContents.isDestroyed()
+    || event.sender !== win.webContents || !frame || frame !== win.webContents.mainFrame
+    || !isLauncherUrl(frame.url) || !isLauncherUrl(frame.origin)
+  ) {
+    throw new Error('External URL calls must come from the launcher main frame');
+  }
+}
+
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -297,6 +356,11 @@ function createMainWindow(): void {
     },
   });
 
+  const win = mainWindow;
+  installNavigationPolicy(
+    win.webContents, decideLauncherNavigation,
+    () => mainWindow === win && !win.isDestroyed(),
+  );
   mainWindow.loadURL(`${APP_PROTOCOL}://localhost/`);
 
   let shown = false;
@@ -356,22 +420,38 @@ function saveContentOpenMode(mode: ContentOpenMode): ContentOpenMode {
   return mode;
 }
 
-async function enterImmersive(url: string, instanceId?: string): Promise<void> {
-  destroyTavernWindow();
-  currentTavernUrl = url;
-  currentTavernInstanceId = instanceId || null;
+async function enterImmersive(url: unknown, instanceId?: unknown): Promise<void> {
+  const targetUrl = validatedExternalUrl(url);
+  if (instanceId != null && typeof instanceId !== 'string') {
+    throw new Error('instanceId must be a string');
+  }
+  const identity = typeof instanceId === 'string' ? instanceId.trim() : '';
 
+  // Legacy project-link calls must not replace a running instance's view or identity.
+  if (!identity) {
+    await openExternalUrl(targetUrl);
+    return;
+  }
+  const revision = ++tavernViewRevision;
   if (contentOpenMode === 'browser') {
-    await shell.openExternal(url);
+    await openExternalUrl(targetUrl);
+    if (revision !== tavernViewRevision) return;
+    destroyTavernWindow();
+    currentTavernUrl = targetUrl;
+    currentTavernInstanceId = identity;
     mainWindow?.focus();
     return;
   }
+
+  destroyTavernWindow();
+  currentTavernUrl = targetUrl;
+  currentTavernInstanceId = identity;
 
   const [px, py, pw, ph] = mainWindow
     ? [...mainWindow.getPosition(), ...mainWindow.getSize()]
     : [100, 100, 1280, 800];
 
-  tavernWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: pw,
     height: ph,
     x: px + 30,  // 轻微偏移，叠加效果
@@ -390,12 +470,13 @@ async function enterImmersive(url: string, instanceId?: string): Promise<void> {
       partition: 'persist:tavern',
     },
   });
+  tavernWindow = win;
 
-  const credentials = instanceId ? loadRemoteBasicAuth(instanceId) : null;
-  const targetOrigin = new URL(url).origin;
+  const credentials = loadRemoteBasicAuth(identity);
+  const targetOrigin = new URL(targetUrl).origin;
   let authAttempted = false;
 
-  tavernWindow.webContents.on('login', (event, details, authInfo, callback) => {
+  win.webContents.on('login', (event, details, authInfo, callback) => {
     if (!credentials || authInfo.isProxy || authAttempted) return;
     try {
       if (new URL(details.url).origin !== targetOrigin) return;
@@ -408,23 +489,20 @@ async function enterImmersive(url: string, instanceId?: string): Promise<void> {
     callback(credentials.username, credentials.password);
   });
 
-  // 外部链接在系统浏览器打开
-  tavernWindow.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-    if (contentOpenMode === 'browser') {
-      shell.openExternal(openUrl);
-      return { action: 'deny' };
-    }
-    if (/^https?:/i.test(openUrl)) {
-      tavernWindow?.loadURL(openUrl);
-    }
-    return { action: 'deny' };
-  });
+  installNavigationPolicy(
+    win.webContents,
+    (navigationUrl, isMainFrame) => decideTavernNavigation(navigationUrl, targetUrl, isMainFrame),
+    () => tavernWindow === win && !win.isDestroyed(),
+  );
 
-  tavernWindow.webContents.on('did-finish-load', () => {
+  win.webContents.on('did-finish-load', () => {
+    if (tavernWindow !== win || win.isDestroyed()) return;
     startTopColorPoll();
   });
 
-  tavernWindow.on('closed', () => {
+  win.on('closed', () => {
+    if (tavernWindow !== win) return;
+    tavernViewRevision++;
     stopTopColorPoll();
     tavernWindow = null;
     currentTavernUrl = null;
@@ -432,14 +510,15 @@ async function enterImmersive(url: string, instanceId?: string): Promise<void> {
     // 不切换 mode，主窗口一直在 launcher 模式
   });
 
-  tavernWindow.loadURL(url);
-  tavernWindow.show();
-  tavernWindow.focus();
+  win.loadURL(targetUrl);
+  win.show();
+  win.focus();
 
   // 主窗口保持可见，不隐藏
 }
 
 function exitImmersive(): void {
+  tavernViewRevision++;
   stopTopColorPoll();
   destroyTavernWindow();
   currentTavernUrl = null;
@@ -477,11 +556,16 @@ async function clearTavernData(): Promise<void> {
   }
 }
 
-function getStatus(): { mode: string; url: string | null; serverReady: boolean } {
+function getStatus(): {
+  mode: string; url: string | null; serverReady: boolean; instanceId?: string; operationId?: string;
+} {
+  const serverReady = plugin.isServerReady?.() ?? false;
   return {
     mode: tavernWindow ? 'tavern' : 'launcher',
-    url: currentTavernUrl || plugin.getCurrentUrl?.() || null,
-    serverReady: plugin.isServerReady?.() ?? false,
+    url: serverReady ? plugin.getCurrentUrl?.() || null : currentTavernUrl,
+    serverReady,
+    instanceId: serverReady ? plugin.getCurrentInstanceId?.() || undefined : undefined,
+    operationId: serverReady ? plugin.getCurrentOperationId?.() || undefined : undefined,
   };
 }
 
@@ -552,11 +636,16 @@ function rgbToHex(rgb: string): string | null {
 // ---------------------------------------------------------------------------
 
 function registerIpc(): void {
-  ipcMain.handle('tarven-env', async (_event, payload: { method: string; options?: any }) => {
+  ipcMain.handle('tarven-env', async (event, payload: { method: string; options?: any }) => {
     const { method, options } = payload || {};
 
     // Window/view methods handled locally (need BrowserWindow access)
     switch (method) {
+      case 'openExternalUrl':
+        requireLauncherCaller(event);
+        await openExternalUrl(options?.url);
+        return;
+
       case 'enterImmersive':
         await enterImmersive(options?.url || '', options?.instanceId);
         return { success: true };
@@ -582,8 +671,9 @@ function registerIpc(): void {
         return { mode: saveContentOpenMode(options?.mode) };
 
       case 'closeTavern':
+        if (plugin.canCloseTavern?.(options) === false) return { success: true };
         exitImmersive();
-        plugin.stopCurrentServer?.();
+        await plugin.stopCurrentServer?.(options);
         return { success: true };
 
       case 'reloadTavern':
@@ -642,19 +732,29 @@ app.whenReady().then(() => {
 });
 
 let cleanupCompleted = false;
+let cleanupInProgress = false;
 
-function cleanupBeforeQuit(): void {
-  if (cleanupCompleted) return;
-  cleanupCompleted = true;
+async function cleanupBeforeQuit(): Promise<void> {
+  tavernViewRevision++;
   stopTopColorPoll();
   destroyTavernWindow();
-  plugin.cleanup?.();
+  await plugin.cleanup?.();
+  cleanupCompleted = true;
 }
 
 app.on('window-all-closed', () => {
   app.quit();
 });
 
-app.on('before-quit', () => {
-  cleanupBeforeQuit();
+app.on('before-quit', (event) => {
+  if (cleanupCompleted) return;
+  event.preventDefault();
+  if (cleanupInProgress) return;
+  cleanupInProgress = true;
+  cleanupBeforeQuit().then(() => {
+    app.quit();
+  }).catch((error) => {
+    cleanupInProgress = false;
+    console.error('[SillyClient] Failed to stop owned processes before quit:', error);
+  });
 });

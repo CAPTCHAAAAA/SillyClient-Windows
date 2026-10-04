@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { resolveInstanceDataRoot } from './instance-config';
+import { checkSignal } from './operations';
 
 export interface CompanionPresetRequest {
   bundleId: 'sc-bordeaux';
@@ -41,9 +43,25 @@ const THEME_TARGET = 'data/default-user/themes/SC Bordeaux.json';
 const WALLPAPER_TARGET = 'data/default-user/backgrounds/sillyclient-bg-8k.jpg';
 
 function bundledPresetRoot(): string {
-  const productionRoot = path.join(process.resourcesPath, 'companion-presets');
-  if (fs.existsSync(productionRoot)) return productionRoot;
+  if (process.resourcesPath) {
+    const productionRoot = path.join(process.resourcesPath, 'companion-presets');
+    if (fs.existsSync(productionRoot)) return productionRoot;
+  }
   return path.join(__dirname, '..', '..', 'resources', 'companion-presets');
+}
+
+function assertPlainLocation(filePath: string): void {
+  let ancestor = path.resolve(filePath);
+  while (true) {
+    try {
+      if (fs.lstatSync(ancestor).isSymbolicLink()) throw new Error('Linked preset paths are not supported');
+    } catch (error: any) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) return;
+    ancestor = parent;
+  }
 }
 
 function resolveInside(root: string, relativePath: string): string {
@@ -53,6 +71,7 @@ function resolveInside(root: string, relativePath: string): string {
   if (resolved !== resolvedRoot && !resolved.startsWith(`${resolvedRoot}${path.sep}`)) {
     throw new Error('预设资源路径越界');
   }
+  assertPlainLocation(resolved);
   return resolved;
 }
 
@@ -74,13 +93,11 @@ function readJsonObject(filePath: string, label: string): Record<string, any> {
 }
 
 function writeAtomic(filePath: string, data: Buffer | string): void {
+  assertPlainLocation(filePath);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
   fs.writeFileSync(temporaryPath, data);
   try {
-    fs.renameSync(temporaryPath, filePath);
-  } catch {
-    fs.rmSync(filePath, { force: true });
     fs.renameSync(temporaryPath, filePath);
   } finally {
     fs.rmSync(temporaryPath, { force: true });
@@ -88,6 +105,7 @@ function writeAtomic(filePath: string, data: Buffer | string): void {
 }
 
 function restoreFile(filePath: string, previous: Buffer | null): void {
+  assertPlainLocation(filePath);
   if (previous === null) {
     fs.rmSync(filePath, { force: true });
     return;
@@ -117,11 +135,13 @@ function noOpTransaction(): CompanionPresetTransaction {
   return { applied: false, commit() {}, rollback() {} };
 }
 
-export function installCompanionPreset(
+export async function installCompanionPreset(
   serverDir: string,
   request: CompanionPresetRequest,
   presetRoot = bundledPresetRoot(),
-): CompanionPresetTransaction {
+  options: { signal?: AbortSignal } = {},
+): Promise<CompanionPresetTransaction> {
+  checkSignal(options.signal);
   const bundleRoot = resolveInside(presetRoot, request.bundleId);
   const manifest = readJsonObject(resolveInside(bundleRoot, 'manifest.json'), '内置主题预设清单') as unknown as PresetManifest;
   validateManifest(manifest, request);
@@ -140,6 +160,7 @@ export function installCompanionPreset(
   }
 
   const markerPath = path.join(serverDir, '.sillyclient', 'companion-presets', `${BUNDLE_ID}.json`);
+  assertPlainLocation(markerPath);
   if (fs.existsSync(markerPath)) {
     try {
       const marker = readJsonObject(markerPath, '主题预设标记');
@@ -156,8 +177,15 @@ export function installCompanionPreset(
     }
   }
 
+  const dataRoot = await resolveInstanceDataRoot(serverDir, options.signal);
+  checkSignal(options.signal);
+  if (path.resolve(dataRoot).toLowerCase() !== path.resolve(serverDir, 'data').toLowerCase()) {
+    throw new Error('Theme presets require the default dataRoot');
+  }
   const settingsPath = path.join(serverDir, 'data', 'default-user', 'settings.json');
   const defaultSettingsPath = path.join(serverDir, 'default', 'content', 'settings.json');
+  assertPlainLocation(settingsPath);
+  assertPlainLocation(defaultSettingsPath);
   const settingsBasePath = fs.existsSync(settingsPath) ? settingsPath : defaultSettingsPath;
   if (!fs.existsSync(settingsBasePath)) {
     throw new Error('SillyTavern 默认设置模板不存在');
@@ -181,31 +209,56 @@ export function installCompanionPreset(
 
   const themeTarget = resolveInside(serverDir, manifest.theme.target);
   const wallpaperTarget = resolveInside(serverDir, manifest.wallpaper.target);
-  const touched = [themeTarget, wallpaperTarget, settingsPath, markerPath].map(filePath => ({
+  const settingsBytes = Buffer.from(`${JSON.stringify(settings, null, 2)}\n`);
+  const markerBytes = Buffer.from(`${JSON.stringify({
+    schema: 'sillyclient.companion-preset-applied',
+    version: 1,
+    bundleId: BUNDLE_ID,
+    revision: REVISION,
+    themeSha256: THEME_HASH,
+    wallpaperSha256: WALLPAPER_HASH,
+    appliedAt: new Date().toISOString(),
+  }, null, 2)}\n`);
+  const writes = [
+    { filePath: themeTarget, data: themeBytes },
+    { filePath: wallpaperTarget, data: wallpaperBytes },
+    { filePath: settingsPath, data: settingsBytes },
+    { filePath: markerPath, data: markerBytes },
+  ];
+  const touched = writes.map(({ filePath, data }) => ({
     filePath,
     previous: fs.existsSync(filePath) ? fs.readFileSync(filePath) : null,
+    data,
+    written: false,
   }));
 
   let active = true;
   const rollback = () => {
     if (!active) return;
-    for (const snapshot of [...touched].reverse()) restoreFile(snapshot.filePath, snapshot.previous);
+    const failures: string[] = [];
+    for (const snapshot of [...touched].reverse()) {
+      if (!snapshot.written) continue;
+      try {
+        assertPlainLocation(snapshot.filePath);
+        if (!fs.existsSync(snapshot.filePath) || !fs.readFileSync(snapshot.filePath).equals(snapshot.data)) {
+          throw new Error('Preset file changed after installation');
+        }
+        restoreFile(snapshot.filePath, snapshot.previous);
+        snapshot.written = false;
+      } catch (error: any) {
+        failures.push(`${snapshot.filePath}: ${error.message}`);
+      }
+    }
     active = false;
+    if (failures.length) throw new Error(`Preset rollback preserved changed files: ${failures.join('; ')}`);
   };
 
   try {
-    writeAtomic(themeTarget, themeBytes);
-    writeAtomic(wallpaperTarget, wallpaperBytes);
-    writeAtomic(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-    writeAtomic(markerPath, `${JSON.stringify({
-      schema: 'sillyclient.companion-preset-applied',
-      version: 1,
-      bundleId: BUNDLE_ID,
-      revision: REVISION,
-      themeSha256: THEME_HASH,
-      wallpaperSha256: WALLPAPER_HASH,
-      appliedAt: new Date().toISOString(),
-    }, null, 2)}\n`);
+    for (const snapshot of touched) {
+      checkSignal(options.signal);
+      writeAtomic(snapshot.filePath, snapshot.data);
+      snapshot.written = true;
+    }
   } catch (error) {
     rollback();
     throw error;

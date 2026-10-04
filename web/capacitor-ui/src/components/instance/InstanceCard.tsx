@@ -20,8 +20,6 @@ export interface InstanceCardProps {
   onRenameSave?: (instanceId: string, newName: string) => void;
   isExternallyRenaming?: boolean;
   onClearExternalRenaming?: () => void;
-  terminalLogs?: { msg: string; level?: string }[];
-  setTerminalLogs?: React.Dispatch<React.SetStateAction<{ msg: string; level?: string }[]>>;
   isWindows?: boolean;
 }
 
@@ -56,6 +54,7 @@ export const InstanceCard = React.memo<InstanceCardProps>((props) => {
             : "absolute inset-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
         )}
         aria-hidden={isRunning}
+        inert={isRunning}
       >
         <InstanceStoppedCard
           instance={props.instance}
@@ -83,6 +82,7 @@ export const InstanceCard = React.memo<InstanceCardProps>((props) => {
             : "absolute inset-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
         )}
         aria-hidden={!isRunning}
+        inert={!isRunning}
       >
         <RunningConsoleCard
           instance={props.instance}
@@ -92,8 +92,7 @@ export const InstanceCard = React.memo<InstanceCardProps>((props) => {
           onReturnToTavern={props.onReturnToTavern}
           onStopInstance={props.onStopInstance}
           onOpenMenu={props.onOpenMenu}
-          terminalLogs={props.terminalLogs}
-          setTerminalLogs={props.setTerminalLogs}
+          active={isRunning}
           isWindows={props.isWindows}
         />
       </div>

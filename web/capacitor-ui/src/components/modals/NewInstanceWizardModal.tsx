@@ -3,6 +3,8 @@ import { ChevronDown, AlertTriangle, LoaderCircle, Info } from "lucide-react";
 import { TarvenEnv } from "../../capacitor-plugin";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
+import { PreinstallOptions } from "../instance/PreinstallOptions";
+import type { PreinstalledExtensionId } from "../../capacitor-plugin";
 
 export type WizardMode = "local" | "remote" | "import";
 
@@ -25,12 +27,15 @@ export interface NewInstanceWizardModalProps {
   switchInstanceMode: (mode: WizardMode) => void;
   newInstanceDir: string;
   setNewInstanceDir: (v: string) => void;
+  onPickInstallFolder: () => void;
   newInstanceVersion: string;
   setNewInstanceVersion: (v: string) => void;
   newInstanceLocalZip: string | null;
   setNewInstanceLocalZip: (v: string | null) => void;
   newInstanceCompanionPresetEnabled: boolean;
   setNewInstanceCompanionPresetEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  newInstanceExtensionIds: PreinstalledExtensionId[];
+  setNewInstanceExtensionIds: React.Dispatch<React.SetStateAction<PreinstalledExtensionId[]>>;
   newInstanceUrl: string;
   setNewInstanceUrl: (v: string) => void;
   newRemoteAuthEnabled: boolean;
@@ -234,12 +239,15 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
   switchInstanceMode,
   newInstanceDir,
   setNewInstanceDir,
+  onPickInstallFolder,
   newInstanceVersion,
   setNewInstanceLocalZip,
   newInstanceLocalZip,
   setNewInstanceVersion,
   newInstanceCompanionPresetEnabled,
   setNewInstanceCompanionPresetEnabled,
+  newInstanceExtensionIds,
+  setNewInstanceExtensionIds,
   newInstanceUrl,
   setNewInstanceUrl,
   newRemoteAuthEnabled,
@@ -290,6 +298,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
 
   // 同步测量当前激活模式的实际高度，在同一浏览器渲染帧提交以保证无闪烁、无空白跳跃的平滑流体溶变
   useLayoutEffect(() => {
+    if (!isOpen) return;
     const targetEl =
       newInstanceMode === "local"
         ? wizardLocalRef.current
@@ -298,18 +307,18 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
         : wizardImportRef.current;
     if (!targetEl) return;
 
-    const measureHeight = () => {
-      const h = targetEl.getBoundingClientRect().height;
+    const measureHeight = (entry?: ResizeObserverEntry) => {
+      const h = entry?.borderBoxSize?.[0]?.blockSize ?? targetEl.offsetHeight;
       if (h > 0) {
-        setWizardHeight(Math.round(h));
+        setWizardHeight(Math.ceil(h));
       }
     };
 
     measureHeight();
 
     if (typeof ResizeObserver !== "undefined") {
-      const ro = new ResizeObserver(() => {
-        measureHeight();
+      const ro = new ResizeObserver(([entry]) => {
+        measureHeight(entry);
       });
       ro.observe(targetEl);
       return () => ro.disconnect();
@@ -317,6 +326,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
   }, [
     newInstanceMode,
     newInstanceCompanionPresetEnabled,
+    newInstanceExtensionIds,
     newRemoteAuthEnabled,
     migrationAccessMode,
     migrationSourcePath,
@@ -373,7 +383,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-subtle">
+      <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-hidden">
         {/* 实例名称 */}
         <NewInstanceField label="名称" isLight={isLight}>
           <input
@@ -455,19 +465,20 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
         {/* 模式配置切换容器（平滑高度自适应 + 统一 500ms 高斯模糊与位移交叉溶变） */}
         <div
           ref={wizardContainerRef}
-          className="relative transition-[height] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] overflow-hidden"
+          className="motion-panel-stack"
           style={{ height: wizardHeight ? `${wizardHeight}px` : undefined }}
         >
           {/* 本地模式配置 */}
           <div
             ref={wizardLocalRef}
             className={cn(
-              "w-full space-y-5 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "motion-panel-face w-full space-y-5",
               newInstanceMode === "local"
-                ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto visible"
-                : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
+                ? "is-active relative pointer-events-auto"
+                : "absolute inset-x-0 top-0 pointer-events-none select-none"
             )}
             aria-hidden={newInstanceMode !== "local"}
+            inert={newInstanceMode !== "local"}
           >
             <NewInstanceField label="安装目录" isLight={isLight}>
               <div className="flex items-center gap-2 w-full">
@@ -484,14 +495,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                   )}
                 />
                 <button
-                  onClick={async () => {
-                    try {
-                      const { name, path } = await TarvenEnv.pickDirectory();
-                      setNewInstanceDir(isWindows ? path : name);
-                    } catch {
-                      /* 取消 */
-                    }
-                  }}
+                  onClick={onPickInstallFolder}
                   className={cn(
                     "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0",
                     isLight
@@ -577,70 +581,26 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
               </div>
             </NewInstanceField>
 
-            <section
-              className={cn("companion-preset", isLight && "is-light")}
-              data-enabled={newInstanceCompanionPresetEnabled}
-            >
-              <div className="companion-preset__label">主题预设</div>
-              <div className="companion-preset__row">
-                <div className="companion-preset__thumb" aria-hidden="true">
-                  <img
-                    src="./assets/companion-presets/sc-bordeaux/sillyclient-bg-preview.jpg"
-                    alt=""
-                    width="112"
-                    height="70"
-                    decoding="async"
-                  />
-                </div>
-                <div className="companion-preset__copy">
-                  <span className="companion-preset__name">SC Bordeaux</span>
-                  <span className="companion-preset__summary">
-                    实例安装完成后自动应用
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-label="使用 SC Bordeaux 主题预设"
-                  aria-checked={newInstanceCompanionPresetEnabled}
-                  onClick={() =>
-                    setNewInstanceCompanionPresetEnabled((value) => !value)
-                  }
-                  className="companion-preset__switch motion-control"
-                >
-                  <span className="companion-preset__knob" />
-                </button>
-              </div>
-              <div
-                className="companion-preset__details"
-                aria-hidden={!newInstanceCompanionPresetEnabled}
-              >
-                <div className="companion-preset__details-inner">
-                  <div className="companion-preset__details-body">
-                    <div className="companion-preset__detail-row">
-                      <span>主题</span>
-                      <strong>SC Bordeaux</strong>
-                    </div>
-                    <div className="companion-preset__detail-row">
-                      <span>壁纸</span>
-                      <strong>7680 × 4320 · JPG</strong>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </section>
+            <PreinstallOptions
+              isLight={isLight}
+              themeEnabled={newInstanceCompanionPresetEnabled}
+              setThemeEnabled={setNewInstanceCompanionPresetEnabled}
+              extensionIds={newInstanceExtensionIds}
+              setExtensionIds={setNewInstanceExtensionIds}
+            />
           </div>
 
           {/* 远程模式配置 */}
           <div
             ref={wizardRemoteRef}
             className={cn(
-              "w-full space-y-5 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "motion-panel-face w-full space-y-5",
               newInstanceMode === "remote"
-                ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto visible"
-                : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
+                ? "is-active relative pointer-events-auto"
+                : "absolute inset-x-0 top-0 pointer-events-none select-none"
             )}
             aria-hidden={newInstanceMode !== "remote"}
+            inert={newInstanceMode !== "remote"}
           >
             <NewInstanceField label="连接地址" isLight={isLight}>
               <input
@@ -762,12 +722,13 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
           <div
             ref={wizardImportRef}
             className={cn(
-              "w-full space-y-4 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "motion-panel-face w-full space-y-4",
               newInstanceMode === "import"
-                ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto visible"
-                : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
+                ? "is-active relative pointer-events-auto"
+                : "absolute inset-x-0 top-0 pointer-events-none select-none"
             )}
             aria-hidden={newInstanceMode !== "import"}
+            inert={newInstanceMode !== "import"}
           >
             {/* 1. 接入方式 */}
             <div>
@@ -870,12 +831,16 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
               <div
                 ref={importCopyRef}
                 className={cn(
-                  "w-full space-y-4 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  "motion-panel-face w-full space-y-4",
+                  migrationAccessMode === "copy"
+                    ? "is-active relative"
+                    : "absolute inset-x-0 top-0",
                   newInstanceMode === "import" && migrationAccessMode === "copy"
-                    ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto visible"
-                    : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
+                    ? "pointer-events-auto"
+                    : "pointer-events-none select-none"
                 )}
                 aria-hidden={newInstanceMode !== "import" || migrationAccessMode !== "copy"}
+                inert={newInstanceMode !== "import" || migrationAccessMode !== "copy"}
               >
                 {/* 2. 旧酒馆来源 */}
                 <NewInstanceField
@@ -939,7 +904,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                             : "text-white/45 hover:text-white/80"
                         )}
                       >
-                        恢复默认受管路径
+                        恢复默认路径
                       </button>
                     ) : undefined
                   }
@@ -948,14 +913,9 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                   <div className="flex items-center gap-2 w-full">
                     <input
                       type="text"
-                      value={
-                        migrationCustomDest ||
-                        `%LOCALAPPDATA%/SillyClient/tarven/servers/${
-                          newInstanceName.trim() || "imported"
-                        }`
-                      }
+                      value={migrationCustomDest}
                       onChange={(e) => setMigrationCustomDest(e.target.value)}
-                      placeholder="指定目标文件夹路径"
+                      placeholder={isWindows ? "默认目录或完整路径" : "默认目录"}
                       className={cn(
                         "flex-1 h-9 px-3 rounded-xl border text-xs focus:outline-none focus:ring-0 transition-colors",
                         isLight
@@ -1110,18 +1070,29 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                     </div>
                   </div>
                 )}
+                <PreinstallOptions
+                  isLight={isLight}
+                  themeEnabled={newInstanceCompanionPresetEnabled}
+                  setThemeEnabled={setNewInstanceCompanionPresetEnabled}
+                  extensionIds={newInstanceExtensionIds}
+                  setExtensionIds={setNewInstanceExtensionIds}
+                />
               </div>
 
               {/* 子模式 2: 原地接管 */}
               <div
                 ref={importTakeoverRef}
                 className={cn(
-                  "w-full space-y-4 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                  "motion-panel-face w-full space-y-4",
+                  migrationAccessMode === "takeover"
+                    ? "is-active relative"
+                    : "absolute inset-x-0 top-0",
                   newInstanceMode === "import" && migrationAccessMode === "takeover"
-                    ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto visible"
-                    : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none invisible"
+                    ? "pointer-events-auto"
+                    : "pointer-events-none select-none"
                 )}
                 aria-hidden={newInstanceMode !== "import" || migrationAccessMode !== "takeover"}
+                inert={newInstanceMode !== "import" || migrationAccessMode !== "takeover"}
               >
                 {/* 2. 旧酒馆来源 */}
                 <NewInstanceField

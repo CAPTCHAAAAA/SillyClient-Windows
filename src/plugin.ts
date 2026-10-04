@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import * as nodeNet from 'node:net';
+import { randomUUID } from 'node:crypto';
 
 import * as paths from './runtime/paths';
 import * as proc from './runtime/process';
@@ -18,6 +19,16 @@ import * as utils from './runtime/utils';
 import * as instanceStore from './runtime/instances';
 import { installCompanionPreset } from './runtime/companion-presets';
 import type { CompanionPresetTransaction } from './runtime/companion-presets';
+import { OperationCoordinator, OperationContext, checkSignal, delay } from './runtime/operations';
+import { directorySize, invalidateDirectorySize } from './runtime/directory-stats';
+import { CleanupService, assertPlainPath } from './runtime/cleanup';
+import { copyMigration, directoryContentIdentity, resolveTakeoverSource } from './runtime/migration';
+import { ensureInstanceDependencies } from './runtime/dependencies';
+import { InstanceMaintenanceService } from './runtime/instance-maintenance';
+import { resolveInstanceDataRoot } from './runtime/instance-config';
+import {
+  installPreselectedExtensions, validatePreinstallSelection, ExtensionInstallTransaction,
+} from './runtime/preinstalled-extensions';
 import {
   clearRemoteBasicAuth,
   getRemoteBasicAuthStatus,
@@ -42,9 +53,38 @@ let currentUrl: string | null = null;
 let currentPort = 0;
 let currentInstanceId: string | null = null;
 let currentServerDir: string | null = null;
+let currentOperationId: string | null = null;
+const operations = new OperationCoordinator();
 let staleUsageSessionsSettled = false;
 let usageCheckpointTimer: ReturnType<typeof setInterval> | null = null;
 let cleanupCompleted = false;
+let cleanupPromise: Promise<void> | null = null;
+const garbage = new CleanupService({
+  servers: path.join(paths.bootstrapDir, 'servers'),
+  covers: paths.coversDir,
+  temporary: paths.tmpDir,
+  logs: paths.logsDir,
+}, () => ({
+  records: instanceStore.listInstanceRecords(),
+  activeDirectories: [...proc.activeProcessDirectories(), ...(currentServerDir ? [currentServerDir] : [])],
+  activeInstanceIds: [currentInstanceId, operations.getActive()?.instanceId].filter((id): id is string => Boolean(id)),
+  protectedPaths: [],
+}));
+const maintenance = new InstanceMaintenanceService({
+  resolveInstance(instanceId) {
+    const record = instanceStore.getInstanceRecord(instanceId);
+    if (!record) throw new Error('只支持已登记的本地实例');
+    return {
+      directory: record.path, isTakeover: record.isTakeover,
+      shared: instanceStore.listInstanceRecords().some((other) => other.instanceId !== record.instanceId
+        && path.resolve(other.path).toLowerCase() === path.resolve(record.path).toLowerCase()),
+    };
+  },
+  resolveDataRoot: resolveInstanceDataRoot,
+  isBusy: () => cleanupCompleted || !!operations.getActive() || serverReady
+    || proc.isServerRunning() || proc.activeProcessDirectories().length > 0,
+  commit: (work) => operations.enqueue(work),
+});
 
 // ---------------------------------------------------------------------------
 // 公开接口
@@ -52,7 +92,10 @@ let cleanupCompleted = false;
 
 export function setMainWindow(win: BrowserWindow | null): void {
   mainWindow = win;
-  if (win) cleanupCompleted = false;
+  if (win) {
+    cleanupCompleted = false;
+    cleanupPromise = null;
+  }
 }
 
 export function isServerReady(): boolean {
@@ -67,26 +110,55 @@ export function getCurrentInstanceId(): string | null {
   return currentInstanceId;
 }
 
-export function stopCurrentServer(): void {
-  stopCurrentServerInternal(true);
+export function getCurrentOperationId(): string | null {
+  return currentOperationId;
 }
 
-function stopCurrentServerInternal(emitEvents: boolean): void {
+export function canCloseTavern(options?: { instanceId?: string; operationId?: string }): boolean {
+  return !(options?.instanceId || options?.operationId) || matchesRun(options) || operations.matches(options);
+}
+
+function matchesRun(options?: { instanceId?: string; operationId?: string }): boolean {
+  return Boolean(currentInstanceId) && (!options?.instanceId || options.instanceId === currentInstanceId)
+    && (!options?.operationId || options.operationId === currentOperationId);
+}
+
+export function stopCurrentServer(options?: { instanceId?: string; operationId?: string }): Promise<void> {
+  const scoped = Boolean(options?.instanceId || options?.operationId);
+  const runningMatches = matchesRun(options);
+  const pendingMatches = operations.matches(options);
+  if (scoped && !runningMatches && !pendingMatches) return Promise.resolve();
+  operations.cancel(options);
+  garbage.invalidate();
+  maintenance.invalidate();
+  return operations.enqueue(async () => {
+    if (!scoped || runningMatches) await stopCurrentServerInternal(true, options);
+  });
+}
+
+async function stopCurrentServerInternal(
+  emitEvents: boolean,
+  options?: { instanceId?: string; operationId?: string },
+): Promise<void> {
+  if ((options?.instanceId || options?.operationId) && !matchesRun(options)) return;
   const stoppedInstanceId = currentInstanceId;
+  const stoppedOperationId = currentOperationId;
+  await proc.stopServer();
   stopUsageCheckpoint();
   currentInstanceId = null;
   currentServerDir = null;
-  proc.stopServer();
+  currentOperationId = null;
   const usage = stoppedInstanceId ? instanceStore.finishInstanceUsage(stoppedInstanceId) : null;
   serverReady = false;
   currentUrl = null;
   currentPort = 0;
   if (emitEvents) {
-    notify('ready', { ready: false });
+    notify('ready', { ready: false, instanceId: stoppedInstanceId, operationId: stoppedOperationId });
     notify('mode', {
       mode: 'launcher',
       tavernRunning: false,
       instanceId: stoppedInstanceId,
+      operationId: stoppedOperationId,
       lastUsedAt: usage?.lastUsedAt,
       totalUsageMs: usage?.totalUsageMs,
     });
@@ -108,11 +180,22 @@ function stopUsageCheckpoint(): void {
   usageCheckpointTimer = null;
 }
 
-export function cleanup(): void {
-  if (cleanupCompleted) return;
+export function cleanup(): Promise<void> {
+  if (cleanupPromise) return cleanupPromise;
   cleanupCompleted = true;
-  stopCurrentServerInternal(false);
-  mainWindow = null;
+  operations.cancel();
+  garbage.invalidate();
+  maintenance.invalidate();
+  cleanupPromise = operations.enqueue(async () => {
+    await stopCurrentServerInternal(false);
+    await proc.stopAllProcesses();
+    mainWindow = null;
+  }).catch((error) => {
+    cleanupPromise = null;
+    cleanupCompleted = false;
+    throw error;
+  });
+  return cleanupPromise;
 }
 
 export function notify(eventName: string, data: any): void {
@@ -131,6 +214,14 @@ export async function handle(method: string, options: any): Promise<any> {
       return provisionAndStart(options);
     case 'scanInstances':
       return scanInstances();
+    case 'closeTavern':
+      return stopCurrentServer(options).then(() => ({ success: true }));
+    case 'getStatus':
+      return {
+        mode: 'launcher', serverReady, url: currentUrl,
+        instanceId: serverReady ? currentInstanceId : undefined,
+        operationId: serverReady ? currentOperationId : undefined,
+      };
     case 'getInstanceInfo':
       return getInstanceInfo(options);
     case 'sendCommand':
@@ -151,7 +242,7 @@ export async function handle(method: string, options: any): Promise<any> {
     case 'fetchReleases':
       return fetchReleases();
     case 'pickDirectory':
-      return doPickDirectory();
+      return doPickDirectory(options);
     case 'pickImage':
       return doPickImage(options);
     case 'pickZipFile':
@@ -166,6 +257,14 @@ export async function handle(method: string, options: any): Promise<any> {
       return cleanGarbage(options);
     case 'deleteGarbageItem':
       return deleteGarbageItem(options);
+    case 'scanInstanceMaintenance':
+      return maintenance.scan(options?.instanceId);
+    case 'applyInstanceMaintenance':
+      return maintenance.apply(options?.instanceId, options?.scanId, options?.items);
+    case 'listInstanceMaintenanceRecovery':
+      return maintenance.listRecovery(options?.instanceId);
+    case 'restoreInstanceMaintenance':
+      return maintenance.restore(options?.instanceId, options?.recoveryId, options?.token);
     case 'migrateInstance':
       return doMigrateInstance(options);
     default:
@@ -177,23 +276,29 @@ export async function handle(method: string, options: any): Promise<any> {
 // 端口检测 — 检查端口是否可用，不可用则递增
 // ---------------------------------------------------------------------------
 
-function isPortAvailable(port: number): Promise<boolean> {
+function isPortAvailable(port: number, host = '127.0.0.1'): Promise<boolean> {
   return new Promise((resolve) => {
     const tester = nodeNet.createServer();
     tester.once('error', () => resolve(false));
     tester.once('listening', () => {
       tester.close(() => resolve(true));
     });
-    tester.listen(port, '127.0.0.1');
+    tester.listen(port, host);
   });
 }
 
-async function findAvailablePort(startPort: number, log: (msg: string, level?: string) => void): Promise<number> {
-  for (let p = startPort; p < startPort + 100; p++) {
-    if (await isPortAvailable(p)) return p;
+async function findAvailablePort(
+  startPort: number,
+  log: (msg: string, level?: string) => void,
+  signal?: AbortSignal,
+  host = '127.0.0.1',
+): Promise<number> {
+  for (let p = startPort; p < Math.min(65536, startPort + 100); p++) {
+    checkSignal(signal);
+    if (await isPortAvailable(p, host)) return p;
   }
-  log(`端口 ${startPort}-${startPort + 99} 全部不可用，使用默认 ${startPort}`, 'error');
-  return startPort;
+  log(`端口 ${startPort}-${Math.min(65535, startPort + 99)} 全部不可用`, 'error');
+  throw new Error('No available server port');
 }
 
 // ---------------------------------------------------------------------------
@@ -202,188 +307,268 @@ async function findAvailablePort(startPort: number, log: (msg: string, level?: s
 // ---------------------------------------------------------------------------
 
 async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
-  const { port, instanceId, version, zipballUrl, localZipPath, config, installPath, companionPreset } = opts;
-  const safeInstanceId = paths.normalizeInstanceId(instanceId);
+  if (cleanupCompleted) throw new Error('Application is shutting down');
+  const preinstall = validatePreinstallSelection(opts?.preinstall);
+  const safeInstanceId = paths.normalizeInstanceId(opts?.instanceId || '');
+  garbage.invalidate();
+  maintenance.invalidate();
+  try {
+    return await operations.runLatest(safeInstanceId, opts?.operationId,
+      (context) => provisionInstance({ ...opts, preinstall }, context));
+  } catch (error: any) {
+    if (error?.name === 'AbortError') return { ready: false };
+    throw error;
+  }
+}
 
-  const log = (msg: string, level?: string) => notify('log', { message: msg, level });
-  const progress = (pct: number, text?: string) => notify('progress', { percent: pct, stage: text });
-
-  serverReady = false;
-  currentPort = port;
+async function provisionInstance(opts: any, context: OperationContext): Promise<{ ready: boolean }> {
+  const { zipballUrl, localZipPath, config, installPath, installPathMode, companionPreset } = opts || {};
+  const port = opts?.port;
+  const safeInstanceId = context.instanceId;
+  const eventContext = { instanceId: safeInstanceId, operationId: context.operationId };
+  const log = (msg: string, level?: string) => {
+    if (!context.signal.aborted) notify('log', { message: msg, level, ...eventContext });
+  };
+  const progress = (pct: number, text?: string) => {
+    if (!context.signal.aborted) notify('progress', { percent: pct, stage: text, ...eventContext });
+  };
   let createdThisRun = false;
   let targetServerDir = '';
+  let stagingDirectory = '';
+  let createdDirectoryIdentity = '';
+  let createdContentIdentity: string | null = null;
   let temporaryArchive = '';
-  let preserveSelectedDirectory = false;
   let companionPresetTransaction: CompanionPresetTransaction | null = null;
+  let extensionTransaction: ExtensionInstallTransaction | null = null;
 
   try {
-    paths.ensureDirs();
-
-    if (proc.isServerRunning()) stopCurrentServer();
-
-    targetServerDir = resolveInstanceDir(safeInstanceId, installPath);
-    if (fs.existsSync(targetServerDir) && !fs.statSync(targetServerDir).isDirectory()) {
-      throw new Error('指定的安装路径不是目录');
+    context.check();
+    serverLaunchArguments(port, config);
+    targetServerDir = resolveInstanceDir(safeInstanceId, installPath, installPathMode);
+    const existingOtherRecord = instanceStore.listInstanceRecords().find(
+      (r) => r.instanceId !== safeInstanceId && path.resolve(r.path).toLowerCase() === path.resolve(targetServerDir).toLowerCase()
+    );
+    if (existingOtherRecord) {
+      throw new Error(`目标路径已由其他实例「${existingOtherRecord.instanceId}」登记使用`);
     }
-    preserveSelectedDirectory = Boolean(installPath && fs.existsSync(targetServerDir));
-    if (
-      installPath
-      && fs.existsSync(targetServerDir)
-      && fs.readdirSync(targetServerDir).length > 0
-      && (!fs.existsSync(path.join(targetServerDir, 'server.js'))
-        || !fs.existsSync(path.join(targetServerDir, 'package.json')))
-    ) {
-      throw new Error('选择的安装目录不是空目录，请选择空目录或已有的 SillyTavern 目录');
+    const record = instanceStore.getInstanceRecord(safeInstanceId);
+    const targetExisted = fs.existsSync(targetServerDir);
+    if (record && !targetExisted) {
+      throw new Error('Registered installation directory is missing; its original path was preserved');
     }
-    if (!fs.existsSync(targetServerDir)) {
-      fs.mkdirSync(targetServerDir, { recursive: true });
+    if (targetExisted) {
+      const stat = await assertPlainPath(targetServerDir);
+      if (!stat.isDirectory()) throw new Error('Installation path is not a directory');
     }
-
     const serverJs = path.join(targetServerDir, 'server.js');
     const packageJson = path.join(targetServerDir, 'package.json');
-    const nodeModules = path.join(targetServerDir, 'node_modules');
     const needSource = !fs.existsSync(serverJs) || !fs.existsSync(packageJson);
-    const createdAt = instanceStore.getInstanceRecord(safeInstanceId)?.createdAt
+    if (record?.isTakeover) {
+      if (companionPreset) throw new Error('Theme presets cannot modify a takeover source');
+      if (opts.preinstall?.extensionIds.length) throw new Error('Preinstalled extensions cannot modify a takeover source');
+      if (needSource) throw new Error('Takeover source is incomplete; source files were preserved');
+    }
+    if (needSource && targetExisted && fs.readdirSync(targetServerDir).length) {
+      throw new Error('Refusing to replace an incomplete nonempty instance directory');
+    }
+    context.check();
+    paths.ensureDirs();
+    await stopCurrentServerInternal(true);
+    context.check();
+    if (!targetExisted) {
+      fs.mkdirSync(path.dirname(targetServerDir), { recursive: true });
+      await assertPlainPath(path.dirname(targetServerDir));
+    }
+    const createdAt = record?.createdAt
       || (needSource ? new Date().toISOString() : undefined);
 
     if (needSource) {
-      createdThisRun = true;
+      stagingDirectory = path.join(path.dirname(targetServerDir), `.sillyclient-stage-${randomUUID()}`);
+      fs.mkdirSync(stagingDirectory);
       progress(5, '安装中');
-      fs.rmSync(targetServerDir, { recursive: true, force: true });
-      fs.mkdirSync(targetServerDir, { recursive: true });
-
       if (localZipPath) {
-        if (!fs.existsSync(localZipPath)) {
-          throw new Error('选择的本地压缩包不存在');
-        }
+        if (!fs.existsSync(localZipPath)) throw new Error('选择的本地压缩包不存在');
         log(`从本地 zip 安装: ${localZipPath}`);
         progress(15, '解压本地 zip');
-        await utils.unzipToDir(localZipPath, targetServerDir);
-        flattenExtractedDir(targetServerDir);
+        await utils.unzipToDir(localZipPath, stagingDirectory, { signal: context.signal });
+        context.check();
+        flattenExtractedDir(stagingDirectory);
       } else if (zipballUrl) {
         log(`下载: ${zipballUrl}`);
         progress(10, '下载源码');
-
-        temporaryArchive = path.join(paths.tmpDir, `${safeInstanceId}.zip`);
+        temporaryArchive = path.join(paths.tmpDir, `${safeInstanceId}-${randomUUID()}.zip`);
         await downloadWithMirrors(zipballUrl, temporaryArchive, (pct) => {
           progress(10 + Math.floor(pct * 0.4), '下载中');
-        }, log);
-
+        }, log, context.signal);
+        context.check();
         progress(50, '解压源码');
-        await utils.unzipToDir(temporaryArchive, targetServerDir);
-        flattenExtractedDir(targetServerDir);
-
-        try { fs.unlinkSync(temporaryArchive); } catch { /* ignore */ }
+        await utils.unzipToDir(temporaryArchive, stagingDirectory, { signal: context.signal });
+        context.check();
+        flattenExtractedDir(stagingDirectory);
+        await fs.promises.rm(temporaryArchive, { force: true });
         temporaryArchive = '';
       } else {
         throw new Error('未获取到 SillyTavern 当前版本，请检查网络后重试');
       }
-
-      if (!fs.existsSync(serverJs) || !fs.existsSync(packageJson)) {
+      if (!fs.existsSync(path.join(stagingDirectory, 'server.js'))
+        || !fs.existsSync(path.join(stagingDirectory, 'package.json'))) {
         throw new Error('下载内容不完整，未找到 SillyTavern 启动文件');
       }
     }
-
-    if (!fs.existsSync(nodeModules)) {
+    const installationDirectory = stagingDirectory || targetServerDir;
+    if (!fs.existsSync(path.join(installationDirectory, 'node_modules'))) {
       progress(60, '安装依赖');
-      await proc.runNpmInstall(targetServerDir, log);
-      if (!fs.existsSync(nodeModules)) {
-        throw new Error('运行依赖安装未完成');
-      }
     }
-
+    await ensureInstanceDependencies(installationDirectory, log, {
+      signal: context.signal, isTakeover: record?.isTakeover,
+    });
+    context.check();
+    if (stagingDirectory) {
+      if (targetExisted) {
+        await assertPlainPath(targetServerDir);
+        // rmdir refuses a directory populated after our initial check.
+        await fs.promises.rmdir(targetServerDir);
+      } else if (fs.existsSync(targetServerDir)) {
+        throw new Error('Installation target appeared while preparing the source');
+      }
+      context.check();
+      createdContentIdentity = await directoryContentIdentity(stagingDirectory, context.signal);
+      context.check();
+      await fs.promises.rename(stagingDirectory, targetServerDir);
+      stagingDirectory = '';
+      createdThisRun = true;
+      const stat = fs.lstatSync(targetServerDir);
+      createdDirectoryIdentity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+      invalidateDirectorySize(targetServerDir);
+    }
     if (companionPreset) {
       progress(82, '应用主题预设');
-      companionPresetTransaction = installCompanionPreset(targetServerDir, companionPreset);
+      companionPresetTransaction = await installCompanionPreset(targetServerDir, companionPreset, undefined, {
+        signal: context.signal,
+      });
       log(companionPresetTransaction.applied ? '已应用 SC Bordeaux 主题预设' : 'SC Bordeaux 主题预设已就绪');
     }
-
-    // 检测端口可用性，自动切换
-    const actualPort = await findAvailablePort(port, log);
-    if (actualPort !== port) {
-      log(`端口 ${port} 被占用或保留，改用 ${actualPort}`);
+    if (opts.preinstall?.extensionIds.length) {
+      progress(83, '安装预制扩展');
+      extensionTransaction = await installPreselectedExtensions(targetServerDir, opts.preinstall, {
+        signal: context.signal,
+        operationId: context.operationId,
+        log,
+        progress: (percent, stage) => progress(83 + Math.floor(percent * 0.06), stage),
+      });
     }
+    context.check();
+    const ipv6Only = config?.ipv4 === false && config?.ipv6 === true;
+    const connectionHost = ipv6Only ? '[::1]' : '127.0.0.1';
+    const actualPort = await findAvailablePort(port, log, context.signal, ipv6Only ? '::1' : '127.0.0.1');
+    context.check();
+    if (actualPort !== port) log(`端口 ${port} 被占用或保留，改用 ${actualPort}`);
     currentPort = actualPort;
-
-    progress(85, '写入配置');
-    writeInstanceConfig(targetServerDir, actualPort, config);
-
+    // CLI overrides preserve existing config, custom dataRoot, authentication and scripts.
+    // A new source without config receives only the existing launcher defaults.
+    if (createdThisRun && !fs.existsSync(path.join(targetServerDir, 'config.yaml'))) {
+      writeInstanceConfig(targetServerDir, actualPort, config);
+    }
+    const args = serverLaunchArguments(actualPort, config);
     progress(90, '启动服务');
     currentInstanceId = safeInstanceId;
     currentServerDir = targetServerDir;
+    currentOperationId = context.operationId;
     proc.startServer(targetServerDir, safeInstanceId, actualPort, log, () => {
-      if (currentInstanceId !== safeInstanceId) return;
+      if (currentInstanceId !== safeInstanceId || currentOperationId !== context.operationId) return;
       stopUsageCheckpoint();
       currentInstanceId = null;
       currentServerDir = null;
+      currentOperationId = null;
       serverReady = false;
       currentUrl = null;
       currentPort = 0;
       const usage = instanceStore.finishInstanceUsage(safeInstanceId);
-      notify('ready', { ready: false });
-      notify('mode', {
-        mode: 'launcher',
-        tavernRunning: false,
-        instanceId: safeInstanceId,
-        lastUsedAt: usage?.lastUsedAt,
-        totalUsageMs: usage?.totalUsageMs,
-      });
-    });
-
+      if (!cleanupCompleted) {
+        notify('ready', { ready: false, ...eventContext });
+        notify('mode', {
+          mode: 'launcher', tavernRunning: false, ...eventContext,
+          lastUsedAt: usage?.lastUsedAt, totalUsageMs: usage?.totalUsageMs,
+        });
+      }
+    }, { args, operationId: context.operationId });
     progress(95, '等待就绪');
-    const ready = await pollUntilReady(actualPort, 180000, log);
-    if (!ready) {
-      throw new Error('服务启动超时（180s）');
-    }
-    if (!proc.isServerRunning() || currentInstanceId !== safeInstanceId) {
+    const ready = await pollUntilReady(actualPort, 180000, log, context.signal, connectionHost);
+    context.check();
+    if (!ready) throw new Error('服务启动超时（180s）');
+    if (!proc.isServerRunning() || currentInstanceId !== safeInstanceId || currentOperationId !== context.operationId) {
       throw new Error('服务在完成启动前已退出');
     }
-
     serverReady = true;
-    currentUrl = `http://127.0.0.1:${actualPort}`;
+    currentUrl = `http://${connectionHost}:${actualPort}`;
     instanceStore.registerInstance(safeInstanceId, targetServerDir, createdAt);
     instanceStore.beginInstanceUsage(safeInstanceId, targetServerDir);
     startUsageCheckpoint(safeInstanceId);
     companionPresetTransaction?.commit();
+    extensionTransaction?.commit();
     progress(100, '就绪');
     log('服务就绪', 'success');
 
-    notify('ready', { ready: true, url: currentUrl, port: actualPort });
+    notify('ready', { ready: true, url: currentUrl, port: actualPort, ...eventContext });
     return { ready: true };
   } catch (e: any) {
-    if (currentInstanceId === safeInstanceId) stopCurrentServer();
+    if (currentOperationId === context.operationId) await stopCurrentServerInternal(false);
+    await extensionTransaction?.rollback();
     companionPresetTransaction?.rollback();
-    if (temporaryArchive) {
-      try { fs.unlinkSync(temporaryArchive); } catch { /* ignore */ }
+    if (temporaryArchive) await fs.promises.rm(temporaryArchive, { force: true });
+    if (stagingDirectory) {
+      await assertPlainPath(stagingDirectory, true);
+      if (proc.activeProcessDirectories().includes(stagingDirectory)) throw new Error('Staging process has not exited');
+      await utils.removeDirWithRetries(stagingDirectory);
     }
     if (createdThisRun && targetServerDir) {
-      fs.rmSync(targetServerDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-      if (preserveSelectedDirectory) fs.mkdirSync(targetServerDir, { recursive: true });
+      const stat = await assertPlainPath(targetServerDir, true);
+      if (`${stat.dev}:${stat.ino}:${stat.birthtimeMs}` !== createdDirectoryIdentity) {
+        throw new Error('Installation target ownership changed; incomplete files preserved');
+      }
+      if (proc.activeProcessDirectories().includes(targetServerDir)) throw new Error('Installation process has not exited');
+      if (createdContentIdentity === null) {
+        throw new Error('Installation target content ownership is unknown; files were preserved');
+      }
+      if (await directoryContentIdentity(targetServerDir) !== createdContentIdentity) {
+        throw new Error('Installation target contents changed; files were preserved');
+      }
+      await utils.removeDirWithRetries(targetServerDir);
     }
-    log(`失败: ${e.message}`, 'error');
-    notify('error', { message: e.message });
+    if (!context.signal.aborted) {
+      log(`失败: ${e.message}`, 'error');
+      notify('error', { message: e.message, ...eventContext });
+    }
     return { ready: false };
   }
 }
 
-function resolveInstanceDir(instanceId: string, installPath?: string): string {
-  if (typeof installPath === 'string' && installPath.trim()) {
-    return paths.serverDirFor(instanceId, installPath);
-  }
+function resolveInstanceDir(instanceId: string, installPath?: string, installPathMode?: paths.InstallPathMode): string {
   const recorded = instanceStore.getInstanceRecord(instanceId)?.path;
-  if (recorded && fs.existsSync(recorded)) return recorded;
+  if (installPath !== undefined || installPathMode !== undefined) {
+    const selected = paths.serverDirFor(instanceId, installPath, installPathMode);
+    if (recorded) {
+      if (installPath?.trim() && path.resolve(selected).toLowerCase() !== path.resolve(recorded).toLowerCase()) {
+        throw new Error('Selected installation path conflicts with the registered instance');
+      }
+      return recorded;
+    }
+    return selected;
+  }
+  // Missing registrations retain their original path, never a same-ID default.
+  if (recorded) return recorded;
   const defaultDir = paths.serverDirFor(instanceId);
   if (fs.existsSync(defaultDir)) return defaultDir;
   if (instanceId.startsWith('local-')) {
     const fallbackId = instanceId.replace('local-', 'new-');
     const fallbackRecord = instanceStore.getInstanceRecord(fallbackId)?.path;
-    if (fallbackRecord && fs.existsSync(fallbackRecord)) return fallbackRecord;
+    if (fallbackRecord) return fallbackRecord;
     const fallbackDir = paths.serverDirFor(fallbackId);
     if (fs.existsSync(fallbackDir)) return fallbackDir;
   } else if (instanceId.startsWith('new-')) {
     const fallbackId = instanceId.replace('new-', 'local-');
     const fallbackRecord = instanceStore.getInstanceRecord(fallbackId)?.path;
-    if (fallbackRecord && fs.existsSync(fallbackRecord)) return fallbackRecord;
+    if (fallbackRecord) return fallbackRecord;
     const fallbackDir = paths.serverDirFor(fallbackId);
     if (fs.existsSync(fallbackDir)) return fallbackDir;
   }
@@ -395,6 +580,7 @@ async function downloadWithMirrors(
   destPath: string,
   onProgress: (pct: number) => void,
   log: (msg: string, level?: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const mirrors = [
     originalUrl,
@@ -406,11 +592,14 @@ async function downloadWithMirrors(
   let lastError: Error | null = null;
   for (let i = 0; i < mirrors.length; i++) {
     for (let retry = 0; retry < 2; retry++) {
+      checkSignal(signal);
       try {
         log(`下载 (镜像 ${i + 1}/${mirrors.length}, 重试 ${retry + 1}/2)`);
-        await utils.downloadFile(mirrors[i], destPath, onProgress);
+        await utils.downloadFile(mirrors[i], destPath, onProgress, signal);
+        checkSignal(signal);
         return;
       } catch (e: any) {
+        checkSignal(signal);
         lastError = e;
         log(`下载失败: ${e.message}`, 'error');
       }
@@ -425,14 +614,22 @@ async function downloadWithMirrors(
  * 把它的内容提升到父目录即可。
  */
 function flattenExtractedDir(dir: string): void {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  // 只有一个子目录 → 提升它
-  if (entries.length === 1 && entries[0].isDirectory()) {
+  while (true) {
+    if (fs.existsSync(path.join(dir, 'server.js')) && fs.existsSync(path.join(dir, 'package.json'))) break;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    if (entries.length !== 1 || !entries[0].isDirectory()) break;
     const subdir = path.join(dir, entries[0].name);
-    for (const entry of fs.readdirSync(subdir)) {
-      fs.renameSync(path.join(subdir, entry), path.join(dir, entry));
+    const tempHolder = path.join(path.dirname(dir), `.flatten-${randomUUID()}`);
+    fs.renameSync(subdir, tempHolder);
+    try {
+      for (const entry of fs.readdirSync(tempHolder)) {
+        fs.renameSync(path.join(tempHolder, entry), path.join(dir, entry));
+      }
+    } finally {
+      if (fs.existsSync(tempHolder)) {
+        fs.rmSync(tempHolder, { recursive: true, force: true });
+      }
     }
-    fs.rmdirSync(subdir);
   }
 }
 
@@ -443,33 +640,90 @@ function writeInstanceConfig(serverDir: string, port: number, config: any): void
     `listen: ${c.listen ?? true}`,
     `whitelistMode: false`,
     `securityOverride: true`,
-    c.ipv4 !== undefined ? `listenIPv4: ${c.ipv4}` : '',
-    c.ipv6 !== undefined ? `listenIPv6: ${c.ipv6}` : '',
+    'protocol:',
+    `  ipv4: ${c.ipv4 ?? true}`,
+    `  ipv6: ${c.ipv6 ?? false}`,
     c.dnsIpv6 !== undefined ? `dnsPreferIPv6: ${c.dnsIpv6}` : '',
-    c.heartbeat !== undefined ? `enableHeartbeat: ${c.heartbeat}` : '',
-    c.keepAlive !== undefined ? `autoRestartOnCrash: ${c.keepAlive}` : '',
+    c.heartbeat !== undefined ? `heartbeatInterval: ${c.heartbeat}` : '',
+    c.keepAlive !== undefined ? `enableKeepAlive: ${c.keepAlive}` : '',
   ].filter(Boolean).join('\n');
 
   utils.writeText(path.join(serverDir, 'config.yaml'), yaml);
 }
 
-async function pollUntilReady(port: number, timeoutMs: number, log: (msg: string, level?: string) => void): Promise<boolean> {
+function serverLaunchArguments(port: number, config: any): string[] {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid server port');
+  if (config !== undefined && (!config || typeof config !== 'object' || Array.isArray(config))) {
+    throw new Error('Invalid runtime configuration: expected an object');
+  }
+  if (config !== undefined) {
+    const prototype = Object.getPrototypeOf(config);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new Error('Invalid runtime configuration: expected a plain object');
+    }
+  }
+  const supportedKeys = ['listen', 'ipv4', 'ipv6', 'dnsIpv6', 'keepAlive', 'heartbeat'];
+  for (const key of Object.keys(config || {})) {
+    if (!supportedKeys.includes(key)) throw new Error(`Unknown runtime configuration key: ${key}`);
+  }
+  const args = ['--port', String(port), '--browserLaunchEnabled', 'false'];
+  const flags: [string, string, unknown][] = [
+    ['listen', 'listen', config?.listen],
+    ['ipv4', 'enableIPv4', config?.ipv4],
+    ['ipv6', 'enableIPv6', config?.ipv6],
+    ['dnsIpv6', 'dnsPreferIPv6', config?.dnsIpv6],
+    ['keepAlive', 'enableKeepAlive', config?.keepAlive],
+  ];
+  for (const [key, name, value] of flags) {
+    if (value === undefined) continue;
+    if (typeof value !== 'boolean') throw new Error(`Invalid runtime flag: ${key}`);
+    args.push(`--${name}`, String(value));
+  }
+  const heartbeat = config?.heartbeat;
+  if (heartbeat !== undefined) {
+    if (!Number.isInteger(heartbeat) || heartbeat < 0 || heartbeat > 2147483647) {
+      throw new Error('Invalid heartbeat interval');
+    }
+    args.push('--heartbeatInterval', String(heartbeat));
+  }
+  if (config?.ipv4 === false && config?.ipv6 === false) throw new Error('At least one IP protocol must be enabled');
+  if (config?.ipv6 === false && config?.ipv4 === undefined) args.push('--enableIPv4', 'true');
+  if (config?.ipv4 === false && config?.ipv6 === undefined) {
+    throw new Error('IPv6 must be explicitly enabled when IPv4 is disabled');
+  }
+  return args;
+}
+
+async function pollUntilReady(
+  port: number,
+  timeoutMs: number,
+  log: (msg: string, level?: string) => void,
+  signal?: AbortSignal,
+  host = '127.0.0.1',
+): Promise<boolean> {
   const start = Date.now();
-  const url = `http://127.0.0.1:${port}`;
+  const url = `http://${host}:${port}`;
   while (Date.now() - start < timeoutMs) {
+    checkSignal(signal);
+    if (!proc.isServerRunning()) return false;
     try {
-      if (await tryConnect(url)) return true;
-    } catch { /* ignore */ }
-    await new Promise((r) => setTimeout(r, 1500));
+      if (await tryConnect(url, signal)) return true;
+    } catch {
+      checkSignal(signal);
+    }
+    await delay(200, signal);
   }
   return false;
 }
 
-function tryConnect(url: string): Promise<boolean> {
+function tryConnect(url: string, signal?: AbortSignal): Promise<boolean> {
+  checkSignal(signal);
   return new Promise((resolve) => {
-    const req = http.get(url, (res) => {
+    const req = http.get(url, { signal }, (res) => {
       res.destroy();
-      resolve(res.statusCode !== undefined && res.statusCode < 500);
+      // A protected existing instance is ready even if it requests authentication.
+      resolve(res.statusCode !== undefined
+        && (res.statusCode < 400 || [401, 403].includes(res.statusCode)));
     });
     req.on('error', () => resolve(false));
     req.setTimeout(5000, () => { req.destroy(); resolve(false); });
@@ -482,19 +736,31 @@ function tryConnect(url: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 function scanInstances(): { instances: any[] } {
+  const repository = new instanceStore.InstanceRepository();
   if (!staleUsageSessionsSettled) {
-    instanceStore.finishStaleUsageSessions();
+    repository.finishStaleSessions(currentInstanceId ? [currentInstanceId] : []);
     staleUsageSessionsSettled = true;
   }
-  const serversDir = path.join(paths.bootstrapDir, 'servers');
   const candidates = new Map<string, string>();
-  for (const record of instanceStore.listInstanceRecords()) {
-    if (fs.existsSync(record.path)) candidates.set(record.instanceId, record.path);
+  for (const record of repository.list()) {
+    candidates.set(record.instanceId, record.path);
   }
-  if (fs.existsSync(serversDir)) {
-    for (const entry of fs.readdirSync(serversDir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || candidates.has(entry.name)) continue;
-      candidates.set(entry.name, path.join(serversDir, entry.name));
+  const appInstancesDir = paths.appInstancesDir || path.join(paths.bootstrapDir, 'instances');
+  const legacyServersDir = paths.legacyServersDir || path.join(paths.bootstrapDir, 'servers');
+  // 1. 扫描软件目录下的 instances/ 目录
+  if (appInstancesDir && fs.existsSync(appInstancesDir)) {
+    for (const entry of fs.readdirSync(appInstancesDir, { withFileTypes: true })) {
+      const instanceId = paths.normalizeInstanceId(entry.name);
+      if (!entry.isDirectory() || candidates.has(instanceId)) continue;
+      candidates.set(instanceId, path.join(appInstancesDir, entry.name));
+    }
+  }
+  // 2. 兼容扫描旧版 C 盘下的 servers/ 目录
+  if (legacyServersDir && fs.existsSync(legacyServersDir)) {
+    for (const entry of fs.readdirSync(legacyServersDir, { withFileTypes: true })) {
+      const instanceId = paths.normalizeInstanceId(entry.name);
+      if (!entry.isDirectory() || candidates.has(instanceId)) continue;
+      candidates.set(instanceId, path.join(legacyServersDir, entry.name));
     }
   }
   const instances: any[] = [];
@@ -504,8 +770,8 @@ function scanInstances(): { instances: any[] } {
 
     try {
       const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-      instanceStore.registerInstance(instanceId, dir);
-      const usage = instanceStore.getInstanceUsage(instanceId);
+      const record = repository.register(instanceId, dir);
+      const usage = instanceStore.usageForRecord(record);
       instances.push({
         instanceId,
         version: pkg.version || 'unknown',
@@ -518,7 +784,7 @@ function scanInstances(): { instances: any[] } {
       });
     } catch { /* skip */ }
   }
-
+  repository.commit();
   return { instances };
 }
 
@@ -527,10 +793,10 @@ function scanInstances(): { instances: any[] } {
 // { instanceId, version, path, sizeBytes, createdAt, status }
 // ---------------------------------------------------------------------------
 
-function getInstanceInfo(opts: any): any {
-  const { instanceId, installPath, port } = opts;
+async function getInstanceInfo(opts: any): Promise<any> {
+  const { instanceId, installPath, installPathMode, port } = opts;
   const safeInstanceId = paths.normalizeInstanceId(instanceId);
-  const dir = resolveInstanceDir(safeInstanceId, installPath);
+  const dir = resolveInstanceDir(safeInstanceId, installPath, installPathMode);
 
   if (!fs.existsSync(dir)) {
     return {
@@ -553,8 +819,8 @@ function getInstanceInfo(opts: any): any {
     } catch { /* ignore */ }
   }
 
-  instanceStore.registerInstance(safeInstanceId, dir);
-  const usage = instanceStore.getInstanceUsage(safeInstanceId);
+  const record = instanceStore.registerInstance(safeInstanceId, dir);
+  const usage = instanceStore.usageForRecord(record);
   const status = (proc.isServerRunning() && currentInstanceId === safeInstanceId && currentPort === port)
     ? 'running'
     : 'stopped';
@@ -563,7 +829,7 @@ function getInstanceInfo(opts: any): any {
     instanceId: safeInstanceId,
     version,
     path: dir,
-    sizeBytes: utils.dirSize(dir),
+    sizeBytes: await directorySize(dir),
     createdAt: usage.createdAt || '',
     lastUsedAt: usage.lastUsedAt || '',
     totalUsageMs: usage.totalUsageMs,
@@ -575,20 +841,22 @@ function getInstanceInfo(opts: any): any {
 // sendCommand — 前端期望: void
 // ---------------------------------------------------------------------------
 
-function doSendCommand(opts: any): void {
+async function doSendCommand(opts: any): Promise<void> {
   const { text, instanceId } = opts;
   const normalizedId = typeof instanceId === 'string' ? instanceId.trim() : '';
+  const commandOperationId = normalizedId === currentInstanceId ? currentOperationId || undefined : opts?.operationId;
+  const commandContext = { instanceId: normalizedId || undefined, operationId: commandOperationId, source: 'command' };
   if (!normalizedId) {
-    notify('log', { message: '缺少实例标识，无法打开实例终端', level: 'error' });
+    notify('log', { message: '缺少实例标识，无法打开实例终端', level: 'error', ...commandContext });
     return;
   }
   const cwd = resolveInstanceDir(normalizedId);
   if (!fs.existsSync(cwd)) {
-    notify('log', { message: `实例目录不存在：${normalizedId}`, level: 'error' });
+    notify('log', { message: `实例目录不存在：${normalizedId}`, level: 'error', ...commandContext });
     return;
   }
-  proc.sendCommand(text, cwd, (msg, level) => {
-    notify('log', { message: msg, level });
+  await proc.sendCommand(text, cwd, (msg, level) => {
+    notify('log', { message: msg, level, ...commandContext });
   });
 }
 
@@ -748,16 +1016,26 @@ async function fetchReleases(): Promise<{ releases: any[] }> {
 // pickDirectory — 前端期望: { name, path }
 // ---------------------------------------------------------------------------
 
-async function doPickDirectory(): Promise<{ name: string; path: string }> {
+async function doPickDirectory(options?: { purpose?: 'installation' | 'source' }): Promise<{
+  name: string; path: string; installPathMode?: 'root' | 'exact';
+}> {
+  const purpose = options?.purpose;
+  if (purpose !== undefined && purpose !== 'installation' && purpose !== 'source') {
+    throw new Error('Invalid directory picker purpose');
+  }
   if (!mainWindow || mainWindow.isDestroyed()) return { name: '', path: '' };
   const result = await dialog.showOpenDialog(mainWindow, {
+    ...(purpose === 'installation' ? { title: '选择实例安装根目录' } : {}),
     properties: ['openDirectory'],
   });
   if (result.canceled || result.filePaths.length === 0) {
     return { name: '', path: '' };
   }
   const p = result.filePaths[0];
-  return { name: path.basename(p), path: p };
+  return {
+    name: path.basename(p), path: p,
+    ...(purpose === 'installation' ? { installPathMode: 'root' as const } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -792,16 +1070,12 @@ async function doPickImage(opts: any): Promise<{ path: string; url?: string }> {
     paths.coversDir,
     `${instanceId}--cover-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`,
   );
+  garbage.invalidate();
+  maintenance.invalidate();
+  await assertPlainPath(paths.coversDir);
   utils.replaceFile(src, dest);
-  // 每次使用新文件名，避开 Chromium 图片缓存与 Windows 文件句柄。
-  for (const entry of fs.readdirSync(paths.coversDir)) {
-    if (entry === path.basename(dest)) continue;
-    const entryExt = path.extname(entry).toLowerCase();
-    const isLegacyCover = path.basename(entry, entryExt) === instanceId;
-    if (isLegacyCover || entry.startsWith(`${instanceId}--cover-`)) {
-      try { fs.unlinkSync(path.join(paths.coversDir, entry)); } catch { /* ignore */ }
-    }
-  }
+  // Old covers may still be referenced by another card or an unsaved editor.
+  // Cleanup is the only owner of orphan-cover deletion.
   return {
     path: dest,
     url: `app://localhost/__sillyclient_cover__/${encodeURIComponent(path.basename(dest))}`,
@@ -901,32 +1175,44 @@ async function doReadTextFile(opts: any): Promise<{ content: string; fileName: s
 
 async function uninstallInstance(opts: any): Promise<{ success: boolean; freedBytes: number }> {
   const instanceId = paths.normalizeInstanceId(opts?.instanceId || '');
-  const dir = resolveInstanceDir(instanceId, opts?.installPath);
-  const registeredPath = instanceStore.getInstanceRecord(instanceId)?.path;
+  operations.cancel({ instanceId });
+  garbage.invalidate();
+  maintenance.invalidate();
+  return operations.enqueue(() => uninstallInstanceInternal(opts, instanceId));
+}
+
+async function uninstallInstanceInternal(opts: any, instanceId: string): Promise<{ success: boolean; freedBytes: number }> {
+  const dir = resolveInstanceDir(instanceId, opts?.installPath, opts?.installPathMode);
+  const records = instanceStore.listInstanceRecords();
+  const record = records.find((entry) => entry.instanceId === instanceId);
+  const registeredPath = record?.path;
   const defaultPath = paths.serverDirFor(instanceId);
-  const isKnownPath = path.resolve(dir) === path.resolve(defaultPath)
-    || (registeredPath && path.resolve(dir) === path.resolve(registeredPath));
-  const looksLikeSillyTavern = fs.existsSync(path.join(dir, 'server.js'))
-    && fs.existsSync(path.join(dir, 'package.json'));
-  if (fs.existsSync(dir) && !isKnownPath && !looksLikeSillyTavern) {
+  const resolvedDir = path.resolve(dir).toLowerCase();
+  const isKnownPath = resolvedDir === path.resolve(defaultPath).toLowerCase()
+    || (registeredPath && resolvedDir === path.resolve(registeredPath).toLowerCase());
+  if (resolvedDir === path.parse(resolvedDir).root.toLowerCase()) throw new Error('Cannot remove a filesystem root');
+  if (fs.existsSync(dir) && !isKnownPath) {
     throw new Error('拒绝删除未登记且无法识别的目录');
   }
 
-  if (currentInstanceId === instanceId || currentServerDir === dir) {
-    stopCurrentServer();
+  const sharedDirectory = records.some((entry) => entry.instanceId !== instanceId
+    && path.resolve(entry.path).toLowerCase() === resolvedDir);
+  if (currentInstanceId === instanceId || (!sharedDirectory && currentServerDir === dir)) {
+    await stopCurrentServerInternal(true);
   }
-  proc.stopServerOnPort(Number(opts?.port));
-  proc.stopServerForDirectory(dir);
+  if (!sharedDirectory) await proc.stopServerForDirectory(dir);
 
-  const record = instanceStore.getInstanceRecord(instanceId);
-  const isTakeover = record?.isTakeover === true;
+  const isTakeover = record?.isTakeover === true || sharedDirectory;
 
   let freedBytes = 0;
   if (!isTakeover && fs.existsSync(dir)) {
-    freedBytes = utils.dirSize(dir);
+    await assertPlainPath(dir, true);
+    freedBytes = await directorySize(dir, { includeHeavy: true, fresh: true });
     await utils.removeDirWithRetries(dir);
+    invalidateDirectorySize(dir);
   }
 
+  const cleanupFailures: string[] = [];
   if (fs.existsSync(paths.coversDir)) {
     for (const entry of fs.readdirSync(paths.coversDir)) {
       const ext = path.extname(entry).toLowerCase();
@@ -934,28 +1220,32 @@ async function uninstallInstance(opts: any): Promise<{ success: boolean; freedBy
       if (path.basename(entry, ext) !== instanceId && !entry.startsWith(`${instanceId}--cover-`)) continue;
       const cover = path.join(paths.coversDir, entry);
       try {
-        freedBytes += fs.statSync(cover).size;
+        const stat = await assertPlainPath(cover);
         fs.unlinkSync(cover);
-      } catch { /* ignore */ }
+        freedBytes += stat.size;
+      } catch (error: any) { cleanupFailures.push(`Cover: ${error.message}`); }
     }
   }
 
   const logFile = path.join(paths.logsDir, `${instanceId}.log`);
   if (fs.existsSync(logFile)) {
     try {
-      freedBytes += fs.statSync(logFile).size;
+      const size = (await assertPlainPath(logFile)).size;
       fs.rmSync(logFile, { force: true });
-    } catch { /* ignore */ }
+      freedBytes += size;
+    } catch (error: any) { cleanupFailures.push(`Log: ${error.message}`); }
   }
   const temporaryArchive = path.join(paths.tmpDir, `${instanceId}.zip`);
   if (fs.existsSync(temporaryArchive)) {
     try {
-      freedBytes += fs.statSync(temporaryArchive).size;
+      const size = (await assertPlainPath(temporaryArchive)).size;
       fs.rmSync(temporaryArchive, { force: true });
-    } catch { /* ignore */ }
+      freedBytes += size;
+    } catch (error: any) { cleanupFailures.push(`Archive: ${error.message}`); }
   }
 
   if (!isTakeover && fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
+  if (cleanupFailures.length) throw new Error(`Instance data removed but auxiliary cleanup failed: ${cleanupFailures.join('; ')}`);
   instanceStore.removeInstanceRecord(instanceId);
 
   return { success: true, freedBytes };
@@ -966,103 +1256,28 @@ async function uninstallInstance(opts: any): Promise<{ success: boolean; freedBy
 // GarbageItem: { path, type, sizeBytes, description }
 // ---------------------------------------------------------------------------
 
-function cleanGarbage(opts: any): { items: any[]; totalBytes: number } {
-  const { dryRun = true } = opts;
-  const items: any[] = [];
-
-  // 孤立实例目录
-  const serversDir = path.join(paths.bootstrapDir, 'servers');
-  if (fs.existsSync(serversDir)) {
-    for (const entry of fs.readdirSync(serversDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const dir = path.join(serversDir, entry.name);
-      if (!fs.existsSync(path.join(dir, 'package.json'))) {
-        items.push({
-          path: dir,
-          type: 'orphan_instance',
-          sizeBytes: utils.dirSize(dir),
-          description: `孤立实例: ${entry.name}`,
-        });
-      }
+async function cleanGarbage(opts: any): Promise<any> {
+  const options = opts || {};
+  return operations.enqueue(async () => {
+    const scanned = await garbage.scan(options);
+    if (options.dryRun !== false) return scanned;
+    let freedBytes = 0;
+    const failures: { path: string; error?: string }[] = [];
+    for (const item of scanned.items) {
+      const result = await garbage.remove(item);
+      if (result.success) freedBytes += item.sizeBytes;
+      else failures.push({ path: item.path, error: result.error });
     }
-  }
-
-  // 孤立封面图
-  if (fs.existsSync(paths.coversDir)) {
-    for (const entry of fs.readdirSync(paths.coversDir)) {
-      const fp = path.join(paths.coversDir, entry);
-      items.push({
-        path: fp,
-        type: 'orphan_cover',
-        sizeBytes: fs.statSync(fp).size,
-        description: `封面图: ${entry}`,
-      });
-    }
-  }
-
-  // 临时文件
-  if (fs.existsSync(paths.tmpDir)) {
-    for (const entry of fs.readdirSync(paths.tmpDir)) {
-      const fp = path.join(paths.tmpDir, entry);
-      items.push({
-        path: fp,
-        type: 'temp_file',
-        sizeBytes: fs.statSync(fp).size,
-        description: `临时文件: ${entry}`,
-      });
-    }
-  }
-
-  // 缓存（日志）
-  if (fs.existsSync(paths.logsDir)) {
-    for (const entry of fs.readdirSync(paths.logsDir)) {
-      const fp = path.join(paths.logsDir, entry);
-      items.push({
-        path: fp,
-        type: 'cache',
-        sizeBytes: fs.statSync(fp).size,
-        description: `日志: ${entry}`,
-      });
-    }
-  }
-
-  const totalBytes = items.reduce((sum, i) => sum + i.sizeBytes, 0);
-
-  if (!dryRun) {
-    for (const item of items) {
-      try {
-        if (fs.statSync(item.path).isDirectory()) {
-          utils.removeDir(item.path);
-        } else {
-          fs.unlinkSync(item.path);
-        }
-      } catch { /* ignore */ }
-    }
-  }
-
-  return { items, totalBytes };
+    return { ...scanned, success: failures.length === 0, freedBytes, failures };
+  });
 }
 
 // ---------------------------------------------------------------------------
 // deleteGarbageItem — 前端期望: { success }
 // ---------------------------------------------------------------------------
 
-function deleteGarbageItem(opts: any): { success: boolean } {
-  const { path: itemPath } = opts;
-  if (!itemPath) return { success: false };
-
-  try {
-    if (fs.existsSync(itemPath)) {
-      if (fs.statSync(itemPath).isDirectory()) {
-        utils.removeDir(itemPath);
-      } else {
-        fs.unlinkSync(itemPath);
-      }
-    }
-    return { success: true };
-  } catch {
-    return { success: false };
-  }
+function deleteGarbageItem(opts: any): Promise<{ success: boolean; error?: string }> {
+  return operations.enqueue(() => garbage.remove(opts || {}));
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,90 +1285,76 @@ function deleteGarbageItem(opts: any): { success: boolean } {
 // ---------------------------------------------------------------------------
 
 async function doMigrateInstance(options: any): Promise<{ success: boolean; instanceId: string; targetPath?: string }> {
+  if (cleanupCompleted) throw new Error('Application is shutting down');
+  const preinstall = validatePreinstallSelection(options?.preinstall);
+  if (options?.mode === 'takeover' && preinstall?.extensionIds.length) {
+    throw new Error('Preinstalled extensions cannot modify a takeover source');
+  }
+  const instanceId = paths.normalizeInstanceId(options?.instanceId || `migrated-${Date.now()}`);
+  garbage.invalidate();
+  maintenance.invalidate();
+  return operations.runLatest(instanceId, options?.operationId,
+    (context) => migrateInstanceInternal({ ...options, preinstall }, context));
+}
+
+async function migrateInstanceInternal(
+  options: any,
+  context: OperationContext,
+): Promise<{ success: boolean; instanceId: string; targetPath?: string }> {
   const { sourcePath, targetPath, instanceId = `migrated-${Date.now()}`, mode = 'copy', includeSecrets = false } = options || {};
   const cleanSourcePath = (typeof sourcePath === 'string') ? sourcePath.trim().replace(/^["']|["']$/g, '').trim() : '';
   if (!cleanSourcePath) throw new Error('缺少来源路径');
 
-  const safeInstanceId = paths.normalizeInstanceId(instanceId);
-  const cleanTargetPath = (typeof targetPath === 'string') ? targetPath.trim().replace(/^["']|["']$/g, '').trim() : '';
-  const targetDir = cleanTargetPath
-    ? path.resolve(cleanTargetPath)
-    : path.join(paths.bootstrapDir, 'servers', safeInstanceId);
+  const safeInstanceId = context.instanceId;
+  const targetDir = paths.serverDirFor(safeInstanceId, targetPath, 'exact');
 
-  notify('log', { message: `【数据迁移】开始${mode === 'takeover' ? '原地接管' : '复制迁移'}: ${cleanSourcePath}`, level: 'info' });
-  notify('progress', { percent: 10, message: 'Validating migration source' });
+  context.check();
+  if (instanceStore.getInstanceRecord(safeInstanceId)) throw new Error('Instance is already registered');
+  const eventContext = { instanceId: safeInstanceId, operationId: context.operationId };
+  const migrationEvent = (eventName: string, data: any) => {
+    if (!context.signal.aborted) notify(eventName, { ...data, ...eventContext });
+  };
+  migrationEvent('log', { message: `【数据迁移】开始${mode === 'takeover' ? '原地接管' : '复制迁移'}: ${cleanSourcePath}`, level: 'info' });
+  migrationEvent('progress', { percent: 10, stage: 'Validating migration source' });
 
   if (mode === 'takeover') {
-    if (!fs.existsSync(cleanSourcePath)) throw new Error('原地接管目录不存在');
-    let realTakeoverPath = cleanSourcePath;
-    if (!fs.existsSync(path.join(realTakeoverPath, 'server.js'))) {
-      try {
-        const subEntries = fs.readdirSync(realTakeoverPath, { withFileTypes: true });
-        const foundSub = subEntries.find(e => e.isDirectory() && fs.existsSync(path.join(realTakeoverPath, e.name, 'server.js')));
-        if (foundSub) {
-          realTakeoverPath = path.join(realTakeoverPath, foundSub.name);
-        }
-      } catch {}
-    }
+    const realTakeoverPath = await resolveTakeoverSource(cleanSourcePath);
+    context.check();
     instanceStore.registerInstance(safeInstanceId, realTakeoverPath, undefined, true);
-    notify('progress', { percent: 100, message: 'Takeover complete' });
-    notify('log', { message: `【成功】已原地接管目录: ${realTakeoverPath}`, level: 'success' });
+    migrationEvent('progress', { percent: 100, stage: 'Takeover complete' });
+    migrationEvent('log', { message: `【成功】已原地接管目录: ${realTakeoverPath}`, level: 'success' });
     return { success: true, instanceId: safeInstanceId, targetPath: realTakeoverPath };
   }
-
-  // 复制迁移模式
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
-  }
-
-  const isZip = cleanSourcePath.toLowerCase().endsWith('.zip');
-  if (isZip) {
-    notify('progress', { percent: 30, message: 'Extracting backup archive' });
-    await utils.unzipToDir(cleanSourcePath, targetDir);
-    flattenExtractedDir(targetDir);
-    notify('progress', { percent: 70, message: 'Archive extracted' });
-  } else {
-    notify('progress', { percent: 30, message: 'Copying data' });
-    const copyFilter = (src: string, dest: string) => {
-      const entries = fs.readdirSync(src, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.cache') continue;
-        if (!includeSecrets && (entry.name === 'secrets.json' || entry.name === 'secrets.json.enc')) continue;
-        const s = path.join(src, entry.name);
-        const d = path.join(dest, entry.name);
-        if (entry.isDirectory()) {
-          if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-          copyFilter(s, d);
-        } else {
-          fs.copyFileSync(s, d);
-        }
-      }
-    };
-    copyFilter(cleanSourcePath, targetDir);
-    notify('progress', { percent: 70, message: 'Data copied' });
-  }
-
-  // 补齐底座（若是纯数据备份）
-  if (!fs.existsSync(path.join(targetDir, 'server.js'))) {
-    const defaultServer = path.join(paths.bootstrapDir, 'servers', 'default');
-    if (fs.existsSync(path.join(defaultServer, 'server.js'))) {
-      const entries = fs.readdirSync(defaultServer, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === 'data' || entry.name === '.git' || entry.name === 'node_modules') continue;
-        const s = path.join(defaultServer, entry.name);
-        const d = path.join(targetDir, entry.name);
-        if (entry.isDirectory()) {
-          if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
-          utils.copyDir(s, d);
-        } else if (!fs.existsSync(d)) {
-          fs.copyFileSync(s, d);
-        }
-      }
+  if (mode !== 'copy') throw new Error('Unknown migration mode');
+  migrationEvent('progress', { percent: 30, stage: 'Copying and verifying data' });
+  const transaction = await copyMigration(cleanSourcePath, targetDir,
+    path.join(paths.bootstrapDir, 'servers', 'default'), { includeSecrets, signal: context.signal });
+  let extensions: ExtensionInstallTransaction | null = null;
+  try {
+    context.check();
+    if (options.preinstall?.extensionIds.length) {
+      const log = (message: string, level?: string) => migrationEvent('log', { message, level });
+      migrationEvent('progress', { percent: 75, stage: 'Preparing base runtime dependencies' });
+      await ensureInstanceDependencies(transaction.target, log, { signal: context.signal });
+      context.check();
+      extensions = await installPreselectedExtensions(transaction.target, options.preinstall, {
+        signal: context.signal,
+        operationId: context.operationId,
+        log,
+        progress: (percent, stage) => migrationEvent('progress', { percent: 80 + Math.floor(percent * 0.19), stage }),
+      });
     }
+    context.check();
+    instanceStore.registerInstance(safeInstanceId, transaction.target, undefined, false);
+    transaction.commit();
+    extensions?.commit();
+    invalidateDirectorySize(transaction.target);
+    migrationEvent('progress', { percent: 100, stage: 'Migration verified' });
+    migrationEvent('log', { message: `【成功】数据迁移完成，实例 [${safeInstanceId}] 已就绪！`, level: 'success' });
+    return { success: true, instanceId: safeInstanceId, targetPath: transaction.target };
+  } catch (error) {
+    await extensions?.rollback();
+    await transaction.rollback();
+    throw error;
   }
-
-  instanceStore.registerInstance(safeInstanceId, targetDir, undefined, false);
-  notify('progress', { percent: 100, message: 'Migration verified' });
-  notify('log', { message: `【成功】数据迁移完成，实例 [${safeInstanceId}] 已就绪！`, level: 'success' });
-  return { success: true, instanceId: safeInstanceId, targetPath: targetDir };
 }

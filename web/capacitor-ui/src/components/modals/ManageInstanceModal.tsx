@@ -12,6 +12,8 @@ import { cn, formatDisplayVersion } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { ToggleSwitch } from "../common/ToggleSwitch";
 import type { TavernInstance, InstanceSnapshot, ManageTab } from "../../types";
+import { useInstanceLogs } from "../../hooks/useInstanceLogs";
+import { instanceLogs } from "../../lib/log-store";
 
 export interface ManageInstanceModalProps {
   instance: TavernInstance | null;
@@ -29,6 +31,7 @@ export interface ManageInstanceModalProps {
   onTriggerRename: (instance: TavernInstance) => void;
   onTriggerDelete: (instance: TavernInstance) => void;
   onPickCover: (instance: TavernInstance) => void;
+  onOpenMaintenance?: (instance: TavernInstance) => void;
   // 快照管理
   snapshots: Record<string, InstanceSnapshot[]>;
   onCreateSnapshot: () => void;
@@ -51,8 +54,6 @@ export interface ManageInstanceModalProps {
   manageSaveError: string | null;
   onSaveManagedInstance: () => Promise<void>;
   // 终端日志
-  terminalLogs: { msg: string; level?: string }[];
-  setTerminalLogs: React.Dispatch<React.SetStateAction<{ msg: string; level?: string }[]>>;
   terminalDisplayPrompt: string;
   terminalPlaceholder: string;
 }
@@ -166,6 +167,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   onTriggerRename,
   onTriggerDelete,
   onPickCover,
+  onOpenMaintenance,
   snapshots,
   onCreateSnapshot,
   onRestoreSnapshot,
@@ -184,8 +186,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   isSavingManagePanel,
   manageSaveError,
   onSaveManagedInstance,
-  terminalLogs,
-  setTerminalLogs,
   terminalDisplayPrompt,
   terminalPlaceholder,
 }) => {
@@ -194,6 +194,35 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   const [manageFilter, setManageFilter] = useState<"all" | "local" | "remote">("all");
   const [manageMoreOpen, setManageMoreOpen] = useState(false);
   const [terminalInput, setTerminalInput] = useState("");
+  const [localAboutInfo, setLocalAboutInfo] = useState<{ path?: string; sizeBytes?: number; version?: string; status?: string; createdAt?: string } | null>(null);
+
+  useEffect(() => {
+    setLocalAboutInfo(null);
+    if (!isOpen || !instance || instance.type !== "local") return;
+    let active = true;
+    TarvenEnv.getInstanceInfo({
+      instanceId: instance.installDir || instance.id,
+      installPath: instance.installPath,
+      port: instance.port ?? 8000,
+    }).then(info => {
+      if (active && info.path) {
+        setLocalAboutInfo({
+          path: info.path,
+          sizeBytes: info.sizeBytes,
+          version: info.version,
+          status: info.status,
+          createdAt: info.createdAt,
+        });
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [isOpen, instance?.id, instance?.installPath, instance?.installDir]);
+
+  const logKey = instance?.installDir || instance?.id;
+  const terminalLogs = useInstanceLogs(logKey, (isOpen || isClosing) && manageTab === "terminal");
+  const setTerminalLogs = (value: { msg: string; level?: string }[] | ((previous: { msg: string; level?: string }[]) => { msg: string; level?: string }[])) => {
+    if (logKey) instanceLogs.update(logKey, value);
+  };
 
   const launchRef = useRef<HTMLDivElement>(null);
   const snapshotsRef = useRef<HTMLDivElement>(null);
@@ -243,6 +272,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   if (!instance || (!isOpen && !isClosing)) return null;
 
   const mp = instance;
+  const effectiveInstancePath =
+    mp.type === "local"
+      ? (aboutInfo?.path || localAboutInfo?.path || mp.installPath || (mp.installDir && (mp.installDir.includes("/") || mp.installDir.includes("\\")) ? mp.installDir : null) || "正在读取路径...")
+      : (mp.url || "—");
 
   const filteredManageInstances = allInstances.filter((inst) => {
     if (manageFilter === "local" && inst.type !== "local") return false;
@@ -281,10 +314,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
           isLight ? "border-black/[0.06]" : "border-white/[0.06]"
         )}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span
             className={cn(
-              "text-sm font-semibold",
+              "text-sm font-semibold truncate",
               isLight ? "text-[#1a1625]" : "text-white"
             )}
           >
@@ -292,7 +325,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
           </span>
           <span
             className={cn(
-              "text-[10px] px-1.5 py-0.5 rounded-md",
+              "text-[10px] px-1.5 py-0.5 rounded-md flex-shrink-0",
               isLight
                 ? "bg-black/[0.05] text-[#1a1625]/35"
                 : "bg-white/[0.06] text-white/35"
@@ -300,6 +333,17 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
           >
             {formatDisplayVersion(mp.version)}
           </span>
+          {effectiveInstancePath && effectiveInstancePath !== "—" && (
+            <span
+              title={effectiveInstancePath}
+              className={cn(
+                "inline-block text-[10px] font-mono truncate max-w-[200px] sm:max-w-[360px] md:max-w-[480px] px-1.5 py-0.5 rounded-md opacity-70",
+                isLight ? "bg-black/[0.04] text-[#1a1625]" : "bg-white/[0.06] text-white"
+              )}
+            >
+              {effectiveInstancePath}
+            </span>
+          )}
         </div>
         <button
           onClick={onClose}
@@ -542,6 +586,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
                 )}
                 aria-hidden={manageTab !== "launch"}
+                inert={manageTab !== "launch"}
               >
                 <>
                   {mp.type === "local" ? (
@@ -674,6 +719,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                           draftRemoteAuthEnabled && "is-open"
                         )}
                         aria-hidden={!draftRemoteAuthEnabled}
+                        inert={!draftRemoteAuthEnabled}
                       >
                         <div className="motion-accordion-inner">
                           <div className="pt-3 space-y-2">
@@ -739,6 +785,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
                 )}
                 aria-hidden={manageTab !== "snapshots"}
+                inert={manageTab !== "snapshots"}
               >
                 <div className="space-y-4">
                   <div className="flex items-center justify-between gap-4">
@@ -879,6 +926,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
                 )}
                 aria-hidden={manageTab !== "storage"}
+                inert={manageTab !== "storage"}
               >
                 <div className="space-y-4">
                   <div
@@ -889,11 +937,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   >
                     <ManageDetailRow
                       label={mp.type === "local" ? "实例位置" : "连接地址"}
-                      value={
-                        mp.type === "local"
-                          ? aboutInfo?.path || mp.installDir || "—"
-                          : mp.url || "—"
-                      }
+                      value={effectiveInstancePath}
                       isLight={isLight}
                       mono
                     />
@@ -901,8 +945,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       label="占用空间"
                       value={
                         mp.type === "local" &&
-                        aboutInfo?.sizeBytes !== undefined
-                          ? `${(aboutInfo.sizeBytes / 1024 / 1024).toFixed(
+                        (aboutInfo?.sizeBytes !== undefined || localAboutInfo?.sizeBytes !== undefined)
+                          ? `${(((aboutInfo?.sizeBytes ?? localAboutInfo?.sizeBytes ?? 0)) / 1024 / 1024).toFixed(
                               1
                             )} MB`
                           : "—"
@@ -947,6 +991,19 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       更换插图
                     </button>
                   </div>
+                  {mp.type === "local" && onOpenMaintenance && (
+                    <ManageItem label="实例维护" isLight={isLight}>
+                      <button type="button" onClick={() => onOpenMaintenance(mp)}
+                        className={cn(
+                          "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                          isLight
+                            ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
+                            : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
+                        )}>
+                        扫描
+                      </button>
+                    </ManageItem>
+                  )}
                 </div>
               </div>
 
@@ -960,6 +1017,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
                 )}
                 aria-hidden={manageTab !== "terminal"}
+                inert={manageTab !== "terminal"}
               >
                 {mp.type === "remote" ? (
                   <div
@@ -987,7 +1045,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         <Eraser className="h-3.5 w-3.5" />
                       </button>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto p-4 font-sans text-[11.5px] leading-relaxed scrollbar-subtle">
+                    <div data-native-log-list className="min-h-0 flex-1 overflow-y-auto p-4 font-sans text-[11.5px] leading-relaxed scrollbar-subtle">
                       {terminalLogs.map((log, index) => (
                         <div
                           key={index}
@@ -1031,7 +1089,12 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                             TarvenEnv.sendCommand({
                               text: command,
                               instanceId,
-                            }).catch(() => {});
+                            }).catch(error => {
+                              instanceLogs.append(instanceId, {
+                                msg: `命令失败: ${error instanceof Error ? error.message : String(error)}`,
+                                level: "error",
+                              });
+                            });
                             setTerminalInput("");
                           }}
                           className="min-w-0 flex-1 border-none bg-transparent text-white/75 outline-none placeholder:text-white/20"
@@ -1056,6 +1119,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
                 )}
                 aria-hidden={manageTab !== "about"}
+                inert={manageTab !== "about"}
               >
                 <div
                   className={cn(
@@ -1069,13 +1133,19 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     isLight={isLight}
                   />
                   <ManageDetailRow
+                    label={mp.type === "local" ? "实例位置" : "连接地址"}
+                    value={effectiveInstancePath}
+                    isLight={isLight}
+                    mono
+                  />
+                  <ManageDetailRow
                     label="版本"
                     value={
                       formatDisplayVersion(
                         mp.type === "local" &&
-                        aboutInfo?.version &&
-                        aboutInfo.version !== "unknown"
-                          ? aboutInfo.version
+                        ((aboutInfo?.version && aboutInfo.version !== "unknown") ||
+                         (localAboutInfo?.version && localAboutInfo.version !== "unknown"))
+                          ? (aboutInfo?.version && aboutInfo.version !== "unknown" ? aboutInfo.version : localAboutInfo?.version)
                           : mp.version
                       )
                     }
@@ -1090,7 +1160,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     label="状态"
                     value={
                       mp.type === "local"
-                        ? aboutInfo?.status || getStatusText(mp.status)
+                        ? aboutInfo?.status || localAboutInfo?.status || getStatusText(mp.status)
                         : getStatusText(mp.status)
                     }
                     isLight={isLight}
@@ -1098,8 +1168,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   <ManageDetailRow
                     label="创建时间"
                     value={
-                      mp.type === "local" && aboutInfo?.createdAt
-                        ? aboutInfo.createdAt
+                      mp.type === "local" && (aboutInfo?.createdAt || localAboutInfo?.createdAt)
+                        ? (aboutInfo?.createdAt || localAboutInfo?.createdAt)
                         : mp.createdAt || "—"
                     }
                     isLight={isLight}
@@ -1202,6 +1272,19 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   isLight && "is-light"
                 )}
               >
+                {mp.type === "local" && onOpenMaintenance && (
+                  <button type="button" onClick={() => {
+                    setManageMoreOpen(false);
+                    onOpenMaintenance(mp);
+                  }} className={cn(
+                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
+                    isLight
+                      ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
+                      : "text-white/55 hover:text-white/80"
+                  )}>
+                    实例维护
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {

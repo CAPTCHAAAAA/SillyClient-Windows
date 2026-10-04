@@ -4,6 +4,8 @@ import { TarvenEnv } from "../../capacitor-plugin";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { LayerBackdrop } from "../common/LayerBackdrop";
+import type { GarbageItem } from "../../capacitor-plugin";
+import { executeGarbagePlan } from "../../lib/garbage-plan";
 
 export interface CleanGarbageModalProps {
   isOpen: boolean;
@@ -13,8 +15,10 @@ export interface CleanGarbageModalProps {
   glassBg: string;
   cleaningGarbage: boolean;
   setCleaningGarbage: (v: boolean) => void;
-  garbageItems: { path: string; description: string; type: string; sizeBytes: number }[];
-  setGarbageItems: React.Dispatch<React.SetStateAction<{ path: string; description: string; type: string; sizeBytes: number }[]>>;
+  garbageItems: GarbageItem[];
+  setGarbageItems: React.Dispatch<React.SetStateAction<GarbageItem[]>>;
+  error: string | null;
+  setError: (value: string | null) => void;
 }
 
 /**
@@ -31,6 +35,8 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
   setCleaningGarbage,
   garbageItems,
   setGarbageItems,
+  error,
+  setError,
 }) => {
   if (!isOpen && !isClosing) return null;
 
@@ -90,6 +96,7 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 scrollbar-subtle">
+          {error && <div role="alert" className="mb-3 text-xs text-red-400 whitespace-pre-wrap break-words">{error}</div>}
           {cleaningGarbage && garbageItems.length === 0 ? (
             <div
               className={cn(
@@ -106,7 +113,7 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
                 isLight ? "text-[#1a1625]/40" : "text-white/40"
               )}
             >
-              未发现垃圾文件
+              {error ? "扫描未完成" : "未发现垃圾文件"}
             </div>
           ) : (
             <div className="space-y-2">
@@ -181,18 +188,17 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
           <button
             onClick={async () => {
               setCleaningGarbage(true);
+              setError(null);
               try {
-                for (const item of garbageItems) {
-                  try {
-                    await TarvenEnv.deleteGarbageItem({ path: item.path });
-                  } catch {}
-                }
-                setGarbageItems([]);
-                onClose();
+                const result = await executeGarbagePlan(garbageItems, options => TarvenEnv.deleteGarbageItem(options));
+                setGarbageItems(result.failed);
+                if (result.errors.length) setError(result.errors.join("\n"));
+                else onClose();
               } catch (e) {
-                console.error(e);
+                setError(e instanceof Error ? e.message : String(e));
+              } finally {
+                setCleaningGarbage(false);
               }
-              setCleaningGarbage(false);
             }}
             disabled={cleaningGarbage || garbageItems.length === 0}
             className={cn(

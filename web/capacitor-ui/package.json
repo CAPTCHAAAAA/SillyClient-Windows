@@ -1,13 +1,14 @@
 {
   "name": "sillyclient-ui",
-  "version": "2.0.1",
+  "version": "1.10.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --port 3015 --host 0.0.0.0 --strictPort",
     "build": "tsc --noEmit && vite build",
+    "build:android": "pnpm run build && pnpm run sync:android",
     "preview": "vite preview --port 3015 --host 0.0.0.0",
-    "sync:frontend": "node ../../scripts/sync-frontend.mjs --source dist",
+    "sync:android": "node ../../scripts/sync-frontend.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

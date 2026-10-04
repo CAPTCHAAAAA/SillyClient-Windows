@@ -1,7 +1,8 @@
 import React from "react";
-import { Play, LoaderCircle } from "lucide-react";
+import { Play, LoaderCircle, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
+import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 
 export interface LaunchConsoleModalProps {
   isOpen: boolean;
@@ -12,7 +13,7 @@ export interface LaunchConsoleModalProps {
   launchError: string | null;
   launchProgress: { pct: number; text: string } | null;
   lastLaunchParams: any;
-  launchLogs: { msg: string; level?: string }[];
+  logKey: string | null;
   launchingId: string | null;
   onRetry: () => void;
   onClose: () => void;
@@ -35,13 +36,14 @@ export const LaunchConsoleModal: React.FC<LaunchConsoleModalProps> = ({
   launchError,
   launchProgress,
   lastLaunchParams,
-  launchLogs,
+  logKey,
   launchingId,
   onRetry,
   onClose,
   onMinimize,
   onEnterTavern,
 }) => {
+  const launchLogs = useInstanceLogs(logKey, isOpen || isClosing);
   if (!isOpen && !isClosing) return null;
 
   return (
@@ -153,7 +155,7 @@ export const LaunchConsoleModal: React.FC<LaunchConsoleModalProps> = ({
               : "bg-black/[0.32] border-white/[0.03]"
           )}
         >
-          <div className="px-4 py-3 text-[11px] leading-[1.7] space-y-1">
+          <div data-native-log-list className="px-4 py-3 text-[11px] leading-[1.7] space-y-1">
             {launchLogs.map((log, i) => (
               <div
                 key={i}
@@ -249,6 +251,16 @@ export const LaunchConsoleModal: React.FC<LaunchConsoleModalProps> = ({
             >
               <LoaderCircle className="h-4 w-4 animate-spin text-current" />
               <span>完成前请保持应用打开</span>
+              <button
+                type="button"
+                onClick={onClose}
+                title="取消创建"
+                aria-label="取消创建"
+                className="motion-control flex h-8 flex-shrink-0 items-center gap-1.5 rounded-full px-3"
+              >
+                <X className="h-3 w-3" />
+                <span>取消</span>
+              </button>
             </div>
           )
         ) : (

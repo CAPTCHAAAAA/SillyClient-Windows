@@ -1,8 +1,10 @@
-import React, { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
+import React, { useRef, useState, useEffect, useLayoutEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { Play, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "../../lib/utils";
 import type { TavernInstance } from "../../types";
 import { InstanceCard } from "./InstanceCard";
+import { setCarouselSnapLock } from "../../lib/carousel-snap";
+import { createPaginationMotion, paginationCenter, paginationDotOpacity, PAGINATION_REST_WIDTH } from "../../lib/pagination-motion";
 
 export interface InstanceCarouselRef {
   goToSlide: (index: number) => void;
@@ -24,8 +26,6 @@ export interface InstanceCarouselProps {
   onRenameSave: (instanceId: string, newName: string) => void;
   externallyRenamingId?: string | null;
   onClearExternalRenaming?: () => void;
-  terminalLogs?: { msg: string; level?: string }[];
-  setTerminalLogs?: React.Dispatch<React.SetStateAction<{ msg: string; level?: string }[]>>;
   isWindows?: boolean;
   isWeb?: boolean;
   isShowcase?: boolean;
@@ -56,8 +56,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   onRenameSave,
   externallyRenamingId,
   onClearExternalRenaming,
-  terminalLogs,
-  setTerminalLogs,
   isWindows = false,
   isWeb = false,
   isShowcase = false,
@@ -81,42 +79,62 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   }, [activeSlideProp]);
   const totalSlides = instances.length + 1; // 0: 新建实例, 1..N: 实例卡片
 
-  // 底部 Apple 流体果冻弹簧滑动条状态与物理过冲参数
-  const PILL_REST_WIDTH = 18;
-  const [pillWidth, setPillWidth] = useState(PILL_REST_WIDTH);
-  const prevSlideRef = useRef(activeSlide);
-  const stretchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  useEffect(() => {
-    const prev = prevSlideRef.current;
-    const distance = Math.abs(activeSlide - prev);
-    prevSlideRef.current = activeSlide;
-
-    if (distance > 0) {
-      if (stretchTimeoutRef.current) clearTimeout(stretchTimeoutRef.current);
-      // 动态计算瞬时果冻延展宽度（距离越大延展越明显，最大 38px）
-      const stretchWidth = PILL_REST_WIDTH + Math.min(20, distance * 8);
-      setPillWidth(stretchWidth);
-
-      // 160ms 处于弹簧过冲峰值区，平滑回缩至静态宽度，营造极具弹性与质感的果冻反馈
-      stretchTimeoutRef.current = setTimeout(() => {
-        setPillWidth(PILL_REST_WIDTH);
-      }, 160);
-    }
-
-    return () => {
-      if (stretchTimeoutRef.current) clearTimeout(stretchTimeoutRef.current);
-    };
-  }, [activeSlide]);
-
   // 程序化滚动状态锁定，防止滚动中间帧触发指示器闪烁
   const isProgrammaticScrollingRef = useRef(false);
   const activeSlideRef = useRef(0);
   activeSlideRef.current = activeSlide;
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const paginationMoverRef = useRef<HTMLDivElement>(null);
+  const paginationCapsuleRef = useRef<HTMLSpanElement>(null);
+  const paginationDotsRef = useRef<(HTMLSpanElement | null)[]>([]);
+  const paginationMotionRef = useRef<ReturnType<typeof createPaginationMotion> | null>(null);
+  const animatePaginationRef = useRef(true);
+  const reducedMotionRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const mover = paginationMoverRef.current;
+    const capsule = paginationCapsuleRef.current;
+    if (!mover || !capsule) return;
+    const dots = paginationDotsRef.current.slice(0, totalSlides);
+    const opacities: number[] = [];
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    reducedMotionRef.current = media.matches;
+    const motion = createPaginationMotion(activeSlideRef.current, pose => {
+      mover.style.transform = `translate3d(${pose.center - PAGINATION_REST_WIDTH / 2}px, 0, 0)`;
+      capsule.style.transform = `scaleX(${pose.width / PAGINATION_REST_WIDTH})`;
+      dots.forEach((dot, index) => {
+        const opacity = paginationDotOpacity(paginationCenter(index), pose);
+        if (dot && opacity !== opacities[index]) {
+          dot.style.opacity = String(opacity);
+          opacities[index] = opacity;
+        }
+      });
+    });
+    paginationMotionRef.current = motion;
+    const onReducedMotion = () => {
+      reducedMotionRef.current = media.matches;
+      if (media.matches) motion.snap();
+    };
+    const onVisibility = () => {
+      if (document.hidden) motion.snap();
+    };
+    media.addEventListener("change", onReducedMotion);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      media.removeEventListener("change", onReducedMotion);
+      document.removeEventListener("visibilitychange", onVisibility);
+      motion.dispose();
+      if (paginationMotionRef.current === motion) paginationMotionRef.current = null;
+    };
+  }, [totalSlides]);
+
+  useLayoutEffect(() => {
+    paginationMotionRef.current?.to(activeSlide, animatePaginationRef.current && !reducedMotionRef.current && !document.hidden);
+    animatePaginationRef.current = true;
+  }, [activeSlide, totalSlides]);
 
   // 原生硬件加速平滑滚动至指定索引卡片（居中对齐）
-  const goToSlide = useCallback((targetIndex: number) => {
+  const goToSlide = useCallback((targetIndex: number, animateIndicator = true) => {
     const el = carouselRef.current;
     if (!el) return;
 
@@ -127,6 +145,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
     // 立即锁定目标指示器，杜绝中间状态反向抖动
     isProgrammaticScrollingRef.current = true;
+    if (clampedIndex !== activeSlideRef.current) animatePaginationRef.current = animateIndicator;
+    else if (!animateIndicator) paginationMotionRef.current?.snap();
     setActiveSlide(clampedIndex);
 
     const cardWidth = target.offsetWidth || 240;
@@ -179,10 +199,10 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       }
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        goToSlide(activeSlideRef.current - 1);
+        goToSlide(activeSlideRef.current - 1, false);
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        goToSlide(activeSlideRef.current + 1);
+        goToSlide(activeSlideRef.current + 1, false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -230,7 +250,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         velocityX: 0,
       };
       // 拖拽开始：临时禁用 CSS scroll-snap 与平滑滚动，杜绝浏览器在拖拽过程中强行重吸附导致的生硬卡顿
-      el.style.scrollSnapType = "none";
+      setCarouselSnapLock(el, "drag", true);
       el.style.scrollBehavior = "auto";
       el.style.cursor = "grabbing";
     };
@@ -260,7 +280,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       dragState.current.isDown = false;
       el.style.cursor = "grab";
       // 恢复原生 snap
-      el.style.scrollSnapType = "";
+      setCarouselSnapLock(el, "drag", false);
       el.style.scrollBehavior = "";
 
       if (dragState.current.hasDragged) {
@@ -317,19 +337,19 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         }
       }
       if (closestIdx !== activeSlideRef.current) {
+        animatePaginationRef.current = true;
         activeSlideRef.current = closestIdx;
         setActiveSlide(closestIdx);
       }
     };
 
-    let ticking = false;
+    let scrollFrame = 0;
     const onScroll = () => {
-      if (!ticking) {
-        requestAnimationFrame(() => {
+      if (!scrollFrame) {
+        scrollFrame = requestAnimationFrame(() => {
+          scrollFrame = 0;
           updateIndicatorOnScroll();
-          ticking = false;
         });
-        ticking = true;
       }
     };
 
@@ -346,6 +366,11 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       window.removeEventListener("mouseup", onMouseUp);
       el.removeEventListener("click", onClickCapture, true);
       el.removeEventListener("scroll", onScroll);
+      if (scrollFrame) cancelAnimationFrame(scrollFrame);
+      if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+      dragState.current.isDown = false;
+      setCarouselSnapLock(el, "drag", false);
+      el.style.scrollBehavior = "";
     };
   }, [goToSlide, setActiveSlide]);
 
@@ -419,8 +444,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
               onRenameSave={onRenameSave}
               isExternallyRenaming={externallyRenamingId === instance.id}
               onClearExternalRenaming={onClearExternalRenaming}
-              terminalLogs={terminalLogs}
-              setTerminalLogs={setTerminalLogs}
               isWindows={isWindows}
             />
           ))}
@@ -433,7 +456,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         <div className="flex items-center justify-center gap-3 mt-4 select-none">
           <button
             type="button"
-            onClick={() => goToSlide(activeSlide - 1)}
+            onClick={event => goToSlide(activeSlide - 1, event.detail !== 0)}
             disabled={activeSlide === 0}
             aria-label="上一页"
             className={cn(
@@ -450,7 +473,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
           {/* 无外边框流体指示器轨道：零胶囊边框、零多余背景、纯净槽位与动态流体滑块 */}
           <div
-            className="relative flex items-center h-7 select-none"
+            className={cn("carousel-pagination relative flex items-center h-7 select-none", isLight && "is-light")}
             style={{ contain: "layout paint style" }}
           >
             {/* 槽位圆点列表 (每个槽位宽 22px，热区舒适) */}
@@ -459,19 +482,17 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
                 <button
                   key={i}
                   type="button"
-                  onClick={() => goToSlide(i)}
+                  onClick={event => goToSlide(i, event.detail !== 0)}
                   aria-label={`切换到第 ${i + 1} 张卡片`}
                   aria-current={i === activeSlide ? "true" : undefined}
                   className="motion-control group flex h-7 w-[22px] items-center justify-center cursor-pointer focus:outline-none"
                 >
                   <span
-                    className={cn(
-                      "block h-1.5 w-1.5 rounded-full transition-opacity duration-200",
-                      isLight
-                        ? "bg-[#1a1625]/20 group-hover:bg-[#1a1625]/40"
-                        : "bg-white/20 group-hover:bg-white/40"
-                    )}
-                  />
+                    ref={element => { paginationDotsRef.current[i] = element; }}
+                    className="carousel-pagination__dot-coverage"
+                  >
+                    <span className="carousel-pagination__dot" />
+                  </span>
                 </button>
               ))}
             </div>
@@ -479,24 +500,16 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
             {/* 绝对定位 Apple 流体果冻滑动胶囊 (Spring Pill) */}
             <div
               aria-hidden="true"
-              className={cn(
-                "absolute rounded-full pointer-events-none h-1.5 left-0 shadow-[0_1px_3px_rgba(0,0,0,0.25)]",
-                isLight ? "bg-[#1a1625]/75" : "bg-white/90"
-              )}
-              style={{
-                top: "calc(50% - 3px)",
-                width: `${pillWidth}px`,
-                transform: `translate3d(${activeSlide * 22 + 2}px, 0, 0)`,
-                willChange: "transform, width",
-                transition:
-                  "transform 320ms cubic-bezier(0.34, 1.45, 0.64, 1), width 260ms cubic-bezier(0.25, 1, 0.5, 1), background-color 200ms ease",
-              }}
-            />
+              ref={paginationMoverRef}
+              className="carousel-pagination__mover"
+            >
+              <span ref={paginationCapsuleRef} className="carousel-pagination__capsule" />
+            </div>
           </div>
 
           <button
             type="button"
-            onClick={() => goToSlide(activeSlide + 1)}
+            onClick={event => goToSlide(activeSlide + 1, event.detail !== 0)}
             disabled={activeSlide === totalSlides - 1}
             aria-label="下一页"
             className={cn(

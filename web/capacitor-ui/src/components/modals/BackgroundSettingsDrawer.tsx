@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useLayoutEffect, useState } from "react";
 import { X, Moon, Sun, Check, Image as ImageIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
@@ -50,23 +50,22 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
   const [bgContentHeight, setBgContentHeight] = useState<number | null>(null);
 
   // 动态测量模式高度实现白天黑夜级平滑过渡
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!isOpen) return;
     const targetEl =
       bgMode === "dynamic" ? bgDynamicRef.current : bgCustomRef.current;
     if (!targetEl) return;
 
-    const updateHeight = () => {
-      if (targetEl) {
-        const h = targetEl.getBoundingClientRect().height;
-        if (h > 0) setBgContentHeight(Math.round(h));
-      }
+    const updateHeight = (entry?: ResizeObserverEntry) => {
+      const h = entry?.borderBoxSize?.[0]?.blockSize ?? targetEl.offsetHeight;
+      if (h > 0) setBgContentHeight(Math.ceil(h));
     };
 
     updateHeight();
 
     if (typeof ResizeObserver !== "undefined") {
-      const ro = new ResizeObserver(() => {
-        updateHeight();
+      const ro = new ResizeObserver(([entry]) => {
+        updateHeight(entry);
       });
       ro.observe(targetEl);
       return () => ro.disconnect();
@@ -162,7 +161,7 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
 
         {/* 模式切换容器（平滑高度过渡 + 白天黑夜级优雅溶变） */}
         <div
-          className="relative transition-[height] duration-600 ease-[cubic-bezier(0.22,1,0.36,1)] overflow-hidden"
+          className="motion-panel-stack"
           style={{
             height: bgContentHeight ? `${bgContentHeight}px` : undefined,
           }}
@@ -171,12 +170,13 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
           <div
             ref={bgDynamicRef}
             className={cn(
-              "w-full transition-all duration-600 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "motion-panel-face w-full",
               bgMode === "dynamic"
-                ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto"
-                : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
+                ? "is-active relative pointer-events-auto"
+                : "absolute inset-x-0 top-0 pointer-events-none select-none"
             )}
             aria-hidden={bgMode !== "dynamic"}
+            inert={bgMode !== "dynamic"}
           >
             <div className="flex items-center justify-between py-1">
               <span
@@ -217,12 +217,13 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
           <div
             ref={bgCustomRef}
             className={cn(
-              "w-full space-y-3 transition-all duration-600 ease-[cubic-bezier(0.22,1,0.36,1)]",
+              "motion-panel-face w-full space-y-3",
               bgMode === "custom"
-                ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto"
-                : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
+                ? "is-active relative pointer-events-auto"
+                : "absolute inset-x-0 top-0 pointer-events-none select-none"
             )}
             aria-hidden={bgMode !== "custom"}
+            inert={bgMode !== "custom"}
           >
             <div className="space-y-1.5">
               <span

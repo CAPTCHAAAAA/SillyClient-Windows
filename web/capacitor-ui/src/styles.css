@@ -187,6 +187,24 @@ select:focus-visible {
 }
 }
 
+/* Keep scrollable surfaces stable when their content crosses the viewport. */
+html,
+body,
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scrollbar-gutter: stable;
+  overscroll-behavior-y: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* 玻璃面板 - Liquid Glass */
 .glass-panel {
   background: var(--glass);
@@ -546,6 +564,71 @@ button:active:not(:disabled) {
   transform: translateY(0) scale(0.985);
 }
 
+.carousel-pagination {
+  color: #fff;
+  transition: color 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.carousel-pagination.is-light {
+  color: #1a1625;
+}
+
+.carousel-pagination button {
+  transition-property: transform, filter, background-color, border-color, box-shadow, opacity;
+}
+
+.carousel-pagination__dot-coverage,
+.carousel-pagination__dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+}
+
+.carousel-pagination__dot-coverage {
+  transition: none;
+}
+
+.carousel-pagination__dot {
+  background-color: currentColor;
+  border-radius: 999px;
+  opacity: 0.2;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.carousel-pagination__mover {
+  position: absolute;
+  top: calc(50% - 3px);
+  left: 0;
+  width: 18px;
+  height: 6px;
+  pointer-events: none;
+  will-change: transform;
+  transition: none;
+}
+
+.carousel-pagination__capsule {
+  display: block;
+  width: 18px;
+  height: 6px;
+  border-radius: 999px;
+  background-color: currentColor;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  opacity: 0.9;
+  transform-origin: center;
+  will-change: transform;
+  transition: opacity 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.carousel-pagination.is-light .carousel-pagination__capsule {
+  opacity: 0.75;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .carousel-pagination button:hover .carousel-pagination__dot {
+    opacity: 0.4;
+  }
+}
+
 /* 搜索栏 — iOS Search Bar 风格 */
 input[type="text"][placeholder] {
   font-size: 15px;
@@ -632,7 +715,7 @@ header span[class*="truncate"] {
 
 /* 普通切换：仅在模式变化时临时给整棵树加缓动颜色过渡。 */
 .theme-smoothing,
-.theme-smoothing * {
+.theme-smoothing *:not(.motion-panel-stack):not(.motion-panel-face):not(.carousel-pagination):not(.carousel-pagination *) {
   transition-property: color, background-color, border-color, box-shadow, fill, stroke !important;
   transition-duration: 1000ms !important;
   transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1) !important;
@@ -822,8 +905,37 @@ header span[class*="truncate"] {
 
 .motion-instance-card:active {
   opacity: 0.95;
-  transform: scale(0.985) translate3d(0, 0, 0);
   transition-duration: var(--motion-press);
+}
+
+.motion-instance-card:active:not([data-card-motion-managed]):not([data-card-motion-managed] .motion-instance-card) {
+  transform: scale(0.985) translate3d(0, 0, 0);
+}
+
+.motion-panel-stack {
+  position: relative;
+  overflow: hidden;
+  transition: height 500ms var(--motion-ease-out);
+}
+
+.motion-panel-face {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+  filter: blur(3px);
+  visibility: hidden;
+  transition:
+    opacity 500ms var(--motion-ease-out),
+    transform 500ms var(--motion-ease-out),
+    filter 500ms var(--motion-ease-out),
+    visibility 0s linear 500ms;
+}
+
+.motion-panel-face.is-active {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  filter: blur(0);
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 /* 高度未知的内容使用 grid 行连续展开，允许中途反向。 */
@@ -1169,9 +1281,32 @@ header span[class*="truncate"] {
   .companion-preset__knob,
   .companion-preset__details,
   .theme-smoothing,
-  .theme-smoothing *,
+  .theme-smoothing *:not(.motion-panel-stack):not(.motion-panel-face):not(.carousel-pagination):not(.carousel-pagination *),
   .overlay-backdrop {
     transition-duration: 1ms !important;
+  }
+
+  .motion-panel-stack {
+    transition: none;
+  }
+
+  .motion-panel-face,
+  .motion-panel-face.is-active {
+    transform: none;
+    filter: none;
+    transition:
+      opacity 120ms var(--motion-ease-out),
+      visibility 0s linear 120ms;
+  }
+
+  .motion-panel-face.is-active {
+    transition-delay: 0s;
+  }
+
+  .carousel-pagination,
+  .carousel-pagination__dot,
+  .carousel-pagination__capsule {
+    transition-duration: 120ms;
   }
 
   .motion-instance-card,

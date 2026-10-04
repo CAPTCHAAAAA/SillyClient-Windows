@@ -1,11 +1,12 @@
 {
   "name": "sillyclient-windows",
-  "version": "2.0.1",
+  "version": "1.10.0",
   "description": "SillyClient for Windows",
   "main": "dist/main.js",
   "scripts": {
     "dev": "npm run build && electron .",
     "check": "tsc --noEmit",
+    "test": "node --test tests/runtime-hardening.test.cjs",
     "build": "tsc",
     "pack": "npm run build && electron-builder --win",
     "prepare:runtime": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-NodeRuntime.ps1",
@@ -60,6 +61,13 @@
         "to": "companion-presets",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "resources/preinstalled-extensions",
+        "to": "preinstalled-extensions",
+        "filter": [
+          "catalog.json"
         ]
       }
     ]

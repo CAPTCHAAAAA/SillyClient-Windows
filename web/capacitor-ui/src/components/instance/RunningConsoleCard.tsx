@@ -3,6 +3,8 @@ import { Play, MoreVertical } from "lucide-react";
 import { cn, formatDisplayVersion } from "../../lib/utils";
 import { TarvenEnv } from "../../capacitor-plugin";
 import type { TavernInstance } from "../../types";
+import { useInstanceLogs } from "../../hooks/useInstanceLogs";
+import { instanceLogs } from "../../lib/log-store";
 
 export interface RunningConsoleCardProps {
   instance: TavernInstance;
@@ -12,8 +14,7 @@ export interface RunningConsoleCardProps {
   onReturnToTavern?: (instance: TavernInstance) => void;
   onStopInstance?: (instance: TavernInstance) => void;
   onOpenMenu: (instance: TavernInstance, rect: DOMRect) => void;
-  terminalLogs?: { msg: string; level?: string }[];
-  setTerminalLogs?: React.Dispatch<React.SetStateAction<{ msg: string; level?: string }[]>>;
+  active: boolean;
   isWindows?: boolean;
 }
 
@@ -31,13 +32,14 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
   onReturnToTavern,
   onStopInstance,
   onOpenMenu,
-  terminalLogs,
-  setTerminalLogs,
+  active,
   isWindows = false,
 }) => {
   const [terminalInput, setTerminalInput] = useState("");
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const terminalInputRef = useRef<HTMLInputElement>(null);
+  const logKey = instance.installDir || instance.id;
+  const terminalLogs = useInstanceLogs(logKey, active);
 
   const terminalDisplayPrompt = isWindows
     ? `${instance.installDir || instance.id}>`
@@ -47,30 +49,32 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
     : "输入 shell 命令...";
 
   useEffect(() => {
-    if (logsContainerRef.current) {
+    if (active && logsContainerRef.current) {
       logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
-  }, [terminalLogs]);
+  }, [active, terminalLogs]);
 
   const handleTerminalKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" || !terminalInput.trim()) return;
     const command = terminalInput.trim();
     const instanceId = instance.installDir || instance.id;
-    setTerminalLogs?.((previous) => [
-      ...previous,
-      {
+    instanceLogs.append(logKey, {
         msg: `${terminalDisplayPrompt} ${command}`,
         level: "info",
-      },
-    ]);
+    });
     TarvenEnv.sendCommand({
       text: command,
       instanceId,
-    }).catch(() => {});
+    }).catch(error => {
+      instanceLogs.append(instanceId, {
+        msg: `命令失败: ${error instanceof Error ? error.message : String(error)}`,
+        level: "error",
+      });
+    });
     setTerminalInput("");
   };
 
-  const displayLogs =
+  const displayLogs = !active ? [] :
     terminalLogs && terminalLogs.length > 0 && terminalLogs[0].msg !== "就绪，选择实例启动"
       ? terminalLogs
       : [
@@ -130,7 +134,7 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
         }}
       >
         {/* 日志流与命令行输入 */}
-        <div ref={logsContainerRef} className="flex-1 overflow-y-auto space-y-1 scrollbar-subtle pr-1 font-mono text-[10px]">
+        <div ref={logsContainerRef} data-native-log-list className="flex-1 overflow-y-auto space-y-1 scrollbar-subtle pr-1 font-mono text-[10px]">
           {displayLogs.map((log, logIdx) => (
             <div
               key={logIdx}

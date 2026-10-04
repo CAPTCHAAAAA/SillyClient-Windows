@@ -71,9 +71,64 @@ export interface InstanceInfo {
 /** 垃圾清理项。 */
 export interface GarbageItem {
   path: string
+  token: string
   type: 'orphan_instance' | 'orphan_cover' | 'temp_file' | 'cache'
   sizeBytes: number
   description: string
+}
+
+export type MaintenanceKind = 'download_cache' | 'broken_extension' | 'stale_extension_reference'
+export type MaintenanceAction = 'delete_cache' | 'quarantine' | 'remove_disabled_reference'
+
+export interface MaintenanceItem {
+  id: string
+  token: string
+  kind: MaintenanceKind
+  relativePath: string
+  sizeBytes: number
+  description: string
+  confidence: 'owned' | 'suspected'
+  defaultSelected: boolean
+  action: MaintenanceAction
+}
+
+export interface MaintenanceScan {
+  instanceId: string
+  scanId: string
+  expiresAt: number
+  items: MaintenanceItem[]
+  warnings: string[]
+}
+
+export interface MaintenanceResult {
+  id: string
+  success: boolean
+  action?: MaintenanceAction
+  error?: string
+  freedBytes: number
+  quarantinedBytes: number
+  recoveryId?: string
+}
+
+export interface MaintenanceApplyResult {
+  success: boolean
+  results: MaintenanceResult[]
+  freedBytes: number
+  quarantinedBytes: number
+  recoveryIds: string[]
+}
+
+export interface MaintenanceRecovery {
+  recoveryId: string
+  token: string
+  createdAt: number
+  description: string
+  relativePath: string
+  kind: MaintenanceKind
+  action: MaintenanceAction
+  sizeBytes: number
+  canRestore: boolean
+  conflict?: string
 }
 
 export interface CompanionPresetSelection {
@@ -81,16 +136,28 @@ export interface CompanionPresetSelection {
   revision: number
 }
 
+export type PreinstalledExtensionId = 'tavern-helper' | 'littlewhitebox' | 'prompt-template' | 'dice'
+
+export interface PreinstallSelection {
+  revision: 1
+  extensionIds: PreinstalledExtensionId[]
+}
+
+export type InstallPathMode = "root" | "exact"
+
 export interface TarvenEnvPlugin {
   provisionAndStart(options: {
     port: number
     instanceId: string
+    operationId?: string
     version: string
     zipballUrl?: string
     localZipPath?: string
-    /** Windows 可选：实例实际安装目录的绝对路径。Android 忽略该字段。 */
+    /** Complete native installation path; unsupported locations fail without fallback. */
     installPath?: string
+    installPathMode?: InstallPathMode
     companionPreset?: CompanionPresetSelection
+    preinstall?: PreinstallSelection
     config: InstanceConfig
   }): Promise<{ ready: boolean }>
 
@@ -99,16 +166,22 @@ export interface TarvenEnvPlugin {
     instanceId?: string
     showGestureHint?: boolean
   }): Promise<void>
+  /** Open a credential-free HTTP(S) page in the system browser, never the Tavern view. */
+  openExternalUrl(options: { url: string }): Promise<void>
   exitImmersive(): Promise<void>
   returnToTavern(): Promise<void>
-  closeTavern(): Promise<void>
-  getStatus(): Promise<{ serverReady: boolean; mode: string; url?: string }>
+  closeTavern(options?: { instanceId?: string; operationId?: string }): Promise<void>
+  getStatus(): Promise<{ serverReady: boolean; mode: string; url?: string; instanceId?: string; operationId?: string }>
 
   /** 拉取 GitHub SillyTavern releases 列表。 */
   fetchReleases(): Promise<{ releases: GithubRelease[] }>
 
-  /** 调用系统目录选择器,返回选中的目录显示名(用作实例安装标识)。 */
-  pickDirectory(): Promise<{ name: string; path: string }>
+  /** Installation selectors return an executable root; source selectors may return document URIs. */
+  pickDirectory(options?: { purpose?: "installation" | "source" }): Promise<{
+    name: string
+    path: string
+    installPathMode?: InstallPathMode
+  }>
 
   /** 调用系统图片选择器,把图片复制到 covers/{instanceId},返回可加载的文件路径。 */
   pickImage(options: { instanceId: string }): Promise<{ path: string; url?: string }>
@@ -174,24 +247,67 @@ export interface TarvenEnvPlugin {
   uninstallInstance(options: { instanceId: string; installPath?: string; port?: number }): Promise<{ success: boolean; freedBytes: number }>
 
   /** 清理垃圾:扫描孤立文件/目录,返回可清理项。dryRun=true 仅扫描不删除。 */
-  cleanGarbage(options: { dryRun: boolean }): Promise<{ items: GarbageItem[]; totalBytes: number }>
+  cleanGarbage(options: { dryRun: boolean; activeInstanceIds?: string[]; activeCoverPaths?: string[] }): Promise<{ items: GarbageItem[]; totalBytes: number }>
 
   /** 删除指定垃圾项(按 path)。 */
-  deleteGarbageItem(options: { path: string }): Promise<{ success: boolean }>
+  deleteGarbageItem(options: { path: string; token?: string }): Promise<{ success: boolean; error?: string }>
+
+  scanInstanceMaintenance(options: { instanceId: string; installPath?: string }): Promise<MaintenanceScan>
+  applyInstanceMaintenance(options: {
+    instanceId: string
+    scanId: string
+    items: { id: string; token: string }[]
+    installPath?: string
+  }): Promise<MaintenanceApplyResult>
+  listInstanceMaintenanceRecovery(options: { instanceId: string; installPath?: string }): Promise<{
+    items: MaintenanceRecovery[]
+    warnings: string[]
+  }>
+  restoreInstanceMaintenance(options: {
+    instanceId: string
+    recoveryId: string
+    token: string
+    installPath?: string
+  }): Promise<{ success: boolean; recoveryId?: string; relativePath?: string; error?: string }>
 
   /** 数据迁移：将旧酒馆目录或 ZIP 压缩包迁入新实例 */
   migrateInstance(options: {
     sourcePath: string
     targetPath?: string
     instanceId: string
+    operationId?: string
     mode?: 'copy' | 'takeover'
     includeSecrets?: boolean
+    preinstall?: PreinstallSelection
   }): Promise<{ success: boolean; instanceId: string; targetPath?: string }>
 
   addListener(
     eventName: 'log' | 'progress' | 'ready' | 'mode' | 'error',
-    listenerFunc: (data: any) => void,
+    listenerFunc: (data: TarvenEvent) => void,
   ): Promise<PluginListenerHandle>
 }
 
-export const TarvenEnv = registerPlugin<TarvenEnvPlugin>('TarvenEnv')
+export interface TarvenEvent {
+  instanceId?: string
+  operationId?: string
+  source?: 'command'
+  message?: string
+  line?: string
+  text?: string
+  level?: string
+  percent?: number
+  stage?: string
+  ready?: boolean
+  url?: string
+  port?: number
+  mode?: string
+  tavernRunning?: boolean
+  lastUsedAt?: string
+  totalUsageMs?: number
+}
+
+export const TarvenEnv = registerPlugin<TarvenEnvPlugin>('TarvenEnv',
+  import.meta.env.DEV && new URLSearchParams(window.location.search).get('nativePreview') === '1'
+    ? { web: async () => (await import('./dev/native-preview')).nativePreview }
+    : undefined,
+)

@@ -1,9 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Terminal, Eraser, X } from "lucide-react";
 import { TarvenEnv } from "../../capacitor-plugin";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import type { TavernInstance } from "../../types";
+import { useInstanceLogs } from "../../hooks/useInstanceLogs";
+import { GLOBAL_LOG_KEY, instanceLogs } from "../../lib/log-store";
 
 export interface TerminalModalProps {
   isOpen: boolean;
@@ -17,8 +19,6 @@ export interface TerminalModalProps {
   terminalDisplayBanner: string;
   terminalDisplayPrompt: string;
   terminalDisplayPlaceholder: string;
-  terminalLogs: { msg: string; level?: string }[];
-  setTerminalLogs: React.Dispatch<React.SetStateAction<{ msg: string; level?: string }[]>>;
   terminalInstance: TavernInstance | null;
 }
 
@@ -38,15 +38,18 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
   terminalDisplayBanner,
   terminalDisplayPrompt,
   terminalDisplayPlaceholder,
-  terminalLogs,
-  setTerminalLogs,
   terminalInstance,
 }) => {
   const [terminalSize, setTerminalSize] = useState({ w: 640, h: 340 });
   const [terminalFontSize, setTerminalFontSize] = useState(12);
   const [terminalInput, setTerminalInput] = useState("");
+  const logKey = terminalInstance?.installDir || terminalInstance?.id || GLOBAL_LOG_KEY;
+  const terminalLogs = useInstanceLogs(logKey, isOpen || isClosing);
+  const resizeCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => { resizeCleanup.current?.(); }, []);
 
   const startResize = (startX: number, startY: number) => {
+    resizeCleanup.current?.();
     const origW = terminalSize.w;
     const origH = terminalSize.h;
     const onMove = (clientX: number, clientY: number) => {
@@ -64,7 +67,9 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
       window.removeEventListener("mouseup", onEnd);
       window.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("touchend", onEnd);
+      resizeCleanup.current = null;
     };
+    resizeCleanup.current = onEnd;
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onEnd);
     window.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -154,7 +159,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
             </span>
           </div>
           <button
-            onClick={() => setTerminalLogs([])}
+            onClick={() => instanceLogs.update(logKey, [])}
             title="清空终端"
             className={cn(
               "p-1 rounded-md transition-colors",
@@ -181,6 +186,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
 
       {/* 终端内容区 */}
       <div
+        data-native-log-list
         className={cn(
           "flex-1 font-sans leading-relaxed p-4 overflow-y-auto scrollbar-subtle",
           isLight
@@ -225,13 +231,13 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
                 const cmd = terminalInput.trim();
                 const instanceId =
                   terminalInstance.installDir || terminalInstance.id;
-                setTerminalLogs((prev) => [
-                  ...prev,
-                  { msg: `${terminalDisplayPrompt} ${cmd}`, level: "info" },
-                ]);
-                TarvenEnv.sendCommand({ text: cmd, instanceId }).catch(
-                  () => {}
-                );
+                instanceLogs.append(logKey, { msg: `${terminalDisplayPrompt} ${cmd}`, level: "info" });
+                TarvenEnv.sendCommand({ text: cmd, instanceId }).catch(error => {
+                  instanceLogs.append(instanceId, {
+                    msg: `命令失败: ${error instanceof Error ? error.message : String(error)}`,
+                    level: "error",
+                  });
+                });
                 setTerminalInput("");
               }
             }}

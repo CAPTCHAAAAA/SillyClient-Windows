@@ -2,8 +2,10 @@ import React from "react";
 import type {
   AppUpdateInfo,
   CompanionPresetSelection,
+  PreinstallSelection,
   ContentOpenMode,
   InstanceConfig,
+  InstallPathMode,
   GithubRelease,
 } from "../capacitor-plugin";
 
@@ -29,8 +31,9 @@ export interface TavernInstance {
   };
   /** 安装目录标识(本地实例,用于多实例隔离) */
   installDir?: string;
-  /** Windows 本地实例实际安装目录。 */
+  /** Complete native installation path. */
   installPath?: string;
+  installPathMode?: InstallPathMode;
   /** GitHub release zipball 下载地址(本地实例首次安装时下载) */
   zipballUrl?: string;
   /** 本地 zip 文件路径(从本地导入) */
@@ -41,6 +44,7 @@ export interface TavernInstance {
   config?: InstanceConfig;
   /** 创建实例时选用的内置主题预设；宿主通过一次性标记避免后续启动重复覆盖。 */
   companionPreset?: CompanionPresetSelection;
+  preinstall?: PreinstallSelection;
   /** Android 新建实例首次进入酒馆时显示状态栏返回提示；仅在用户实际滑动返回后清除。 */
   pendingTavernGestureHint?: boolean;
 }

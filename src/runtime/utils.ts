@@ -9,41 +9,65 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import * as zlib from 'node:zlib';
-import { createWriteStream, createReadStream } from 'node:fs';
-import { once } from 'node:events';
+import { Readable } from 'node:stream';
+import { createWriteStream } from 'node:fs';
 import { net } from 'electron';
+import { checkSignal } from './operations';
 
 /** 解压 zip 到目标目录（对应 Android unzipStream，含 Zip Slip 防护） */
-export async function unzipToDir(zipPath: string, destDir: string): Promise<void> {
-  // Windows 上用 PowerShell 的 Expand-Archive 或 ADM-ZIP
-  // 这里用动态 import ADM-ZIP 更简单
-  let AdmZip: any;
-  try {
-    AdmZip = require('adm-zip');
-  } catch {
-    // 如果没有 adm-zip，用 PowerShell fallback
-    return unzipWithPowerShell(zipPath, destDir);
-  }
-
+export async function unzipToDir(
+  zipPath: string,
+  destDir: string,
+  options: {
+    signal?: AbortSignal;
+    filter?: (segments: string[]) => boolean;
+    maxEntries?: number;
+    maxBytes?: number;
+    maxEntryBytes?: number;
+  } = {},
+): Promise<void> {
+  checkSignal(options.signal);
+  const AdmZip = require('adm-zip');
   const zip = new AdmZip(zipPath);
-  zip.extractAllTo(destDir, true);
-}
-
-/** PowerShell fallback 解压 */
-async function unzipWithPowerShell(zipPath: string, destDir: string): Promise<void> {
-  const { execFile } = require('node:child_process');
-  return new Promise((resolve, reject) => {
-    execFile(
-      'powershell.exe',
-      ['-Command', `Expand-Archive -Path '${zipPath}' -DestinationPath '${destDir}' -Force`],
-      { timeout: 300000, windowsHide: true },
-      (err: any) => {
-        if (err) reject(err);
-        else resolve();
-      },
-    );
-  });
+  const root = path.resolve(destDir);
+  const entries = zip.getEntries();
+  if (entries.length > (options.maxEntries ?? 100000)) throw new Error('Archive has too many entries');
+  for (const entry of entries) {
+    const declared = Number(entry.header.size);
+    if (!Number.isFinite(declared) || declared < 0 || declared > (options.maxEntryBytes ?? 512 * 1024 * 1024)) {
+      throw new Error('Archive entry size limit exceeded');
+    }
+  }
+  let extractedBytes = 0;
+  for (const entry of entries) {
+    checkSignal(options.signal);
+    const name = String(entry.entryName).replace(/\\/g, '/');
+    const segments = name.split('/').filter(Boolean);
+    if (segments.includes('..') || segments.some((segment) => segment.includes(':'))
+      || name.startsWith('/') || (entry.attr >>> 16 & 0xf000) === 0xa000) {
+      throw new Error('Unsafe archive entry');
+    }
+    if (options.filter && !options.filter(segments)) continue;
+    const destination = path.resolve(root, ...segments);
+    const relative = path.relative(root, destination);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Archive entry escapes target');
+    if (entry.isDirectory) {
+      await fs.promises.mkdir(destination, { recursive: true });
+    } else {
+      extractedBytes += Number(entry.header.size);
+      if (!Number.isFinite(extractedBytes) || extractedBytes > (options.maxBytes ?? 16 * 1024 * 1024 * 1024)) {
+        throw new Error('Archive expanded size limit exceeded');
+      }
+      await fs.promises.mkdir(path.dirname(destination), { recursive: true });
+      // Refuse overwriting an existing file. Callers extract only into owned staging.
+      const data = await new Promise<Buffer>((resolve, reject) => {
+        entry.getDataAsync((buffer: Buffer, error?: Error) => error ? reject(error) : resolve(buffer));
+      });
+      checkSignal(options.signal);
+      if (data.byteLength !== Number(entry.header.size)) throw new Error('Archive entry size mismatch');
+      await fs.promises.writeFile(destination, data, { flag: 'wx' });
+    }
+  }
 }
 
 /** 下载文件（对应 Android downloadFile，含进度回调） */
@@ -51,44 +75,54 @@ export async function downloadFile(
   url: string,
   destPath: string,
   onProgress?: (percent: number) => void,
+  signal?: AbortSignal,
+  maxBytes = Number.POSITIVE_INFINITY,
 ): Promise<void> {
+  checkSignal(signal);
+  const downloadSignal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(300000)])
+    : AbortSignal.timeout(300000);
   const response = await net.fetch(url, {
     headers: {
       'User-Agent': 'SillyClient-Windows',
     },
-    signal: AbortSignal.timeout(300000),
+    signal: downloadSignal,
   });
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status}`);
   }
 
   const total = Number(response.headers.get('content-length')) || 0;
+  if (total > maxBytes) {
+    await response.body.cancel();
+    throw new Error('Download size limit exceeded');
+  }
   const reader = response.body.getReader();
-  const output = createWriteStream(destPath);
   let received = 0;
-  let streamError: Error | null = null;
-  output.on('error', (error) => {
-    streamError = error;
-  });
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (streamError) throw streamError;
-      received += value.byteLength;
-      if (!output.write(Buffer.from(value))) {
-        await once(output, 'drain');
+  const body = async function* () {
+    try {
+      while (true) {
+        checkSignal(downloadSignal);
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        if (received > maxBytes) throw new Error('Download size limit exceeded');
+        if (total && onProgress) onProgress(Math.min(100, Math.round((received / total) * 100)));
+        yield Buffer.from(value);
       }
-      if (total && onProgress) {
-        onProgress(Math.round((received / total) * 100));
-      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+      reader.releaseLock();
     }
-    if (streamError) throw streamError;
-    output.end();
-    await once(output, 'finish');
+  };
+  const output = createWriteStream(destPath, { flags: 'wx' });
+  let createdOutput = false;
+  output.once('open', () => { createdOutput = true; });
+  try {
+    await pipeline(Readable.from(body()), output, { signal: downloadSignal });
+    checkSignal(signal);
   } catch (error) {
-    output.destroy();
+    if (createdOutput) await fs.promises.rm(destPath, { force: true });
     throw error;
   }
 }
