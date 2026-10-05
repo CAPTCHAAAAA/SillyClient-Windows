@@ -84,7 +84,7 @@ for (const width of [320, 390, 1280]) {
           await wizard.getByRole("button", { name: "数据迁移", exact: true }).click();
           await page.waitForTimeout(650);
         }
-        await wizard.getByRole("button", { name: "预制安装", exact: true }).click();
+        await wizard.getByRole("button", { name: "预设安装", exact: true }).click();
         await wizard.getByRole("switch", { name: "预安装 酒馆助手", exact: true }).click();
         const selection = await wizard.getByRole("switch").evaluateAll(nodes => nodes.map(node => node.getAttribute("aria-checked")));
         const links = wizard.getByRole("link", { name: /^https:\/\/github\.com\// });
@@ -133,7 +133,7 @@ for (const width of [320, 390, 1280]) {
         ]);
         assert.deepEqual(await wizard.getByRole("switch").evaluateAll(nodes => nodes.map(node => node.getAttribute("aria-checked"))), selection);
         assert.equal(await wizard.getByPlaceholder("我的酒馆").inputValue(), "Kept project-link draft");
-        assert.equal(await wizard.getByRole("button", { name: "预制安装", exact: true }).getAttribute("aria-expanded"), "true");
+        assert.equal(await wizard.getByRole("button", { name: "预设安装", exact: true }).getAttribute("aria-expanded"), "true");
         await assertKeptView(page, before, documentUrl);
       }
     } finally { await page.close(); }

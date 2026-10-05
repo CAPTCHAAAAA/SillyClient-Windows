@@ -126,7 +126,7 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({
           >
             <div className="flex items-center justify-between mb-1.5">
               <span className={cn("text-[13px] font-semibold tracking-tight", isLight ? "text-[#1a1625]/90" : "text-white/90")}>
-                新更新：可选预制安装与受控外链
+                新更新：可选预设安装与受控外链
               </span>
               <span className={cn("text-[10px] font-mono", isLight ? "text-[#1a1625]/35" : "text-white/30")}>
                 02

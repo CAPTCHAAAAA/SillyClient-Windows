@@ -324,7 +324,7 @@ test("exiting and hidden controls reject focus and hits immediately, including s
     assert.equal(hit, true);
     await choose(wizard, "本地实例");
     await settled(wizard);
-    await wizard.getByRole("button", { name: "预制安装", exact: true }).click();
+    await wizard.getByRole("button", { name: "预设安装", exact: true }).click();
     await wizard.getByRole("switch", { name: "使用 SC Bordeaux 主题预设" }).click();
     await choose(wizard, "远程连接");
     await settled(wizard);
@@ -346,7 +346,7 @@ test("initial and expanded heights exclude modal entry scale and leave all real 
       await page.waitForTimeout(650);
       const wizard = await openWizard(page);
       const first = await settled(wizard);
-      await wizard.getByRole("button", { name: "预制安装", exact: true }).click();
+      await wizard.getByRole("button", { name: "预设安装", exact: true }).click();
       await page.waitForTimeout(50);
       await choose(wizard, "远程连接");
       await page.waitForTimeout(70);

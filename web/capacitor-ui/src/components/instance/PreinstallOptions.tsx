@@ -28,7 +28,7 @@ export function PreinstallOptions({
           isLight ? "text-[#1a1625]/70" : "text-white/70",
         )}
       >
-        <span>预制安装</span>
+        <span>预设安装</span>
         <ChevronDown className={cn(
           "w-3.5 h-3.5 flex-shrink-0 opacity-40 transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]",
           expanded && "rotate-180",

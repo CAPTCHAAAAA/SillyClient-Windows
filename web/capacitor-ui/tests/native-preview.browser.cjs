@@ -40,7 +40,7 @@ async function openWizard(page) {
 }
 
 async function selectExtensions(wizard, names) {
-  await wizard.getByRole("button", { name: "预制安装", exact: true }).click();
+  await wizard.getByRole("button", { name: "预设安装", exact: true }).click();
   await wizard.getByRole("switch", { name: "使用 SC Bordeaux 主题预设" }).waitFor();
   for (const name of names) {
     await wizard.getByRole("switch", { name: `预安装 ${name}`, exact: true }).click();
@@ -161,18 +161,18 @@ test("preinstallation starts off and is inert outside local or copy mode", async
     await wizard.getByRole("switch", { name: "预安装 酒馆助手", exact: true }).click();
     await wizard.getByRole("button", { name: "远程连接", exact: true }).click();
     await page.waitForTimeout(650);
-    assert.equal(await wizard.getByRole("button", { name: "预制安装", exact: true }).count(), 0);
+    assert.equal(await wizard.getByRole("button", { name: "预设安装", exact: true }).count(), 0);
     const inactive = await wizard.locator("[role='switch'][aria-label^='预安装'], [role='switch'][aria-label='使用 SC Bordeaux 主题预设']")
       .evaluateAll(nodes => nodes.every(node => !!node.closest("[inert]")));
     assert.equal(inactive, true);
     await wizard.getByRole("button", { name: "数据迁移", exact: true }).click();
     await page.waitForTimeout(650);
-    assert.equal(await wizard.getByRole("button", { name: "预制安装", exact: true }).count(), 1);
+    assert.equal(await wizard.getByRole("button", { name: "预设安装", exact: true }).count(), 1);
     await selectExtensions(wizard, []);
     assert.equal(await wizard.getByRole("switch", { name: "预安装 酒馆助手", exact: true }).getAttribute("aria-checked"), "true");
     await wizard.getByRole("button", { name: "原地接管", exact: true }).click();
     await page.waitForTimeout(650);
-    assert.equal(await wizard.getByRole("button", { name: "预制安装", exact: true }).count(), 0);
+    assert.equal(await wizard.getByRole("button", { name: "预设安装", exact: true }).count(), 0);
     assert.equal(await wizard.locator("[role='switch'][aria-label^='预安装'], [role='switch'][aria-label='使用 SC Bordeaux 主题预设']")
       .evaluateAll(nodes => nodes.every(node => !!node.closest("[inert]"))), true);
     await wizard.getByRole("button", { name: "取消", exact: true }).click();

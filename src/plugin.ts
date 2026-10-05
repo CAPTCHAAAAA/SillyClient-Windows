@@ -477,7 +477,7 @@ async function provisionInstance(opts: any, context: OperationContext): Promise<
       log(companionPresetTransaction.applied ? '已应用 SC Bordeaux 主题预设' : 'SC Bordeaux 主题预设已就绪');
     }
     if (opts.preinstall?.extensionIds.length) {
-      progress(83, '安装预制扩展');
+      progress(83, '安装预设扩展');
       extensionTransaction = await installPreselectedExtensions(targetServerDir, opts.preinstall, {
         signal: context.signal,
         operationId: context.operationId,

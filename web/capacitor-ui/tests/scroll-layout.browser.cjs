@@ -140,7 +140,7 @@ for (const viewport of viewports) {
     try {
       const wizard = await openWizard(page);
       const snapshots = [{ step: "collapsed", value: await metrics(page, wizard) }];
-      const toggle = wizard.getByRole("button", { name: "预制安装", exact: true });
+      const toggle = wizard.getByRole("button", { name: "预设安装", exact: true });
       await toggle.click();
       await page.waitForTimeout(750);
       snapshots.push({ step: "expanded", value: await metrics(page, wizard) });
@@ -157,14 +157,14 @@ for (const viewport of viewports) {
       await wizard.getByRole("button", { name: "远程连接", exact: true }).click();
       await page.waitForTimeout(650);
       snapshots.push({ step: "remote", value: await metrics(page, wizard) });
-      assert.equal(await wizard.getByRole("button", { name: "预制安装", exact: true }).count(), 0);
+      assert.equal(await wizard.getByRole("button", { name: "预设安装", exact: true }).count(), 0);
       const inactive = await wizard.locator("[aria-label^='预安装']").evaluateAll(controls =>
         controls.every(control => !!control.closest("[inert]")));
       assert.equal(inactive, true);
       await wizard.getByRole("button", { name: "数据迁移", exact: true }).click();
       await page.waitForTimeout(650);
       await wizard.getByPlaceholder("选择文件夹或 ZIP 文件路径").fill("D:\\Synthetic\\Old");
-      await wizard.getByRole("button", { name: "预制安装", exact: true }).click();
+      await wizard.getByRole("button", { name: "预设安装", exact: true }).click();
       await wizard.locator("button[title='重要提示：点击查看私有凭据说明']:visible").click();
       await page.waitForTimeout(750);
       snapshots.push({ step: "copy-expanded", value: await metrics(page, wizard) });

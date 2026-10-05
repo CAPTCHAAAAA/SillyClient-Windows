@@ -4,6 +4,21 @@ SillyClient 的 Windows 客户端。Electron 负责窗口、文件和进程，�
 
 应用使用随安装包分发的 Node.js 22，不读取系统 PATH。SillyTavern 在独立窗口中打开；关闭该窗口只会返回控制台，停止实例需要在控制台中明确操作。
 
+## 界面实览 / Screenshots
+
+| 主控台全景 | 实例创建与伴生主题 |
+| :---: | :---: |
+| <img src="./docs/screenshots/01-main-dashboard.png" width="480" alt="主控台全景"> | <img src="./docs/screenshots/03-create-instance-wizard.png" width="480" alt="新建实例向导"> |
+
+| 私密实例锁与解锁 | 存储路径与数据迁移 |
+| :---: | :---: |
+| <img src="./docs/screenshots/06-password-unlock-modal.png" width="480" alt="私密实例解锁"> | <img src="./docs/screenshots/07-instance-management-storage.png" width="480" alt="存储路径与迁移"> |
+
+| 终端实时日志 | 背景定制与全局设置 |
+| :---: | :---: |
+| <img src="./docs/screenshots/08-terminal-console.png" width="480" alt="终端日志"> | <img src="./docs/screenshots/10-app-settings.png" width="480" alt="全局设置"> |
+
+
 ## 环境
 
 - Windows 10 或 11 x64
