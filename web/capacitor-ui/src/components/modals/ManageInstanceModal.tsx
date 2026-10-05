@@ -145,7 +145,7 @@ function getStatusText(status: TavernInstance["status"]) {
 
 /**
  * 实例管理高级控制面板 (ManageInstanceModal)
- * 涵盖：启动参数配置、配置快照、存储信息与插图更换、实时终端、关于版本详情。
+ * 涵盖：启动参数配置、存储信息与实例操作、实时终端、关于版本详情。
  */
 export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   instance,
@@ -282,7 +282,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   const mp = instance;
   const effectiveInstancePath =
     mp.type === "local"
-      ? (aboutInfo?.path || localAboutInfo?.path || mp.installPath || (mp.installDir && (mp.installDir.includes("/") || mp.installDir.includes("\\")) ? mp.installDir : null) || "正在读取路径...")
+      ? (aboutInfo?.path || localAboutInfo?.path || mp.installPath || (mp.installDir && (mp.installDir.includes("/") || mp.installDir.includes("\\")) ? mp.installDir : null) || "—")
       : (mp.url || "—");
 
   const filteredManageInstances = allInstances.filter((inst) => {
@@ -345,7 +345,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
             <span
               title={effectiveInstancePath}
               className={cn(
-                "inline-block text-[10px] font-mono truncate max-w-[200px] sm:max-w-[360px] md:max-w-[480px] px-1.5 py-0.5 rounded-md opacity-70",
+                "hidden sm:inline-block text-[10px] font-mono truncate max-w-[320px] px-1.5 py-0.5 rounded-md opacity-60",
                 isLight ? "bg-black/[0.04] text-[#1a1625]" : "bg-white/[0.06] text-white"
               )}
             >
@@ -1153,6 +1153,86 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       </button>
                     </ManageItem>
                   )}
+                  <div
+                    className={cn(
+                      "flex items-center justify-between gap-4 rounded-xl px-4 py-3",
+                      isLight ? "bg-black/[0.025]" : "bg-white/[0.025]"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div
+                        className={cn(
+                          "text-xs font-medium",
+                          isLight ? "text-[#1a1625]/70" : "text-white/70"
+                        )}
+                      >
+                        实例重命名
+                      </div>
+                      <div
+                        className={cn(
+                          "mt-1 truncate text-[10px]",
+                          isLight ? "text-[#1a1625]/30" : "text-white/30"
+                        )}
+                      >
+                        修改实例的显示名称
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onTriggerRename(mp);
+                      }}
+                      className={cn(
+                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                        isLight
+                          ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
+                          : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
+                      )}
+                    >
+                      重命名
+                    </button>
+                  </div>
+                  <div
+                    className={cn(
+                      "flex items-center justify-between gap-4 rounded-xl px-4 py-3",
+                      isLight ? "bg-black/[0.025]" : "bg-white/[0.025]"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div
+                        className={cn(
+                          "text-xs font-medium",
+                          isLight ? "text-[#1a1625]/70" : "text-white/70"
+                        )}
+                      >
+                        删除实例
+                      </div>
+                      <div
+                        className={cn(
+                          "mt-1 truncate text-[10px]",
+                          isLight ? "text-[#1a1625]/30" : "text-white/30"
+                        )}
+                      >
+                        移除实例及其全部本地数据
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onTriggerDelete(mp);
+                      }}
+                      className={cn(
+                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                        isLight
+                          ? "bg-red-900/[0.07] text-red-900/60 hover:bg-red-900/[0.11]"
+                          : "bg-red-400/[0.08] text-red-300/60 hover:bg-red-400/[0.13]"
+                      )}
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
               </div>
 
