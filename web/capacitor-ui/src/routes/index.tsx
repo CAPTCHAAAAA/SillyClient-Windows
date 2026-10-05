@@ -44,7 +44,8 @@ import { RenameModal } from "@/components/modals/RenameModal";
 import { VersionDropdownMenu } from "@/components/modals/VersionDropdownMenu";
 import { CardActionMenu } from "@/components/modals/CardActionMenu";
 import { LaunchConsoleModal } from "@/components/modals/LaunchConsoleModal";
-import type { TavernInstance, ManageTab, InstanceSnapshot, BgMode, ThemeStyle, OperationPurpose } from "@/types";
+import { UnlockInstanceModal } from "@/components/modals/UnlockInstanceModal";
+import type { TavernInstance, ManageTab, BgMode, ThemeStyle, OperationPurpose } from "@/types";
 
 export const Route = createFileRoute("/")({
   component: SillyClientLauncher,
@@ -65,7 +66,6 @@ const BACKGROUND_PANEL_EXIT_MS = 300;
 const PANEL_EXIT_MS = 300;
 const POPOVER_EXIT_MS = 200;
 const MANAGE_PANEL_OPEN_GAP_MS = 32;
-const INSTANCE_SNAPSHOTS_KEY = "sillyclient.instanceSnapshots";
 
 function hydrateInstance(t: StoredInstance): TavernInstance {
   return {
@@ -256,6 +256,19 @@ function SillyClientLauncher() {
   const [lastLaunchParams, setLastLaunchParams] = useState<TavernInstance | null>(null);
   const [operationPurpose, setOperationPurpose] = useState<OperationPurpose>("launch");
 
+  // 实例访问密码解锁状态
+  const [unlockingInstance, setUnlockingInstance] = useState<TavernInstance | null>(null);
+  const [isUnlockModalOpen, setIsUnlockModalOpen] = useState(false);
+  const [isUnlockModalClosing, setIsUnlockModalClosing] = useState(false);
+  const closeUnlockModal = useCallback(() => {
+    setIsUnlockModalClosing(true);
+    setTimeout(() => {
+      setIsUnlockModalOpen(false);
+      setIsUnlockModalClosing(false);
+      setUnlockingInstance(null);
+    }, POPOVER_EXIT_MS);
+  }, []);
+
   // Logo 字体切换
   const logoFonts = [
     { name: 'Yummy', family: "'Yummy', sans-serif" },
@@ -323,7 +336,6 @@ function SillyClientLauncher() {
   const setTerminalLogs = useCallback((value: LogLine[] | ((previous: LogLine[]) => LogLine[])) => {
     instanceLogs.update(terminalLogTarget.current, value);
   }, []);
-  const [instanceSnapshots, setInstanceSnapshots] = useState<Record<string, InstanceSnapshot[]>>({});
   // 关于页真实数据
   const [aboutInfo, setAboutInfo] = useState<{ version: string; path: string; sizeBytes: number; createdAt: string; status: string } | null>(null);
   // 安全 insets(挖孔避让)
@@ -505,15 +517,6 @@ function SillyClientLauncher() {
     return () => window.removeEventListener("resize", updateRight);
   }, [appUpdateState]);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(INSTANCE_SNAPSHOTS_KEY);
-      if (raw) setInstanceSnapshots(JSON.parse(raw) as Record<string, InstanceSnapshot[]>);
-    } catch {
-      /* ignore invalid local snapshots */
-    }
-  }, []);
-
   // 支持通过 URL 参数直接唤起向导指定面板 (例如 ?wizard=import 方便本地走查)
   useEffect(() => {
     try {
@@ -539,15 +542,6 @@ function SillyClientLauncher() {
       /* ignore */
     }
   }, []);
-
-  useEffect(() => {
-    if (isShowcase) return;
-    try {
-      localStorage.setItem(INSTANCE_SNAPSHOTS_KEY, JSON.stringify(instanceSnapshots));
-    } catch {
-      /* ignore storage quota errors */
-    }
-  }, [instanceSnapshots, isShowcase]);
 
   // 液态玻璃底色:动态模式微偏红,黑夜模式蓝紫,白天模式白色
   const glassBg = isLight
@@ -911,6 +905,38 @@ function SillyClientLauncher() {
     return () => clearInterval(interval);
   }, [checkRemoteStatus]);
 
+  // 启动时同步各实例密码保护状态
+  useEffect(() => {
+    TarvenEnv.listInstancePasswordStatus().then((status) => {
+      if (status && typeof status === "object") {
+        setInstances((prev) => {
+          let changed = false;
+          const next = prev.map((inst) => {
+            const key = inst.installDir || inst.id;
+            const has = Boolean(status[key] || status[inst.id]);
+            if (inst.hasPassword !== has) {
+              changed = true;
+              return { ...inst, hasPassword: has };
+            }
+            return inst;
+          });
+          return changed ? next : prev;
+        });
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleUpdateInstancePasswordStatus = useCallback((instanceId: string, hasPassword: boolean) => {
+    setInstances((prev) =>
+      prev.map((inst) => {
+        if (inst.id === instanceId || inst.installDir === instanceId) {
+          return { ...inst, hasPassword };
+        }
+        return inst;
+      })
+    );
+  }, []);
+
   // 下拉刷新:触发远程状态检测与本地实例同步
   const handlePullRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -1180,8 +1206,8 @@ function SillyClientLauncher() {
     setLaunchProgress({ pct: 100, text: "远程实例已打开" });
   }, [contentOpenMode, setLaunchLogs]);
 
-  // 启动实例入口
-  const launchTavern = useCallback(async (instance: TavernInstance) => {
+  // 启动实例直接执行入口 (跳过密码阻断，在已完成密码校验或无密码时调用)
+  const launchTavernDirect = useCallback(async (instance: TavernInstance) => {
     if (operations.busy) return;
     const operation = operations.begin(instance.installDir || instance.id, "launch");
     lastMigration.current = null;
@@ -1247,6 +1273,16 @@ function SillyClientLauncher() {
       }
     }
   }, [operations, doLaunch, openRemoteInstance, setLaunchLogs]);
+
+  // 启动实例入口 (含访问密码保险开关拦截)
+  const launchTavern = useCallback(async (instance: TavernInstance) => {
+    if (instance.hasPassword && instance.status !== "running" && instance.status !== "online") {
+      setUnlockingInstance(instance);
+      setIsUnlockModalOpen(true);
+      return;
+    }
+    await launchTavernDirect(instance);
+  }, [launchTavernDirect]);
 
   // 返回酒馆会话（无缝唤醒后台保活的酒馆 WebView）
   const handleReturnToTavern = useCallback(async (instance: TavernInstance) => {
@@ -1771,29 +1807,6 @@ function SillyClientLauncher() {
     }
   }, [isWindows]);
 
-  const createInstanceSnapshot = useCallback(() => {
-    if (!showManagePanel) return;
-    const createdAt = new Date().toISOString();
-    const snapshot: InstanceSnapshot = {
-      id: `${showManagePanel.id}-${Date.now()}`,
-      createdAt,
-      label: `快照 ${new Date(createdAt).toLocaleDateString("zh-CN")}`,
-      port: draftPort,
-      config: { ...draftConfig },
-    };
-    setInstanceSnapshots(prev => ({
-      ...prev,
-      [showManagePanel.id]: [snapshot, ...(prev[showManagePanel.id] || [])],
-    }));
-  }, [draftConfig, draftPort, showManagePanel]);
-
-  const deleteInstanceSnapshot = useCallback((instanceId: string, snapshotId: string) => {
-    setInstanceSnapshots(prev => ({
-      ...prev,
-      [instanceId]: (prev[instanceId] || []).filter(snapshot => snapshot.id !== snapshotId),
-    }));
-  }, []);
-
   const closeRenameDialog = useCallback(() => {
     if (!renamingId || isRenameClosing) return;
     if (renameCloseTimerRef.current) clearTimeout(renameCloseTimerRef.current);
@@ -1864,14 +1877,6 @@ function SillyClientLauncher() {
           };
         }
         return prev;
-      });
-
-      setInstanceSnapshots(prev => {
-        if (!prev[instanceId]) return prev;
-        const next = { ...prev };
-        next[res.newId] = next[instanceId];
-        delete next[instanceId];
-        return next;
       });
 
       return true;
@@ -1966,12 +1971,6 @@ function SillyClientLauncher() {
       }
 
       setInstances(prev => prev.filter(instance => instance.id !== pendingDelete.id));
-      setInstanceSnapshots(prev => {
-        if (!(pendingDelete.id in prev)) return prev;
-        const next = { ...prev };
-        delete next[pendingDelete.id];
-        return next;
-      });
       setTerminalInstanceId(current => current === pendingDelete.id ? null : current);
       setTerminalLogs(prev => [...prev, {
         msg: freedBytes > 0
@@ -2900,6 +2899,20 @@ function SillyClientLauncher() {
         }}
       />
 
+      {/* 解耦业务组件: 实例访问密码解锁对话框 (本地保险开关) */}
+      <UnlockInstanceModal
+        instance={unlockingInstance}
+        isOpen={isUnlockModalOpen}
+        isClosing={isUnlockModalClosing}
+        onClose={closeUnlockModal}
+        isLight={isLight}
+        glassBg={glassBg}
+        onUnlockSuccess={(inst) => {
+          closeUnlockModal();
+          void launchTavernDirect(inst);
+        }}
+      />
+
       {/* 解耦业务组件: 高阻断级删除确认对话框 */}
       <DeleteConfirmDialog
         instance={pendingDelete}
@@ -3096,15 +3109,6 @@ function SillyClientLauncher() {
           if (inst.type === "local") setMaintenanceInstance(inst);
         }}
         onOpenRelocate={openRelocateModal}
-        onOpenNewInstanceWizard={() => {
-          closeManagePanel();
-          setNewInstanceCompanionPresetEnabled(false);
-          setNewInstanceExtensionIds([]);
-          setTimeout(() => {
-            setShowNewInstancePanel(true);
-            setIsNewInstancePanelClosing(false);
-          }, PANEL_EXIT_MS);
-        }}
         onLaunchInstance={(inst) => {
           closeManagePanel();
           launchTavern(inst);
@@ -3125,14 +3129,6 @@ function SillyClientLauncher() {
         onPickCover={(inst) => {
           void pickInstanceCover(inst);
         }}
-        snapshots={instanceSnapshots}
-        onCreateSnapshot={createInstanceSnapshot}
-        onRestoreSnapshot={(snapshot) => {
-          setDraftPort(snapshot.port);
-          setDraftConfig({ ...snapshot.config });
-          setManageTab("launch");
-        }}
-        onDeleteSnapshot={deleteInstanceSnapshot}
         aboutInfo={aboutInfo}
         draftConfig={draftConfig}
         setDraftConfig={setDraftConfig}
@@ -3149,6 +3145,7 @@ function SillyClientLauncher() {
         onSaveManagedInstance={saveManagedInstance}
         terminalDisplayPrompt={terminalDisplayPrompt}
         terminalPlaceholder={terminalPlaceholder}
+        onUpdateInstancePasswordStatus={handleUpdateInstancePasswordStatus}
       />
 
       <InstanceMaintenancePanel instance={maintenanceInstance} isOpen={!!maintenanceInstance}

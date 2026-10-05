@@ -38,6 +38,14 @@ import {
   RemoteBasicAuthCredentials,
   saveRemoteBasicAuth,
 } from './remote-auth';
+import {
+  clearInstancePassword,
+  hasInstancePassword,
+  listInstancePasswordStatus,
+  removeInstancePassword,
+  setInstancePassword,
+  verifyInstancePassword,
+} from './runtime/instance-lock';
 
 // ---------------------------------------------------------------------------
 // 导出给 main.ts 用的接口（保持与之前兼容）
@@ -277,6 +285,16 @@ export async function handle(method: string, options: any): Promise<any> {
       return migrateLegacyInstances(options, currentInstanceId);
     case 'renameInstance':
       return renameInstance(options, currentInstanceId);
+    case 'setInstancePassword':
+      return setInstancePassword(options.instanceId, options.password, options.oldPassword);
+    case 'verifyInstancePassword':
+      return { valid: verifyInstancePassword(options.instanceId, options.password) };
+    case 'hasInstancePassword':
+      return { hasPassword: hasInstancePassword(options.instanceId) };
+    case 'clearInstancePassword':
+      return clearInstancePassword(options.instanceId, options.oldPassword);
+    case 'listInstancePasswordStatus':
+      return listInstancePasswordStatus();
     default:
       throw new Error(`未知方法: ${method}`);
   }
@@ -1257,6 +1275,7 @@ async function uninstallInstanceInternal(opts: any, instanceId: string): Promise
   if (!isTakeover && fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
   if (cleanupFailures.length) throw new Error(`Instance data removed but auxiliary cleanup failed: ${cleanupFailures.join('; ')}`);
   instanceStore.removeInstanceRecord(instanceId);
+  removeInstancePassword(instanceId);
 
   return { success: true, freedBytes };
 }

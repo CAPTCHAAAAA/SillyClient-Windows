@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as paths from './paths';
 import * as instanceStore from './instances';
+import { renameInstancePassword } from './instance-lock';
 
 export interface RenameInstanceOptions {
   instanceId: string;
@@ -112,6 +113,7 @@ export async function renameInstance(
     existingRecord?.createdAt,
     existingRecord?.isTakeover,
   );
+  renameInstancePassword(safeOldId, safeNewId);
 
   return {
     success: true,

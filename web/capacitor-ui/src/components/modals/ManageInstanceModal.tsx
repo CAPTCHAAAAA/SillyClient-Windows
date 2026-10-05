@@ -4,14 +4,13 @@ import {
   Search,
   Eraser,
   Play,
-  MoreHorizontal,
 } from "lucide-react";
 import { TarvenEnv } from "../../capacitor-plugin";
 import type { InstanceConfig } from "../../capacitor-plugin";
 import { cn, formatDisplayVersion } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { ToggleSwitch } from "../common/ToggleSwitch";
-import type { TavernInstance, InstanceSnapshot, ManageTab } from "../../types";
+import type { TavernInstance, ManageTab } from "../../types";
 import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 import { instanceLogs } from "../../lib/log-store";
 
@@ -25,7 +24,6 @@ export interface ManageInstanceModalProps {
   isWindows: boolean;
   allInstances: TavernInstance[];
   onSelectInstance: (instance: TavernInstance) => void;
-  onOpenNewInstanceWizard: () => void;
   onLaunchInstance: (instance: TavernInstance) => void;
   launchingId: string | null;
   onTriggerRename: (instance: TavernInstance) => void;
@@ -33,11 +31,6 @@ export interface ManageInstanceModalProps {
   onPickCover: (instance: TavernInstance) => void;
   onOpenMaintenance?: (instance: TavernInstance) => void;
   onOpenRelocate?: (instance: TavernInstance) => void;
-  // 快照管理
-  snapshots: Record<string, InstanceSnapshot[]>;
-  onCreateSnapshot: () => void;
-  onRestoreSnapshot: (snapshot: InstanceSnapshot) => void;
-  onDeleteSnapshot: (instanceId: string, snapshotId: string) => void;
   // 实例关于信息
   aboutInfo?: { path?: string; version?: string; status?: string; createdAt?: string; sizeBytes?: number } | null;
   // 保存与草稿状态
@@ -57,6 +50,7 @@ export interface ManageInstanceModalProps {
   // 终端日志
   terminalDisplayPrompt: string;
   terminalPlaceholder: string;
+  onUpdateInstancePasswordStatus?: (instanceId: string, hasPassword: boolean) => void;
 }
 
 function ManageItem({
@@ -162,7 +156,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   glassBg,
   allInstances,
   onSelectInstance,
-  onOpenNewInstanceWizard,
   onLaunchInstance,
   launchingId,
   onTriggerRename,
@@ -170,10 +163,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   onPickCover,
   onOpenMaintenance,
   onOpenRelocate,
-  snapshots,
-  onCreateSnapshot,
-  onRestoreSnapshot,
-  onDeleteSnapshot,
   aboutInfo,
   draftConfig,
   setDraftConfig,
@@ -190,13 +179,34 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   onSaveManagedInstance,
   terminalDisplayPrompt,
   terminalPlaceholder,
+  onUpdateInstancePasswordStatus,
 }) => {
   const [manageTab, setManageTab] = useState<ManageTab>("launch");
   const [manageSearchQuery, setManageSearchQuery] = useState("");
   const [manageFilter, setManageFilter] = useState<"all" | "local" | "remote">("all");
-  const [manageMoreOpen, setManageMoreOpen] = useState(false);
   const [terminalInput, setTerminalInput] = useState("");
   const [localAboutInfo, setLocalAboutInfo] = useState<{ path?: string; sizeBytes?: number; version?: string; status?: string; createdAt?: string } | null>(null);
+
+  // 访问密码保护状态
+  const [hasPassword, setHasPassword] = useState(Boolean(instance?.hasPassword));
+  const [isConfiguringPassword, setIsConfiguringPassword] = useState(false);
+  const [passwordMode, setPasswordMode] = useState<"set" | "clear">("set");
+  const [passwordOld, setPasswordOld] = useState("");
+  const [passwordNew, setPasswordNew] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [passwordSuccess, setPasswordSuccess] = useState<string | null>(null);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  useEffect(() => {
+    setHasPassword(Boolean(instance?.hasPassword));
+    setIsConfiguringPassword(false);
+    setPasswordOld("");
+    setPasswordNew("");
+    setPasswordConfirm("");
+    setPasswordError(null);
+    setPasswordSuccess(null);
+  }, [instance?.id, instance?.hasPassword]);
 
   useEffect(() => {
     setLocalAboutInfo(null);
@@ -227,7 +237,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   };
 
   const launchRef = useRef<HTMLDivElement>(null);
-  const snapshotsRef = useRef<HTMLDivElement>(null);
   const storageRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
   const aboutRef = useRef<HTMLDivElement>(null);
@@ -238,8 +247,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
     const targetEl =
       manageTab === "launch"
         ? launchRef.current
-        : manageTab === "snapshots"
-        ? snapshotsRef.current
         : manageTab === "storage"
         ? storageRef.current
         : manageTab === "terminal"
@@ -267,7 +274,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
     manageTab,
     isOpen,
     instance?.id,
-    snapshots[instance?.id || ""]?.length,
     terminalLogs.length,
   ]);
 
@@ -460,7 +466,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   aria-pressed={selected}
                   onClick={() => {
                     onSelectInstance(item);
-                    setManageMoreOpen(false);
                   }}
                   className={cn(
                     "motion-control mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left",
@@ -540,7 +545,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
             {(
               [
                 { id: "launch", label: "启动参数" },
-                { id: "snapshots", label: "配置快照" },
                 { id: "storage", label: "存储路径" },
                 { id: "terminal", label: "实例终端" },
                 { id: "about", label: "关于实例" },
@@ -552,7 +556,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                 aria-pressed={manageTab === tab.id}
                 onClick={() => {
                   setManageTab(tab.id);
-                  setManageMoreOpen(false);
                 }}
                 className={cn(
                   "ios-choice-control motion-control flex h-8 flex-shrink-0 items-center rounded-lg px-3 text-[11px] font-medium border transition-colors",
@@ -774,148 +777,253 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       </div>
                     </div>
                   )}
-                </>
-              </div>
 
-              {/* 快照 */}
-              <div
-                ref={snapshotsRef}
-                className={cn(
-                  "w-full space-y-4 transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                  manageTab === "snapshots"
-                    ? "relative opacity-100 translate-y-0 filter-none pointer-events-auto"
-                    : "absolute inset-x-0 top-0 opacity-0 translate-y-1.5 blur-[3px] pointer-events-none select-none"
-                )}
-                aria-hidden={manageTab !== "snapshots"}
-                inert={manageTab !== "snapshots"}
-              >
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div
-                        className={cn(
-                          "text-sm font-semibold",
-                          isLight ? "text-[#1a1625]/80" : "text-white/80"
-                        )}
-                      >
-                        配置快照
-                      </div>
-                      <div
-                        className={cn(
-                          "mt-1 text-[10px]",
-                          isLight ? "text-[#1a1625]/35" : "text-white/35"
-                        )}
-                      >
-                        保存并恢复当前实例的启动参数。
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={mp.type !== "local"}
-                      onClick={onCreateSnapshot}
-                      className={cn(
-                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium disabled:pointer-events-none disabled:opacity-35",
-                        isLight
-                          ? "bg-black/[0.06] text-[#1a1625]/65 hover:bg-black/[0.09]"
-                          : "bg-white/[0.07] text-white/65 hover:bg-white/[0.11]"
-                      )}
-                    >
-                      创建快照
-                    </button>
-                  </div>
-                  {mp.type !== "local" ? (
-                    <div
-                      className={cn(
-                        "rounded-xl px-4 py-8 text-center text-xs",
-                        isLight
-                          ? "bg-black/[0.025] text-[#1a1625]/35"
-                          : "bg-white/[0.025] text-white/35"
-                      )}
-                    >
-                      远程实例不保存本地启动参数快照
-                    </div>
-                  ) : (snapshots[mp.id] || []).length === 0 ? (
-                    <div
-                      className={cn(
-                        "rounded-xl px-4 py-8 text-center text-xs",
-                        isLight
-                          ? "bg-black/[0.025] text-[#1a1625]/35"
-                          : "bg-white/[0.025] text-white/35"
-                      )}
-                    >
-                      暂无快照
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {(snapshots[mp.id] || []).map((snapshot) => (
-                        <div
-                          key={snapshot.id}
+                  {/* 访问密码保护 */}
+                  <ManageItem
+                    label="访问密码保护"
+                    desc="开启后需在本地输入密码方可启动或连接实例"
+                    isLight={isLight}
+                  >
+                    <div className="flex items-center gap-2">
+                      {hasPassword && !isConfiguringPassword && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsConfiguringPassword(true);
+                            setPasswordMode("set");
+                            setPasswordOld("");
+                            setPasswordNew("");
+                            setPasswordConfirm("");
+                            setPasswordError(null);
+                            setPasswordSuccess(null);
+                          }}
                           className={cn(
-                            "flex items-center justify-between gap-4 rounded-xl px-4 py-3",
-                            isLight ? "bg-black/[0.035]" : "bg-white/[0.035]"
+                            "motion-control text-[10px] font-medium px-2 py-0.5 rounded-md border transition-colors",
+                            isLight
+                              ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625]/70 hover:bg-black/[0.08]"
+                              : "bg-white/[0.06] border-white/[0.08] text-white/70 hover:bg-white/[0.12]"
                           )}
                         >
-                          <div className="min-w-0">
-                            <div
-                              className={cn(
-                                "truncate text-xs font-medium",
-                                isLight
-                                  ? "text-[#1a1625]/70"
-                                  : "text-white/70"
-                              )}
-                            >
-                              {snapshot.label}
-                            </div>
-                            <div
-                              className={cn(
-                                "mt-1 text-[10px] tabular-nums",
-                                isLight
-                                  ? "text-[#1a1625]/30"
-                                  : "text-white/30"
-                              )}
-                            >
-                              {new Date(snapshot.createdAt).toLocaleString(
-                                "zh-CN"
-                              )}{" "}
-                              · 端口 {snapshot.port}
-                            </div>
-                          </div>
-                          <div className="flex flex-shrink-0 items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onRestoreSnapshot(snapshot);
-                                setManageTab("launch");
-                              }}
-                              className={cn(
-                                "motion-control rounded-lg px-2.5 py-1.5 text-[10px] font-medium",
-                                isLight
-                                  ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
-                                  : "text-white/55 hover:text-white/80"
-                              )}
-                            >
-                              恢复
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onDeleteSnapshot(mp.id, snapshot.id)
-                              }
-                              className={cn(
-                                "motion-control rounded-lg px-2.5 py-1.5 text-[10px] font-medium",
-                                isLight
-                                  ? "text-red-900/45 hover:text-red-900/75"
-                                  : "text-red-300/45 hover:text-red-200/75"
-                              )}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                          修改密码
+                        </button>
+                      )}
+                      <ToggleSwitch
+                        on={hasPassword || isConfiguringPassword}
+                        onChange={(checked) => {
+                          if (checked) {
+                            setIsConfiguringPassword(true);
+                            setPasswordMode("set");
+                            setPasswordOld("");
+                            setPasswordNew("");
+                            setPasswordConfirm("");
+                            setPasswordError(null);
+                            setPasswordSuccess(null);
+                          } else {
+                            if (hasPassword) {
+                              setIsConfiguringPassword(true);
+                              setPasswordMode("clear");
+                              setPasswordOld("");
+                              setPasswordError(null);
+                              setPasswordSuccess(null);
+                            } else {
+                              setIsConfiguringPassword(false);
+                            }
+                          }
+                        }}
+                        isLight={isLight}
+                      />
                     </div>
-                  )}
-                </div>
+                  </ManageItem>
+
+                  <div
+                    className={cn(
+                      "motion-accordion",
+                      isConfiguringPassword && "is-open"
+                    )}
+                    aria-hidden={!isConfiguringPassword}
+                    inert={!isConfiguringPassword}
+                  >
+                    <div className="motion-accordion-inner">
+                      <div className="pt-3 space-y-2">
+                        {passwordMode === "set" ? (
+                          <>
+                            {hasPassword && (
+                              <input
+                                type="password"
+                                value={passwordOld}
+                                onChange={(e) => {
+                                  setPasswordOld(e.target.value);
+                                  if (passwordError) setPasswordError(null);
+                                }}
+                                placeholder="原访问密码"
+                                autoComplete="current-password"
+                                className={cn(
+                                  "w-full h-8 px-3 rounded-xl border text-xs focus:outline-none focus:ring-0 transition-colors",
+                                  isLight
+                                    ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625] placeholder:text-[#1a1625]/25"
+                                    : "bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/25"
+                                )}
+                              />
+                            )}
+                            <input
+                              type="password"
+                              value={passwordNew}
+                              onChange={(e) => {
+                                setPasswordNew(e.target.value);
+                                if (passwordError) setPasswordError(null);
+                              }}
+                              placeholder={hasPassword ? "新访问密码" : "设置访问密码"}
+                              autoComplete="new-password"
+                              className={cn(
+                                "w-full h-8 px-3 rounded-xl border text-xs focus:outline-none focus:ring-0 transition-colors",
+                                isLight
+                                  ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625] placeholder:text-[#1a1625]/25"
+                                  : "bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/25"
+                              )}
+                            />
+                            <input
+                              type="password"
+                              value={passwordConfirm}
+                              onChange={(e) => {
+                                setPasswordConfirm(e.target.value);
+                                if (passwordError) setPasswordError(null);
+                              }}
+                              placeholder="确认访问密码"
+                              autoComplete="new-password"
+                              className={cn(
+                                "w-full h-8 px-3 rounded-xl border text-xs focus:outline-none focus:ring-0 transition-colors",
+                                isLight
+                                  ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625] placeholder:text-[#1a1625]/25"
+                                  : "bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/25"
+                              )}
+                            />
+                          </>
+                        ) : (
+                          <input
+                            type="password"
+                            value={passwordOld}
+                            onChange={(e) => {
+                              setPasswordOld(e.target.value);
+                              if (passwordError) setPasswordError(null);
+                            }}
+                            placeholder="输入原密码以解除保护"
+                            autoComplete="current-password"
+                            className={cn(
+                              "w-full h-8 px-3 rounded-xl border text-xs focus:outline-none focus:ring-0 transition-colors",
+                              isLight
+                                ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625] placeholder:text-[#1a1625]/25"
+                                : "bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/25"
+                            )}
+                          />
+                        )}
+
+                        {passwordError && (
+                          <p className="text-[11px] text-red-500 font-medium">
+                            {passwordError}
+                          </p>
+                        )}
+                        {passwordSuccess && (
+                          <p className="text-[11px] text-emerald-500 font-medium">
+                            {passwordSuccess}
+                          </p>
+                        )}
+
+                        <div className="flex items-center justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsConfiguringPassword(false);
+                              setPasswordError(null);
+                              setPasswordSuccess(null);
+                            }}
+                            disabled={passwordSaving}
+                            className={cn(
+                              "motion-control h-7 px-3 rounded-lg text-xs font-medium border transition-colors",
+                              isLight
+                                ? "border-black/[0.08] text-[#1a1625]/60 hover:bg-black/5"
+                                : "border-white/[0.08] text-white/60 hover:bg-white/5"
+                            )}
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            disabled={passwordSaving}
+                            onClick={async () => {
+                              if (!instance) return;
+                              setPasswordSaving(true);
+                              setPasswordError(null);
+                              setPasswordSuccess(null);
+                              try {
+                                if (passwordMode === "set") {
+                                  const cleanNew = passwordNew.trim();
+                                  if (!cleanNew) {
+                                    setPasswordError("新密码不能为空");
+                                    setPasswordSaving(false);
+                                    return;
+                                  }
+                                  if (cleanNew !== passwordConfirm.trim()) {
+                                    setPasswordError("两次输入的密码不一致");
+                                    setPasswordSaving(false);
+                                    return;
+                                  }
+                                  if (hasPassword && !passwordOld.trim()) {
+                                    setPasswordError("请输入原密码");
+                                    setPasswordSaving(false);
+                                    return;
+                                  }
+                                  const res = await TarvenEnv.setInstancePassword({
+                                    instanceId: instance.installDir || instance.id,
+                                    password: cleanNew,
+                                    oldPassword: hasPassword ? passwordOld.trim() : undefined,
+                                  });
+                                  setHasPassword(res.hasPassword);
+                                  setIsConfiguringPassword(false);
+                                  setPasswordSuccess("密码设置成功");
+                                  onUpdateInstancePasswordStatus?.(instance.id, res.hasPassword);
+                                } else {
+                                  if (!passwordOld.trim()) {
+                                    setPasswordError("请输入原密码");
+                                    setPasswordSaving(false);
+                                    return;
+                                  }
+                                  await TarvenEnv.clearInstancePassword({
+                                    instanceId: instance.installDir || instance.id,
+                                    oldPassword: passwordOld.trim(),
+                                  });
+                                  setHasPassword(false);
+                                  setIsConfiguringPassword(false);
+                                  setPasswordSuccess("已解除密码保护");
+                                  onUpdateInstancePasswordStatus?.(instance.id, false);
+                                }
+                              } catch (err: any) {
+                                setPasswordError(err?.message || "操作失败");
+                              } finally {
+                                setPasswordSaving(false);
+                              }
+                            }}
+                            className={cn(
+                              "motion-control h-7 px-3.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40",
+                              passwordMode === "clear"
+                                ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                                : isLight
+                                  ? "bg-black text-white hover:bg-black/85"
+                                  : "bg-white text-[#14101e] hover:bg-white/90"
+                            )}
+                          >
+                            {passwordSaving
+                              ? "保存中..."
+                              : passwordMode === "clear"
+                                ? "确认解除"
+                                : hasPassword
+                                  ? "保存修改"
+                                  : "启用密码保护"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
               </div>
 
               {/* 存储 */}
@@ -1232,38 +1340,21 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
       {/* 底部按钮栏 */}
       <div
         className={cn(
-          "relative flex flex-shrink-0 items-center gap-2 border-t px-4 py-3",
+          "relative flex flex-shrink-0 items-center justify-end gap-2 border-t px-4 py-3",
           isLight ? "border-black/[0.06]" : "border-white/[0.06]"
         )}
       >
-        <button
-          type="button"
-          onClick={() => {
-            onClose();
-            onOpenNewInstanceWizard();
-          }}
-          className={cn(
-            "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
-            isLight
-              ? "bg-black/[0.05] text-[#1a1625]/50 hover:bg-black/[0.08]"
-              : "bg-white/[0.06] text-white/50 hover:bg-white/[0.10]"
-          )}
-        >
-          新建实例
-        </button>
         {manageSaveError && (
           <span
             className={cn(
-              "ml-auto max-w-[38%] text-[10px] leading-snug",
+              "mr-auto max-w-[38%] text-[10px] leading-snug",
               isLight ? "text-red-900/65" : "text-red-300/75"
             )}
           >
             {manageSaveError}
           </span>
         )}
-        <div
-          className={cn("flex items-center gap-2", !manageSaveError && "ml-auto")}
-        >
+        <div className="flex items-center gap-2">
           {manageTab === "launch" && (
             <button
               disabled={isSavingManagePanel}
@@ -1290,105 +1381,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
             <Play className="h-3 w-3" />
             {launchingId === mp.id ? "启动中" : "启动"}
           </button>
-          <div className="relative">
-            <button
-              type="button"
-              aria-expanded={manageMoreOpen}
-              onClick={() => setManageMoreOpen((open) => !open)}
-              className={cn(
-                "motion-control flex h-8 items-center gap-1.5 rounded-xl px-3 text-[11px] font-medium",
-                isLight
-                  ? "bg-black/[0.05] text-[#1a1625]/50 hover:bg-black/[0.08]"
-                  : "bg-white/[0.06] text-white/50 hover:bg-white/[0.10]"
-              )}
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" />
-              更多
-            </button>
-            {manageMoreOpen && (
-              <div
-                className={cn(
-                  "ios-floating-menu absolute bottom-10 right-0 z-10 w-32 overflow-hidden rounded-xl py-1 backdrop-blur-[32px]",
-                  glassBg,
-                  isLight && "is-light"
-                )}
-              >
-                {mp.type === "local" && onOpenMaintenance && (
-                  <button type="button" onClick={() => {
-                    setManageMoreOpen(false);
-                    onOpenMaintenance(mp);
-                  }} className={cn(
-                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
-                    isLight
-                      ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
-                      : "text-white/55 hover:text-white/80"
-                  )}>
-                    实例维护
-                  </button>
-                )}
-                {mp.type === "local" && onOpenRelocate && (
-                  <button type="button" onClick={() => {
-                    setManageMoreOpen(false);
-                    onOpenRelocate(mp);
-                  }} className={cn(
-                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
-                    isLight
-                      ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
-                      : "text-white/55 hover:text-white/80"
-                  )}>
-                    迁移目录
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManageMoreOpen(false);
-                    onClose();
-                    onTriggerRename(mp);
-                  }}
-                  className={cn(
-                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
-                    isLight
-                      ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
-                      : "text-white/55 hover:text-white/80"
-                  )}
-                >
-                  重命名
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManageMoreOpen(false);
-                    onPickCover(mp);
-                  }}
-                  className={cn(
-                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
-                    isLight
-                      ? "text-[#1a1625]/55 hover:text-[#1a1625]/80"
-                      : "text-white/55 hover:text-white/80"
-                  )}
-                >
-                  更换插图
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManageMoreOpen(false);
-                    onClose();
-                    onTriggerDelete(mp);
-                  }}
-                  className={cn(
-                    "motion-menu-item w-full px-3 py-2 text-left text-[11px]",
-                    isLight
-                      ? "text-red-900/50 hover:text-red-900/75"
-                      : "text-red-300/50 hover:text-red-200/75"
-                  )}
-                >
-                  删除实例
-                </button>
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>

@@ -288,6 +288,48 @@ export const nativePreview: TarvenEnvPlugin = {
       newPath: `D:\\Software\\AI\\Entertainment\\SillyClient\\instances\\${newId}`,
     };
   },
+  async setInstancePassword(options) {
+    record("setInstancePassword", options);
+    const existing = credentials.get(`pwd:${options.instanceId}`);
+    if (existing && options.oldPassword && options.oldPassword !== existing) {
+      throw new Error("原访问密码错误，无法更改或解除");
+    }
+    if (!options.password || !options.password.trim()) {
+      credentials.delete(`pwd:${options.instanceId}`);
+      return { success: true, hasPassword: false };
+    }
+    credentials.set(`pwd:${options.instanceId}`, options.password.trim());
+    return { success: true, hasPassword: true };
+  },
+  async verifyInstancePassword(options) {
+    record("verifyInstancePassword", options);
+    const existing = credentials.get(`pwd:${options.instanceId}`);
+    if (!existing) return { valid: true };
+    return { valid: options.password === existing };
+  },
+  async hasInstancePassword(options) {
+    record("hasInstancePassword", options);
+    return { hasPassword: credentials.has(`pwd:${options.instanceId}`) };
+  },
+  async clearInstancePassword(options) {
+    record("clearInstancePassword", options);
+    const existing = credentials.get(`pwd:${options.instanceId}`);
+    if (existing && options.oldPassword && options.oldPassword !== existing) {
+      throw new Error("原访问密码错误，无法解除密码保护");
+    }
+    credentials.delete(`pwd:${options.instanceId}`);
+    return { success: true };
+  },
+  async listInstancePasswordStatus() {
+    record("listInstancePasswordStatus", {});
+    const result: Record<string, boolean> = {};
+    for (const key of credentials.keys()) {
+      if (key.startsWith("pwd:")) {
+        result[key.slice(4)] = true;
+      }
+    }
+    return result;
+  },
 };
 
 export function installNativePreview() {

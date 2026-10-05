@@ -24,6 +24,7 @@ export const coversDir = path.join(tarvenHome, 'covers');
 export const tmpDir = path.join(tarvenHome, 'tmp');
 export const logsDir = path.join(tarvenHome, 'logs');
 export const instanceRegistryPath = path.join(tarvenHome, 'instances.json');
+export const instancePasswordsPath = path.join(tarvenHome, 'instance-passwords.json');
 
 /**
  * 软件根目录：

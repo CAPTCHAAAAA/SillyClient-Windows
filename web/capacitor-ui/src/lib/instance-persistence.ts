@@ -133,6 +133,9 @@ function normalizeInstance(value: unknown, resetStatus: boolean): StoredInstance
       result.pendingTavernGestureHint = true;
     }
   }
+  if (typeof input.hasPassword === "boolean") {
+    result.hasPassword = input.hasPassword;
+  }
   return result;
 }
 
