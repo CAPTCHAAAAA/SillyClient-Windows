@@ -251,6 +251,10 @@ export async function handle(method: string, options: any): Promise<any> {
       return { success: true };
     case 'fetchReleases':
       return fetchReleases();
+    case 'getAppSettings':
+      return paths.getAppSettings();
+    case 'setInstancesRoot':
+      return paths.setInstancesRoot(options);
     case 'pickDirectory':
       return doPickDirectory(options);
     case 'pickImage':

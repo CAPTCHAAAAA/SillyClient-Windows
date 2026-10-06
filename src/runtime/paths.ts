@@ -38,12 +38,43 @@ export const appRootDir = ((): string => {
   return path.resolve(__dirname, '..', '..');
 })();
 
-/**
- * 默认实例存储目录：
- * 统一置于软件运行根目录下的 instances/ 文件夹（不在 C 盘 AppData/Local 隐藏）
- * 若由于权限问题不可写，优雅回退至 tarvenHome/instances
- */
-export const appInstancesDir = ((): string => {
+export const appSettingsPath = path.join(tarvenHome, 'app-settings.json');
+
+export interface AppSettingsDocument {
+  instancesRoot?: string;
+}
+
+export function loadAppSettings(): AppSettingsDocument {
+  try {
+    if (fs.existsSync(appSettingsPath)) {
+      const parsed = JSON.parse(fs.readFileSync(appSettingsPath, 'utf8'));
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
+  } catch {
+    // Corrupt or unreadable file falls back to empty defaults
+  }
+  return {};
+}
+
+export function saveAppSettings(doc: AppSettingsDocument): void {
+  const content = JSON.stringify(doc, null, 2);
+  if (!fs.existsSync(tarvenHome)) fs.mkdirSync(tarvenHome, { recursive: true });
+  const staging = path.join(tarvenHome, `.sillyclient-settings-${Date.now()}.tmp`);
+  try {
+    fs.writeFileSync(staging, content, 'utf8');
+    fs.renameSync(staging, appSettingsPath);
+  } catch {
+    fs.writeFileSync(appSettingsPath, content, 'utf8');
+  } finally {
+    try {
+      if (fs.existsSync(staging)) fs.unlinkSync(staging);
+    } catch {
+      // Ignore
+    }
+  }
+}
+
+export function getDefaultInstancesRoot(): string {
   const dir = path.join(appRootDir, 'instances');
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -53,7 +84,81 @@ export const appInstancesDir = ((): string => {
     if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
     return fallback;
   }
-})();
+}
+
+export function getInstancesRoot(): string {
+  const settings = loadAppSettings();
+  const configured = settings.instancesRoot?.trim().replace(/^["']|["']$/g, '').trim();
+  if (configured && path.isAbsolute(configured)) {
+    try {
+      if (!fs.existsSync(configured)) fs.mkdirSync(configured, { recursive: true });
+      return configured;
+    } catch {
+      // If unwritable, fall back to default
+    }
+  }
+  return getDefaultInstancesRoot();
+}
+
+export function getAppSettings(): {
+  instancesRoot: string;
+  defaultInstancesRoot: string;
+  configuredInstancesRoot?: string;
+} {
+  const defaultRoot = getDefaultInstancesRoot();
+  const settings = loadAppSettings();
+  const configured = settings.instancesRoot?.trim().replace(/^["']|["']$/g, '').trim();
+  const activeRoot = getInstancesRoot();
+  return {
+    instancesRoot: activeRoot,
+    defaultInstancesRoot: defaultRoot,
+    ...(configured ? { configuredInstancesRoot: configured } : {}),
+  };
+}
+
+export function setInstancesRoot(options?: { path?: string }): {
+  instancesRoot: string;
+  configured: boolean;
+} {
+  const requested = options?.path?.trim()?.replace(/^["']|["']$/g, '').trim();
+  if (!requested) {
+    const settings = loadAppSettings();
+    delete settings.instancesRoot;
+    saveAppSettings(settings);
+    return {
+      instancesRoot: getDefaultInstancesRoot(),
+      configured: false,
+    };
+  }
+
+  if (!path.isAbsolute(requested)) {
+    throw new Error('存储路径必须使用本机绝对路径');
+  }
+  if (requested === path.parse(requested).root) {
+    throw new Error('不能把磁盘根目录直接设为实例存储路径');
+  }
+
+  try {
+    if (!fs.existsSync(requested)) fs.mkdirSync(requested, { recursive: true });
+  } catch (err: any) {
+    throw new Error(`无法创建指定的存储路径: ${err?.message || err}`);
+  }
+
+  const settings = loadAppSettings();
+  settings.instancesRoot = requested;
+  saveAppSettings(settings);
+
+  return {
+    instancesRoot: requested,
+    configured: true,
+  };
+}
+
+/**
+ * 默认实例存储目录（兼容既有代码访问）：
+ * 优先读取配置的实例存储根，回退至软件运行根目录下的 instances/ 文件夹
+ */
+export const appInstancesDir = getDefaultInstancesRoot();
 
 export function normalizeInstanceId(instanceId: string): string {
   return instanceId
@@ -104,12 +209,12 @@ export function serverDirFor(instanceId: string, installPath?: string, installPa
     return resolved;
   }
   // 未指定路径时的默认路径：
-  // 严格保存在软件根目录下的 instances/ 文件夹内，绝不默认写入 C 盘 AppData
-  return path.join(appInstancesDir, safeId);
+  // 严格保存在默认实例根目录（默认软件根目录下的 instances/，或用户在设置中自定义的存储根）
+  return path.join(getInstancesRoot(), safeId);
 }
 
 export function ensureDirs(): void {
-  for (const d of [tarvenHome, bootstrapDir, usrDir, coversDir, tmpDir, logsDir, appInstancesDir]) {
+  for (const d of [tarvenHome, bootstrapDir, usrDir, coversDir, tmpDir, logsDir, getInstancesRoot()]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
   const serversDir = path.join(bootstrapDir, 'servers');

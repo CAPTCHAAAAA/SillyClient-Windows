@@ -183,6 +183,12 @@ export interface TarvenEnvPlugin {
     installPathMode?: InstallPathMode
   }>
 
+  /** 读取应用级设置；instancesRoot 为当前默认实例存储根（实例是其直接子目录）。 */
+  getAppSettings(): Promise<{ instancesRoot: string; defaultInstancesRoot: string; configuredInstancesRoot?: string }>
+
+  /** 设置默认实例存储根；path 留空恢复出厂默认。仅影响之后创建的实例。 */
+  setInstancesRoot(options?: { path?: string }): Promise<{ instancesRoot: string; configured: boolean }>
+
   /** 调用系统图片选择器,把图片复制到 covers/{instanceId},返回可加载的文件路径。 */
   pickImage(options: { instanceId: string }): Promise<{ path: string; url?: string }>
 

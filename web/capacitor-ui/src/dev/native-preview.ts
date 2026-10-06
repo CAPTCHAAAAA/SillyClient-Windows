@@ -135,6 +135,16 @@ export const nativePreview: TarvenEnvPlugin = {
   async returnToTavern() { record("returnToTavern"); },
   async getStatus() { record("getStatus"); return { ...status }; },
   async fetchReleases() { return { releases: [{ tag: "1.19.0", zipballUrl: "https://example.test/synthetic.zip", prerelease: false }] }; },
+  async getAppSettings() {
+    record("getAppSettings", {});
+    const instancesRoot = syntheticRoot();
+    return { instancesRoot, defaultInstancesRoot: instancesRoot };
+  },
+  async setInstancesRoot(options) {
+    record("setInstancesRoot", options ?? {});
+    const instancesRoot = options?.path || syntheticRoot();
+    return { instancesRoot, configured: Boolean(options?.path) };
+  },
   async pickDirectory(options) {
     record("pickDirectory", options);
     const selection = directorySelection === undefined ? {

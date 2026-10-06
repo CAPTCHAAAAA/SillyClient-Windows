@@ -1302,6 +1302,26 @@ test('server spawn error is handled without an unhandled error event', async (t)
   await proc.stopAllProcesses();
 });
 
+test('buildEnv normalizes case-insensitive PATH and auto-discovers Git without key collisions', (t) => {
+  const root = fixture(t);
+  const paths = pathsFor(root);
+  const proc = loader({ './paths': paths })('src/runtime/process.ts');
+
+  const env = proc.buildEnv({ EXTRA_TEST_KEY: 'ok' });
+  assert.equal(env.EXTRA_TEST_KEY, 'ok');
+  assert.equal(env.Path, undefined, 'Path must not exist when PATH is normalized');
+  assert.equal(env.path, undefined, 'path must not exist when PATH is normalized');
+  assert.ok(env.PATH, 'PATH must be defined');
+  assert.ok(env.PATH.startsWith('C:\\bundled'), 'Bundled node directory must be prepended to PATH');
+
+  // Verify that if Git is installed on this Windows host, its cmd directory is included in PATH
+  const progFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const gitCmd = path.join(progFiles, 'Git', 'cmd');
+  if (fs.existsSync(path.join(gitCmd, 'git.exe'))) {
+    assert.ok(env.PATH.toLowerCase().includes('git'), 'Git path must be present in PATH when installed');
+  }
+});
+
 test('line sink preserves UTF-8 across chunks and bounds unterminated lines', () => {
   const { createLineSink } = loader()('src/runtime/logs.ts');
   const lines = [];
@@ -1907,3 +1927,33 @@ test('actual four pinned archives install into a synthetic instance without exec
   await transaction.rollback();
   assert.ok(!fs.existsSync(path.join(server, 'data')));
 });
+
+test('getAppSettings and setInstancesRoot configure custom instances root and reset cleanly', (t) => {
+  const root = fixture(t);
+  const paths = loader({ electron: {} })('src/runtime/paths.ts');
+  const initial = paths.getAppSettings();
+  assert.ok(initial.instancesRoot);
+  assert.ok(initial.defaultInstancesRoot);
+
+  const customDir = path.join(root, 'custom-instances');
+  const configured = paths.setInstancesRoot({ path: customDir });
+  assert.equal(configured.configured, true);
+  assert.equal(configured.instancesRoot, customDir);
+  assert.ok(fs.existsSync(customDir));
+
+  const updated = paths.getAppSettings();
+  assert.equal(updated.instancesRoot, customDir);
+  assert.equal(updated.configuredInstancesRoot, customDir);
+
+  const targetDir = paths.serverDirFor('test-instance');
+  assert.equal(targetDir, path.join(customDir, 'test-instance'));
+
+  const reset = paths.setInstancesRoot({});
+  assert.equal(reset.configured, false);
+  assert.equal(reset.instancesRoot, initial.defaultInstancesRoot);
+
+  const afterReset = paths.getAppSettings();
+  assert.equal(afterReset.configuredInstancesRoot, undefined);
+  assert.equal(afterReset.instancesRoot, initial.defaultInstancesRoot);
+});
+

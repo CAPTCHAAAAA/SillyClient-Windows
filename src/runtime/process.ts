@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import * as path from 'node:path';
+import * as fs from 'node:fs';
 import { getNodeExe, getNpmCli, logsDir } from './paths';
 import { ProcessSupervisor } from './process-supervisor';
 import { checkSignal, delay, OperationCancelledError } from './operations';
@@ -12,13 +13,96 @@ const pendingLogs = new Set<Promise<void>>();
 const MAX_CAPTURE_LENGTH = 64 * 1024;
 const CMD_EXE = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
 
-function buildEnv(extra?: Record<string, string>): Record<string, string> {
+function getKnownGitDirs(): string[] {
+  const candidates: string[] = [];
+  const progFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const progFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const progW6432 = process.env.ProgramW6432 || 'C:\\Program Files';
+  const localApp = process.env.LOCALAPPDATA || (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local') : '');
+
+  candidates.push(
+    path.join(progFiles, 'Git', 'cmd'),
+    path.join(progW6432, 'Git', 'cmd'),
+    path.join(progFilesX86, 'Git', 'cmd'),
+  );
+  if (localApp) {
+    candidates.push(path.join(localApp, 'Programs', 'Git', 'cmd'));
+  }
+  return candidates;
+}
+
+function discoverGitDirs(existingPathEntries: string[]): string[] {
+  const hasGit = existingPathEntries.some((entry) => {
+    try {
+      return fs.existsSync(path.join(entry, 'git.exe'));
+    } catch {
+      return false;
+    }
+  });
+  if (hasGit) return [];
+
+  const found: string[] = [];
+  for (const candidate of getKnownGitDirs()) {
+    try {
+      if (fs.existsSync(path.join(candidate, 'git.exe'))) {
+        if (!existingPathEntries.some((e) => e.toLowerCase() === candidate.toLowerCase())) {
+          found.push(candidate);
+          break;
+        }
+      }
+    } catch {
+      // Ignore directory access errors
+    }
+  }
+  return found;
+}
+
+export function buildEnv(extra?: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;
   }
+
+  let existingPath = '';
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === 'path') {
+      if (!existingPath && env[key]) {
+        existingPath = env[key];
+      }
+      delete env[key];
+    }
+  }
+  if (!existingPath) {
+    existingPath = process.env.PATH || process.env.Path || '';
+  }
+
   const nodeDir = path.dirname(getNodeExe());
-  env.PATH = nodeDir + path.delimiter + (env.PATH || '');
+  const pathEntries = existingPath
+    .split(path.delimiter)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const discoveredGit = discoverGitDirs(pathEntries);
+  for (const gitDir of discoveredGit) {
+    pathEntries.push(gitDir);
+  }
+
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const system32 = path.join(systemRoot, 'System32');
+  if (!pathEntries.some((e) => e.toLowerCase() === system32.toLowerCase())) {
+    try {
+      if (fs.existsSync(system32)) pathEntries.push(system32);
+    } catch {
+      // Ignore
+    }
+  }
+
+  const finalPathEntries = [
+    nodeDir,
+    ...pathEntries.filter((p) => p.toLowerCase() !== nodeDir.toLowerCase()),
+  ];
+  env.PATH = finalPathEntries.join(path.delimiter);
+
   if (!env.npm_config_cache) {
     env.npm_config_cache = path.join(path.dirname(path.dirname(nodeDir)), 'usr', 'npm-cache');
   }
@@ -72,7 +156,12 @@ export function startServer(
   // Direct invocation leaves takeover scripts untouched and owns the real Node PID.
   const child = spawn(getNodeExe(), ['server.js', ...(options.args || ['--port', String(port)])], {
     cwd: serverDir,
-    env: buildEnv({ NODE_ENV: 'production', AUTO_LAUNCH: 'false', NO_BROWSER: 'true' }),
+    env: buildEnv({
+      NODE_ENV: 'production',
+      AUTO_LAUNCH: 'false',
+      NO_BROWSER: 'true',
+      SILLYTAVERN_GIT_BACKEND: process.env.SILLYTAVERN_GIT_BACKEND || 'auto',
+    }),
     shell: false,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
