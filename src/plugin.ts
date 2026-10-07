@@ -449,7 +449,7 @@ async function provisionInstance(opts: any, context: OperationContext): Promise<
     }
     const installationDirectory = stagingDirectory || targetServerDir;
     if (!fs.existsSync(path.join(installationDirectory, 'node_modules'))) {
-      progress(60, '安装依赖');
+      progress(60, '安装依赖（首次需1-3分钟）');
     }
     await ensureInstanceDependencies(installationDirectory, log, {
       signal: context.signal, isTakeover: record?.isTakeover,

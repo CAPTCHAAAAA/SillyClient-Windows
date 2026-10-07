@@ -115,6 +115,24 @@ export async function runNpmInstall(
   onLog: (msg: string, level?: string) => void,
   signal?: AbortSignal,
 ): Promise<void> {
+  const lockfile = path.join(cwd, 'package-lock.json');
+  if (fs.existsSync(lockfile)) {
+    try {
+      const lockText = fs.readFileSync(lockfile, 'utf8');
+      if (lockText.includes('../..') || lockText.includes('com.sillyclient')) {
+        onLog('检测到跨平台/失效依赖锁文件，已重置以确保原生依赖安装', 'info');
+        fs.rmSync(lockfile, { force: true });
+      }
+    } catch {
+      // Ignore read/cleanup errors
+    }
+  }
+  for (const orphan of ['.sillyclient-dependencies-pending', '.sillyclient-prebuilt-lib']) {
+    const orphanPath = path.join(cwd, orphan);
+    if (fs.existsSync(orphanPath)) {
+      try { fs.rmSync(orphanPath, { force: true }); } catch {}
+    }
+  }
   const args = [
     getNpmCli(), 'install', '--omit=dev',
     '--registry', 'https://registry.npmmirror.com', '--no-fund', '--no-audit',
@@ -122,9 +140,27 @@ export async function runNpmInstall(
   for (let attempt = 1; attempt <= 3; attempt++) {
     checkSignal(signal);
     onLog(`npm install (${attempt}/3)`);
+    onLog('正在从镜像源安装依赖（首次安装或迁移约需 1-3 分钟，请耐心等待）...', 'info');
+    let elapsed = 0;
+    let heartbeat: NodeJS.Timeout | null = null;
+    const npmLog = (line: string, level?: string) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      if (/^npm (?:warn|notice|http|info)/i.test(trimmed)) {
+        onLog(trimmed, 'info');
+      } else if (/^npm ERR!/i.test(trimmed)) {
+        onLog(trimmed, 'error');
+      } else {
+        onLog(trimmed, level);
+      }
+    };
     try {
+      heartbeat = setInterval(() => {
+        elapsed += 10;
+        onLog(`依赖安装中（已耗时 ${elapsed}s，请耐心等待）...`, 'info');
+      }, 10000);
       const result = await runProcess(getNodeExe(), args, {
-        cwd, timeout: 600000, signal, onLog,
+        cwd, timeout: 600000, signal, onLog: npmLog,
       });
       checkSignal(signal);
       if (result.code === 0) {
@@ -137,6 +173,8 @@ export async function runNpmInstall(
       checkSignal(signal);
       if (error?.name === 'ProcessTerminationError') throw error;
       onLog(`npm install failed: ${error.message}`, 'error');
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
     }
     if (attempt < 3) await delay(2000, signal);
   }

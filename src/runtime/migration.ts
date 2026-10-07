@@ -7,6 +7,11 @@ import { unzipToDir } from './utils';
 
 function forbidden(segments: string[], includeSecrets: boolean): boolean {
   return segments.some((segment) => ['.git', 'node_modules', '.cache'].includes(segment)
+    || segment.startsWith('.sillyclient-stage-')
+    || segment.startsWith('.sillyclient-migration-')
+    || segment.startsWith('.sillyclient-dependencies-')
+    || segment === '.sillyclient-dependencies-pending'
+    || segment === '.sillyclient-prebuilt-lib'
     || (!includeSecrets && ['secrets.json', 'secrets.json.enc'].includes(segment)));
 }
 
@@ -224,6 +229,23 @@ export async function copyMigration(
     }
     if (!validServer(staging)) throw new Error('Migration source does not contain a complete server');
     checkSignal(options.signal);
+    const lockfilePath = path.join(staging, 'package-lock.json');
+    if (fs.existsSync(lockfilePath)) {
+      try {
+        const lockText = await fs.promises.readFile(lockfilePath, 'utf8');
+        if (lockText.includes('../..') || lockText.includes('com.sillyclient')) {
+          await fs.promises.rm(lockfilePath, { force: true });
+        }
+      } catch {
+        // Ignore read/cleanup errors
+      }
+    }
+    for (const orphan of ['.sillyclient-dependencies-pending', '.sillyclient-prebuilt-lib']) {
+      const orphanPath = path.join(staging, orphan);
+      if (fs.existsSync(orphanPath)) {
+        try { await fs.promises.rm(orphanPath, { force: true }); } catch {}
+      }
+    }
     if (fs.existsSync(resolvedTarget)) throw new Error('Migration target appeared while preparing the copy');
     contentIdentity = await directoryContentIdentity(staging, options.signal, options.ownershipBounds);
     checkSignal(options.signal);
