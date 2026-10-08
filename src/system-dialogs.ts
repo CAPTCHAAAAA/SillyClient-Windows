@@ -107,3 +107,23 @@ export async function pickZipFileDialog(
   const stat = fs.statSync(p);
   return { path: p, sizeBytes: stat.size };
 }
+
+export async function pickSaveZipFileDialog(
+  window: BrowserWindow | null,
+  defaultFileName: string,
+): Promise<{ canceled: boolean; filePath?: string }> {
+  if (!window || window.isDestroyed()) return { canceled: true };
+
+  const result = await dialog.showSaveDialog(window, {
+    title: '选择导出 ZIP 保存位置',
+    defaultPath: defaultFileName,
+    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+
+  return { canceled: false, filePath: result.filePath };
+}
+

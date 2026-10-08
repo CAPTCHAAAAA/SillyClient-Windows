@@ -44,7 +44,8 @@ import {
 } from './runtime/instance-import';
 
 // 引入解耦后的独立领域服务
-import { pickDirectoryDialog, pickImageDialog, pickZipFileDialog } from './system-dialogs';
+import { pickDirectoryDialog, pickImageDialog, pickZipFileDialog, pickSaveZipFileDialog } from './system-dialogs';
+import type { ExportInstanceParams, ExportInstanceResult } from './contracts/ipc-contracts';
 import { saveTextFileSafely, readTextFileSafely } from './file-system-ops';
 import { pingUrl } from './network-probe';
 import { fetchReleases } from './download-provision';
@@ -327,6 +328,24 @@ async function doMigrateInstance(options: any): Promise<{ success: boolean; inst
     (context) => migrateInstanceInternal({ ...options, preinstall }, context, notify));
 }
 
+async function handleExportInstance(options: ExportInstanceParams): Promise<ExportInstanceResult> {
+  let targetZipPath = options?.targetZipPath;
+  if (!targetZipPath && mainWindow && !mainWindow.isDestroyed()) {
+    const directory = resolveInstanceDir(options.instanceId, options.installPath);
+    const baseName = path.basename(directory);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const defaultName = `${baseName}-${stamp}.zip`;
+    const dialogRes = await pickSaveZipFileDialog(mainWindow, defaultName);
+    if (dialogRes.canceled || !dialogRes.filePath) {
+      return { canceled: true, path: '', bytes: 0 };
+    }
+    targetZipPath = dialogRes.filePath;
+  }
+  return exportInstance({ ...options, targetZipPath });
+}
+
 // ---------------------------------------------------------------------------
 // IPC 处理入口 (Dispatcher)
 // ---------------------------------------------------------------------------
@@ -388,7 +407,7 @@ export async function handle(method: string, options: any): Promise<any> {
     case 'importInstanceData':
       return importInstanceData(options);
     case 'exportInstance':
-      return exportInstance(options);
+      return handleExportInstance(options);
     case 'saveTextFile':
       return saveTextFileSafely(mainWindow, options);
     case 'readTextFile':

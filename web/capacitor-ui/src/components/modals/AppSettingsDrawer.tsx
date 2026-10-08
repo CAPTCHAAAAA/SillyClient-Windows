@@ -52,14 +52,6 @@ function AppSettingsRow({
   );
 }
 
-function AppSettingsPlaceholder() {
-  return (
-    <div className="app-settings-row is-pending" aria-disabled="true">
-      <span className="app-settings-pending">敬请期待</span>
-    </div>
-  );
-}
-
 function AppSettingsLinkRow({
   label,
   desc,
@@ -269,19 +261,21 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
             inert={appSettingsTab !== "general"}
           >
             <div className="app-settings-list space-y-1">
-              <AppSettingsRow
-                label="下拉刷新"
-                desc="在酒馆界面顶部下拉即可刷新"
-              >
-                <ToggleSwitch
-                  on={pullToRefresh}
-                  onChange={(v) => {
-                    setPullToRefresh(v);
-                    TarvenEnv.setPullToRefresh({ enabled: v }).catch(() => {});
-                  }}
-                  isLight={isLight}
-                />
-              </AppSettingsRow>
+              {!isWindows && (
+                <AppSettingsRow
+                  label="下拉刷新"
+                  desc="在酒馆界面顶部下拉即可刷新"
+                >
+                  <ToggleSwitch
+                    on={pullToRefresh}
+                    onChange={(v) => {
+                      setPullToRefresh(v);
+                      TarvenEnv.setPullToRefresh({ enabled: v }).catch(() => {});
+                    }}
+                    isLight={isLight}
+                  />
+                </AppSettingsRow>
+              )}
               {isWindows && (
                 <AppSettingsRow
                   label="系统浏览器"
@@ -308,7 +302,6 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                 desc="再次查看 SillyClient 的使用说明"
                 onClick={replayOnboarding}
               />
-              <AppSettingsPlaceholder />
             </div>
           </div>
 
@@ -417,7 +410,6 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                 desc="查看安装包、更新说明与项目动态"
                 onClick={openProjectPage}
               />
-              <AppSettingsPlaceholder />
             </div>
           </div>
         </div>

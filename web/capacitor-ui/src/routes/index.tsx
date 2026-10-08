@@ -1943,19 +1943,17 @@ function SillyClientLauncher() {
         if (TarvenEnv.checkLegacyInstances) {
           TarvenEnv.checkLegacyInstances()
             .then(({ instances }) => {
-              setLegacyMigrationList(instances || []);
-              setShowLegacyMigration(true);
-              setIsLegacyMigrationClosing(false);
+              if (instances && instances.length > 0) {
+                setLegacyMigrationList(instances);
+                setShowLegacyMigration(true);
+                setIsLegacyMigrationClosing(false);
+              } else {
+                localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+              }
             })
             .catch(() => {
-              setLegacyMigrationList([]);
-              setShowLegacyMigration(true);
-              setIsLegacyMigrationClosing(false);
+              localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
             });
-        } else {
-          setLegacyMigrationList([]);
-          setShowLegacyMigration(true);
-          setIsLegacyMigrationClosing(false);
         }
       }, 150);
     }
@@ -2004,24 +2002,22 @@ function SillyClientLauncher() {
       setShowWhatsNew(false);
       setIsWhatsNewClosing(false);
 
-      // 公告关闭后，弹出旧版路径实例迁移向导 (无论是否有需要迁移的实例均弹出，空则展示优雅空态供审查)
+      // 公告关闭后，检测是否存在需要迁移的旧版路径实例，若有则弹出向导
       if (isWindows) {
         if (TarvenEnv.checkLegacyInstances) {
           TarvenEnv.checkLegacyInstances()
             .then(({ instances }) => {
-              setLegacyMigrationList(instances || []);
-              setShowLegacyMigration(true);
-              setIsLegacyMigrationClosing(false);
+              if (instances && instances.length > 0) {
+                setLegacyMigrationList(instances);
+                setShowLegacyMigration(true);
+                setIsLegacyMigrationClosing(false);
+              } else {
+                localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+              }
             })
             .catch(() => {
-              setLegacyMigrationList([]);
-              setShowLegacyMigration(true);
-              setIsLegacyMigrationClosing(false);
+              localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
             });
-        } else {
-          setLegacyMigrationList([]);
-          setShowLegacyMigration(true);
-          setIsLegacyMigrationClosing(false);
         }
       }
     }, PANEL_EXIT_MS);
@@ -2105,7 +2101,7 @@ function SillyClientLauncher() {
     }
   }, [showManagePanel]);
 
-  // 本版本更新后开屏弹窗检测：若无引导与公告，且本版本尚未展示过旧版迁移弹窗，则自动弹出（无旧实例时展示优雅空态供审查）
+  // 本版本更新后开屏弹窗检测：若无引导与公告，且本版本尚未展示过旧版迁移弹窗，仅在存在旧实例时弹出
   useEffect(() => {
     if (
       !showOnboarding &&
@@ -2116,19 +2112,17 @@ function SillyClientLauncher() {
       if (TarvenEnv.checkLegacyInstances) {
         TarvenEnv.checkLegacyInstances()
           .then(({ instances }) => {
-            setLegacyMigrationList(instances || []);
-            setShowLegacyMigration(true);
-            setIsLegacyMigrationClosing(false);
+            if (instances && instances.length > 0) {
+              setLegacyMigrationList(instances);
+              setShowLegacyMigration(true);
+              setIsLegacyMigrationClosing(false);
+            } else {
+              localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+            }
           })
           .catch(() => {
-            setLegacyMigrationList([]);
-            setShowLegacyMigration(true);
-            setIsLegacyMigrationClosing(false);
+            localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
           });
-      } else {
-        setLegacyMigrationList([]);
-        setShowLegacyMigration(true);
-        setIsLegacyMigrationClosing(false);
       }
     }
   }, [showOnboarding, showWhatsNew, isWindows]);

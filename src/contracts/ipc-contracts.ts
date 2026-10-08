@@ -471,11 +471,13 @@ export interface ImportInstanceDataResult {
 export interface ExportInstanceParams {
   instanceId: string;
   installPath?: string;
+  targetZipPath?: string;
 }
 
 export interface ExportInstanceResult {
   path: string;
   bytes: number;
+  canceled?: boolean;
 }
 
 export interface SetInstancePasswordParams {

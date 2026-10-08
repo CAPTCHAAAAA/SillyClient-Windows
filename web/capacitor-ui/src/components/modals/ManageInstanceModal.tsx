@@ -1217,19 +1217,23 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                             isLight ? "text-[#1a1625]/30" : "text-white/30"
                           )}
                         >
-                          {exportStatus || "打包到 下载/SillyClient-导出，随时可在文件管理器查看"}
+                          {exportStatus || "自选保存位置导出为 ZIP 压缩包，方便迁移与备份"}
                         </div>
                       </div>
                       <button
                         type="button"
-                        disabled={exportStatus === "正在打包…"}
+                        disabled={exportStatus === "正在打包…" || exportStatus === "请选择保存位置…"}
                         onClick={async () => {
-                          setExportStatus("正在打包…");
+                          setExportStatus("请选择保存位置…");
                           try {
                             const res = await TarvenEnv.exportInstance({
                               instanceId: mp.installDir || mp.id,
                               installPath: mp.installPath,
                             });
+                            if (res.canceled) {
+                              setExportStatus(null);
+                              return;
+                            }
                             const name = res.path.split(/[/\\\\]/).pop() || res.path;
                             setExportStatus(`已导出：${name}`);
                           } catch (error) {

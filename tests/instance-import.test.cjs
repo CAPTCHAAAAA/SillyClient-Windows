@@ -113,4 +113,23 @@ test('instance-import unit tests', async (t) => {
     // Cleanup exported file
     try { fs.rmSync(result.path, { force: true }); } catch {}
   });
+
+  await t.test('exportInstance writes to custom targetZipPath when specified', async () => {
+    const customZipPath = path.join(tmpDir, 'custom-exports', 'my-custom-backup.zip');
+    const result = await exportInstance({
+      instanceId: 'test-inst',
+      installPath: instanceDir,
+      targetZipPath: customZipPath,
+    });
+
+    assert.equal(result.path, customZipPath);
+    assert.ok(result.bytes > 0);
+    assert.equal(fs.existsSync(customZipPath), true);
+
+    const expZip = new AdmZip(customZipPath);
+    const expEntries = expZip.getEntries().map((e) => e.entryName.replace(/\\/g, '/'));
+    assert.ok(expEntries.includes('server.js'));
+    assert.ok(expEntries.some((e) => e.startsWith('data/')));
+  });
 });
+

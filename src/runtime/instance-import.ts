@@ -306,23 +306,29 @@ export async function importInstanceData(options: {
 export async function exportInstance(options: {
   instanceId: string;
   installPath?: string;
+  targetZipPath?: string;
   signal?: AbortSignal;
-}): Promise<{ path: string; bytes: number }> {
+}): Promise<{ path: string; bytes: number; canceled?: boolean }> {
   checkSignal(options.signal);
   const directory = resolveInstanceDir(options.instanceId, options.installPath);
   if (!fs.existsSync(directory) || !fs.existsSync(path.join(directory, 'server.js'))) {
     throw new Error('实例目录不存在或尚未完成安装');
   }
 
-  const downloadsDir = path.join(os.homedir(), 'Downloads');
-  const targetDir = path.join(downloadsDir, 'SillyClient-导出');
-  await fs.promises.mkdir(targetDir, { recursive: true });
+  let zipFile = options.targetZipPath;
+  if (!zipFile) {
+    const downloadsDir = path.join(os.homedir(), 'Downloads');
+    const targetDir = path.join(downloadsDir, 'SillyClient-导出');
+    await fs.promises.mkdir(targetDir, { recursive: true });
 
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const baseName = path.basename(directory);
-  const zipFile = path.join(targetDir, `${baseName}-${stamp}.zip`);
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const baseName = path.basename(directory);
+    zipFile = path.join(targetDir, `${baseName}-${stamp}.zip`);
+  } else {
+    await fs.promises.mkdir(path.dirname(zipFile), { recursive: true });
+  }
 
   const zip = new AdmZip();
 
