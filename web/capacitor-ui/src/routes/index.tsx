@@ -17,9 +17,9 @@ import { cn, normalizeStoredVersion, formatDisplayVersion } from "@/lib/utils";
 import { Capacitor } from "@capacitor/core";
 import { TarvenEnv, DEFAULT_CONFIG } from "@/capacitor-plugin";
 import { openExternalUrl } from "@/lib/external-links";
-import type { AppUpdateInfo, CompanionPresetSelection, ContentOpenMode, InstanceConfig, InstallPathMode, GithubRelease, GarbageItem, TarvenEvent, PreinstalledExtensionId } from "@/capacitor-plugin";
+import type { AppUpdateInfo, CompanionPresetSelection, ContentOpenMode, InstanceConfig, InstallPathMode, GithubRelease, GarbageItem, TarvenEvent, PreinstalledExtensionId, InstanceRelocationResult } from "@/capacitor-plugin";
 import { buildInstanceSubfolder, cleanInstallPath, exactInstallTarget, installationSelection, sanitizeFolderName } from "@/lib/install-location";
-import { normalizeStoredInstances, serializeInstanceRecords, parseInstanceBackup, type StoredInstance } from "@/lib/instance-persistence";
+import { normalizeStoredInstances, serializeInstanceRecords, type StoredInstance } from "@/lib/instance-persistence";
 import { GLOBAL_LOG_KEY, instanceLogs, type LogLine } from "@/lib/log-store";
 import { OperationCoordinator, OperationCancelledError, type OperationContext } from "@/lib/operation-coordinator";
 import { APP_VERSION } from "@/constants/app-version";
@@ -32,7 +32,7 @@ import { LAYERS } from "@/constants/layers";
 import { useLayerStack } from "@/hooks/useLayerStack";
 import { LayerBackdrop } from "@/components/common/LayerBackdrop";
 import { InstanceCarousel, type InstanceCarouselRef } from "@/components/instance/InstanceCarousel";
-import { NewInstanceWizardModal } from "@/components/modals/NewInstanceWizardModal";
+import { NewInstanceWizardModal, type WizardMode } from "@/components/modals/NewInstanceWizardModal";
 import { ManageInstanceModal } from "@/components/modals/ManageInstanceModal";
 import { InstanceMaintenancePanel } from "@/components/modals/InstanceMaintenancePanel";
 import { BackgroundSettingsDrawer } from "@/components/modals/BackgroundSettingsDrawer";
@@ -78,11 +78,6 @@ function hydrateInstance(t: StoredInstance): TavernInstance {
   };
 }
 
-function mergeInstanceBackup(existing: TavernInstance[], incoming: StoredInstance[]) {
-  const map = new Map(existing.map(instance => [instance.id, instance]));
-  for (const item of incoming) map.set(item.id, hydrateInstance(item));
-  return Array.from(map.values());
-}
 
 /** 从 localStorage 读取已持久化的实例列表;版本不匹配时清空旧数据。 */
 function loadInstances(): TavernInstance[] {
@@ -242,7 +237,6 @@ function SillyClientLauncher() {
   const [terminalFontSize, setTerminalFontSize] = useState(12);
   const operations = useMemo(() => new OperationCoordinator(), []);
   const [launchLogKey, setLaunchLogKey] = useState<string | null>(null);
-  const lastMigration = useRef<Parameters<typeof TarvenEnv.migrateInstance>[0] | null>(null);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [launchProgress, setLaunchProgress] = useState<{ pct: number; text: string } | null>(null);
   const [showLaunchPanel, setShowLaunchPanel] = useState(false);
@@ -296,12 +290,12 @@ function SillyClientLauncher() {
   const [manageMoreOpen, setManageMoreOpen] = useState(false);
   const [showAppMenu, setShowAppMenu] = useState(false);
   const [isAppMenuClosing, setIsAppMenuClosing] = useState(false);
-  const [appSettingsTab, setAppSettingsTab] = useState<"general" | "data" | "maintenance">("general");
+  const [appSettingsTab, setAppSettingsTab] = useState<"general" | "maintenance">("general");
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [activeSlide, setActiveSlide] = useState(0);
   const [showNewInstancePanel, setShowNewInstancePanel] = useState(false);
   const [isNewInstancePanelClosing, setIsNewInstancePanelClosing] = useState(false);
-  const [newInstanceMode, setNewInstanceMode] = useState<"local" | "remote" | "import">("local");
+  const [newInstanceMode, setNewInstanceMode] = useState<WizardMode>("local");
   const [newInstanceName, setNewInstanceName] = useState("");
   const [newInstanceDir, setNewInstanceDir] = useState("");
   const [newInstancePathMode, setNewInstancePathMode] = useState<InstallPathMode>("exact");
@@ -310,12 +304,6 @@ function SillyClientLauncher() {
   const [newRemoteAuthEnabled, setNewRemoteAuthEnabled] = useState(false);
   const [newRemoteAuthUsername, setNewRemoteAuthUsername] = useState("");
   const [newRemoteAuthPassword, setNewRemoteAuthPassword] = useState("");
-  // Windows 数据迁移状态
-  const [migrationAccessMode, setMigrationAccessMode] = useState<"copy" | "takeover">("copy");
-  const [migrationSourcePath, setMigrationSourcePath] = useState("");
-  const [migrationIncludeSecrets, setMigrationIncludeSecrets] = useState(false);
-  const [migrationCustomDest, setMigrationCustomDest] = useState("");
-  const [migrationTargetPathMode, setMigrationTargetPathMode] = useState<InstallPathMode>("exact");
   const [newInstanceVersion, setNewInstanceVersion] = useState("stable");
   const [newInstanceCompanionPresetEnabled, setNewInstanceCompanionPresetEnabled] = useState(false);
   const [newInstanceExtensionIds, setNewInstanceExtensionIds] = useState<PreinstalledExtensionId[]>([]);
@@ -390,11 +378,6 @@ function SillyClientLauncher() {
   const [isLaunchMinimized, setIsLaunchMinimized] = useState(false);
   const [externallyRenamingId, setExternallyRenamingId] = useState<string | null>(null);
 
-  // 向导模式平滑过渡 (本地 / 远程)
-  const wizardLocalRef = useRef<HTMLDivElement>(null);
-  const wizardRemoteRef = useRef<HTMLDivElement>(null);
-  const [wizardHeight, setWizardHeight] = useState<number | undefined>(undefined);
-
   // 背景设置模式平滑过渡 (基础 / 自定义)
   const bgDynamicRef = useRef<HTMLDivElement>(null);
   const bgCustomRef = useRef<HTMLDivElement>(null);
@@ -414,8 +397,6 @@ function SillyClientLauncher() {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [isRenamingSaving, setIsRenamingSaving] = useState(false);
 
-  // 数据导入文件 ref
-  const importInputRef = useRef<HTMLInputElement>(null);
   // 管理面板 draftConfig/draftPort(保存前不写入 instances)
   const [draftConfig, setDraftConfig] = useState<InstanceConfig>(DEFAULT_CONFIG);
   const [draftPort, setDraftPort] = useState(8000);
@@ -523,10 +504,7 @@ function SillyClientLauncher() {
       if (typeof window !== "undefined" && window.location.search) {
         const params = new URLSearchParams(window.location.search);
         const wizardParam = params.get("wizard") || params.get("mode") || params.get("tab");
-        if (wizardParam === "import" || wizardParam === "migration") {
-          setNewInstanceMode("import");
-          setShowNewInstancePanel(true);
-        } else if (wizardParam === "1" || wizardParam === "local") {
+        if (wizardParam === "1" || wizardParam === "local") {
           setNewInstanceMode("local");
           setShowNewInstancePanel(true);
         } else if (wizardParam === "remote") {
@@ -711,7 +689,7 @@ function SillyClientLauncher() {
     themeSmoothingTimer.current = window.setTimeout(() => setThemeSmoothing(false), 1200);
   }, []);
 
-  const switchInstanceMode = useCallback((mode: "local" | "remote" | "import") => {
+  const switchInstanceMode = useCallback((mode: WizardMode) => {
     if (newInstanceMode === mode) return;
     setNewInstanceMode(mode);
   }, [newInstanceMode]);
@@ -719,7 +697,7 @@ function SillyClientLauncher() {
   useEffect(() => {
     directoryPickerGeneration.current += 1;
     return () => { directoryPickerGeneration.current += 1; };
-  }, [showNewInstancePanel, newInstanceMode, migrationAccessMode]);
+  }, [showNewInstancePanel, newInstanceMode]);
 
   const handleSetNewInstanceDir = useCallback((value: string) => {
     const clean = value.replace(/^["']|["']$/g, "").trim();
@@ -743,110 +721,6 @@ function SillyClientLauncher() {
       if (!/cancel/i.test(message)) setNewInstanceError(message);
     }
   }, []);
-
-  const handlePickTargetFolder = useCallback(async () => {
-    const generation = ++directoryPickerGeneration.current;
-    try {
-      if (typeof (window as any).migrationDebug?.choose === "function") {
-        const selected = await (window as any).migrationDebug.choose("target");
-        if (selected && generation === directoryPickerGeneration.current) {
-          const clean = String(selected).trim().replace(/^["']|["']$/g, "").trim();
-          setMigrationCustomDest(clean);
-          setMigrationTargetPathMode("exact");
-          setNewInstanceError(null);
-          return;
-        }
-      }
-      const selection = installationSelection(await TarvenEnv.pickDirectory({ purpose: "installation" }));
-      if (generation !== directoryPickerGeneration.current) return;
-      setMigrationCustomDest(selection.path);
-      setMigrationTargetPathMode(selection.mode);
-      setNewInstanceError(null);
-    } catch (error) {
-      if (generation !== directoryPickerGeneration.current) return;
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/cancel/i.test(message)) setNewInstanceError(message);
-    }
-  }, []);
-
-  const handlePickSourceFolder = useCallback(async () => {
-    const generation = ++directoryPickerGeneration.current;
-    try {
-      if (typeof (window as any).migrationDebug?.choose === "function") {
-        const selected = await (window as any).migrationDebug.choose("source");
-        if (selected && generation === directoryPickerGeneration.current) {
-          const clean = String(selected).trim().replace(/^["']|["']$/g, "").trim();
-          setMigrationSourcePath(clean);
-          setNewInstanceError(null);
-          return;
-        }
-      }
-      const { path } = await TarvenEnv.pickDirectory({ purpose: "source" });
-      if (generation !== directoryPickerGeneration.current) return;
-      if (path) {
-        const clean = String(path).trim().replace(/^["']|["']$/g, "").trim();
-        setMigrationSourcePath(clean);
-        setNewInstanceError(null);
-      }
-    } catch {
-      /* 用户取消 */
-    }
-  }, []);
-
-  const handlePickSourceZip = useCallback(async () => {
-    try {
-      if (typeof (window as any).migrationDebug?.choose === "function") {
-        const selected = await (window as any).migrationDebug.choose("zip");
-        if (selected) {
-          const clean = String(selected).trim().replace(/^["']|["']$/g, "").trim();
-          setMigrationSourcePath(clean);
-          setNewInstanceError(null);
-          return;
-        }
-      }
-      if (typeof (TarvenEnv as any).pickZipFile === "function") {
-        const { path } = await (TarvenEnv as any).pickZipFile();
-        if (path) {
-          const clean = String(path).trim().replace(/^["']|["']$/g, "").trim();
-          setMigrationSourcePath(clean);
-          setNewInstanceError(null);
-          return;
-        }
-      }
-    } catch {
-      /* 用户取消 */
-    }
-  }, []);
-
-  const handleSetMigrationSourcePath = useCallback((val: string) => {
-    setMigrationSourcePath(val);
-    setNewInstanceError(null);
-    directoryPickerGeneration.current += 1;
-  }, []);
-
-  const handleSetMigrationCustomDest = useCallback((val: string) => {
-    setMigrationCustomDest(val);
-    setMigrationTargetPathMode("exact");
-    setNewInstanceError(null);
-    directoryPickerGeneration.current += 1;
-  }, []);
-
-  // 向导容器自适应平滑高度测量
-  useEffect(() => {
-    const activeEl = newInstanceMode === "local" ? wizardLocalRef.current : wizardRemoteRef.current;
-    if (!activeEl) return;
-    setWizardHeight(activeEl.offsetHeight);
-
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        if (entry.target === activeEl) {
-          setWizardHeight(entry.target.clientHeight || entry.contentRect.height);
-        }
-      }
-    });
-    ro.observe(activeEl);
-    return () => ro.disconnect();
-  }, [newInstanceMode, newInstanceCompanionPresetEnabled, showNewInstancePanel, newRemoteAuthEnabled]);
 
   // 背景设置容器自适应平滑高度测量
   useEffect(() => {
@@ -1210,7 +1084,6 @@ function SillyClientLauncher() {
   const launchTavernDirect = useCallback(async (instance: TavernInstance) => {
     if (operations.busy) return;
     const operation = operations.begin(instance.installDir || instance.id, "launch");
-    lastMigration.current = null;
     setLaunchLogKey(operation.logKey);
     setLaunchingId(instance.id);
     if (instance.type === "local") {
@@ -1370,30 +1243,6 @@ function SillyClientLauncher() {
         }]);
   }, [doLaunch, isWeb, setLaunchLogs]);
 
-  const migrateCreatedInstance = useCallback(async (
-    instance: TavernInstance,
-    options: Parameters<typeof TarvenEnv.migrateInstance>[0],
-    operation: OperationContext,
-  ) => {
-    operation.assertCurrent();
-    setLaunchProgress({ pct: 20, text: "正在预检旧酒馆目录结构与数据完整性..." });
-    setLaunchLogs([{ msg: `【数据迁移】开始${options.mode === "takeover" ? "原地接管" : "复制迁移"}: ${options.sourcePath}`, level: "info" }]);
-    const result = await operation.wait(TarvenEnv.migrateInstance({ ...options, operationId: operation.id }));
-    if (result?.success !== true) throw new Error("数据迁移未成功，请检查来源文件是否完整");
-    const finalInstance = {
-      ...instance,
-      installPath: result.targetPath || options.targetPath || (options.mode === "takeover" ? options.sourcePath : instance.installPath),
-      installPathMode: "exact" as const,
-    };
-    setLastLaunchParams(finalInstance);
-    setLaunchProgress({ pct: 100, text: "数据迁移完成，实例已注册" });
-    setLaunchLogs(prev => [...prev, {
-      msg: options.mode === "takeover" ? "【成功】已原地接管目录，可随时启动运行。" : "【成功】旧酒馆数据复制迁移完成，可随时启动运行。",
-      level: "success",
-    }]);
-    setInstances(prev => prev.some(item => item.id === finalInstance.id) ? prev : [finalInstance, ...prev]);
-  }, [setLaunchLogs]);
-
   const createInstance = useCallback(async () => {
     if (operations.busy) return;
     const now = Date.now();
@@ -1436,7 +1285,6 @@ function SillyClientLauncher() {
     }
     const instanceId = candidateId;
     const operation = operations.begin(instanceId, "create");
-    lastMigration.current = null;
     setNewInstanceError(null);
     setIsCreatingInstance(true);
     let operationStarted = false;
@@ -1501,28 +1349,10 @@ function SillyClientLauncher() {
         if (!preflight.online) throw new Error(preflight.error || "远程实例当前不可访问");
       }
 
-      const cleanSourcePath = migrationSourcePath.trim().replace(/^["']|["']$/g, "").trim();
-      let cleanCustomDest: string | undefined = undefined;
-      if (newInstanceMode === "import") {
-        if (!cleanSourcePath) {
-          throw new Error("请选择或输入旧酒馆文件夹或 ZIP 备份包路径");
-        }
-        if (migrationAccessMode === "takeover") {
-          cleanCustomDest = cleanSourcePath;
-        } else {
-          const rawDest = cleanInstallPath(migrationCustomDest);
-          if (rawDest) {
-            cleanCustomDest = buildInstanceSubfolder(rawDest, instanceDisplayName);
-          }
-        }
-      }
+      const effectiveInstallPath = resolvedCustomPath || undefined;
 
-      const effectiveInstallPath = newInstanceMode === "import"
-        ? cleanCustomDest
-        : (resolvedCustomPath || undefined);
-
-      // 物理防覆盖预检：非原地接管模式下，目标目录不能与已有本地实例冲突
-      if (effectiveInstallPath && (newInstanceMode !== "import" || migrationAccessMode !== "takeover")) {
+      // 物理防覆盖预检：目标目录不能与已有本地实例冲突
+      if (effectiveInstallPath) {
         const normTarget = effectiveInstallPath.toLowerCase().replace(/[\\/]+$/, "");
         const conflictingInstance = instances.find(inst => {
           if (inst.type !== "local" || !inst.installPath) return false;
@@ -1533,22 +1363,17 @@ function SillyClientLauncher() {
         }
       }
 
-      const allowPreinstall = newInstanceMode === "local"
-        || (newInstanceMode === "import" && migrationAccessMode === "copy");
+      const allowPreinstall = newInstanceMode === "local";
 
       const instance: TavernInstance = {
         id: instanceId,
         name: "SillyTavern",
-        subtitle: newInstanceMode === "import"
-          ? (migrationAccessMode === "takeover" ? (rawGivenName || "原地接管酒馆") : (rawGivenName || "已迁移酒馆"))
-          : instanceDisplayName,
-        version: newInstanceMode === "import"
-          ? "local"
-          : (newInstanceLocalZip ? "local" : normalizeStoredVersion(selectedVersion)),
+        subtitle: instanceDisplayName,
+        version: newInstanceLocalZip ? "local" : normalizeStoredVersion(selectedVersion),
         type: newInstanceMode === "remote" ? "remote" : "local",
         status: newInstanceMode === "remote" ? "offline" : "stopped",
         icon: newInstanceMode === "remote" ? <Cloud className="w-5 h-5" /> : <Folder className="w-5 h-5" />,
-        color: newInstanceMode === "import" ? "#e11d48" : "#6366f1",
+        color: "#6366f1",
         createdAt: new Date().toISOString().slice(0, 10),
         lastUsed: "—",
         totalUsage: "0s",
@@ -1600,33 +1425,10 @@ function SillyClientLauncher() {
       setLaunchError(null);
       setLaunchProgress({
         pct: 0,
-        text: newInstanceMode === "import"
-          ? (migrationAccessMode === "takeover" ? "准备原地接管旧酒馆..." : "准备执行数据迁移...")
-          : newInstanceMode === "local"
-          ? "准备下载当前版本"
-          : "准备检查连接"
+        text: newInstanceMode === "local" ? "准备下载当前版本" : "准备检查连接"
       });
       setLaunchingId(instance.id);
       operationStarted = true;
-
-      if (newInstanceMode === "import") {
-        lastMigration.current = {
-          sourcePath: cleanSourcePath,
-          targetPath: migrationAccessMode === "copy" ? (effectiveInstallPath || undefined) : undefined,
-          instanceId: instance.installDir || instance.id,
-          mode: migrationAccessMode,
-          includeSecrets: migrationIncludeSecrets,
-          preinstall: instance.preinstall,
-        };
-        await migrateCreatedInstance(instance, lastMigration.current, operation);
-        setNewInstanceName("");
-        setMigrationSourcePath("");
-        setMigrationCustomDest("");
-        setMigrationTargetPathMode("exact");
-        setNewInstanceExtensionIds([]);
-        setNewInstanceCompanionPresetEnabled(false);
-        return;
-      }
 
       await provisionCreatedInstance(instance, operation);
       setNewInstanceName("");
@@ -1678,13 +1480,7 @@ function SillyClientLauncher() {
     newRemoteAuthEnabled,
     newRemoteAuthPassword,
     newRemoteAuthUsername,
-    migrationAccessMode,
-    migrationSourcePath,
-    migrationCustomDest,
-    migrationTargetPathMode,
-    migrationIncludeSecrets,
     provisionCreatedInstance,
-    migrateCreatedInstance,
     setLaunchLogs,
     releases,
   ]);
@@ -1702,11 +1498,7 @@ function SillyClientLauncher() {
     setLaunchingId(lastLaunchParams.id);
     try {
       if (operationPurpose === "create") {
-        if (lastMigration.current) {
-          await migrateCreatedInstance(lastLaunchParams, lastMigration.current, operation);
-        } else {
-          await provisionCreatedInstance(lastLaunchParams, operation);
-        }
+        await provisionCreatedInstance(lastLaunchParams, operation);
       } else if (lastLaunchParams.type === "remote") {
         await openRemoteInstance(lastLaunchParams, operation);
         setInstances(prev => prev.map(t => t.id === lastLaunchParams.id ? { ...t, status: "online" } : t));
@@ -1731,7 +1523,7 @@ function SillyClientLauncher() {
         setLaunchingId(null);
       }
     }
-  }, [lastLaunchParams, operationPurpose, doLaunch, openRemoteInstance, provisionCreatedInstance, migrateCreatedInstance, operations, setLaunchLogs]);
+  }, [lastLaunchParams, operationPurpose, doLaunch, openRemoteInstance, provisionCreatedInstance, operations, setLaunchLogs]);
 
   /** 终端拖拽调整大小(同时支持鼠标与触屏)。 */
   const startResize = (clientX: number, clientY: number) => {
@@ -2250,12 +2042,16 @@ function SillyClientLauncher() {
     }, PANEL_EXIT_MS);
   }, []);
 
-  const handleInstanceRelocated = useCallback((instanceId: string, newPath: string) => {
+  const handleInstanceRelocated = useCallback((previousId: string, result: InstanceRelocationResult) => {
+    const instanceId = result.instanceId;
+    const newPath = result.newPath;
     setInstances((prev) => {
       const updated = prev.map((inst) => {
-        if (inst.id === instanceId || inst.installDir === instanceId) {
+        if (inst.id === previousId || inst.installDir === previousId) {
           return {
             ...inst,
+            id: instanceId,
+            installDir: instanceId,
             installPath: newPath,
           };
         }
@@ -2266,9 +2062,11 @@ function SillyClientLauncher() {
     });
 
     setShowManagePanel((current) => {
-      if (current && (current.id === instanceId || current.installDir === instanceId)) {
+      if (current && (current.id === previousId || current.installDir === previousId)) {
         return {
           ...current,
+          id: instanceId,
+          installDir: instanceId,
           installPath: newPath,
         };
       }
@@ -2472,19 +2270,6 @@ function SillyClientLauncher() {
       )}
 
       <input ref={wallpaperInputRef} type="file" accept="image/*" className="hidden" onChange={handleWallpaperUpload} />
-      <input ref={importInputRef} type="file" accept=".json,application/json,text/plain" className="hidden" onChange={(e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            const incoming = parseInstanceBackup(String(reader.result));
-            setInstances(prev => mergeInstanceBackup(prev, incoming));
-          } catch (err) { console.error('[import]', err); }
-        };
-        reader.readAsText(file);
-        e.target.value = "";
-      }} />
 
       {/* 顶部导航 */}
       <header className="fixed left-0 right-0 z-50 px-4" style={{ top: `max(env(safe-area-inset-top), ${safeInsetTop + 4}px)` }}>
@@ -2722,7 +2507,6 @@ function SillyClientLauncher() {
             setNewInstanceName("");
             setNewInstanceDir("");
             setNewInstancePathMode("exact");
-            setMigrationTargetPathMode("exact");
             setNewInstanceUrl("http://");
             setNewRemoteAuthEnabled(false);
             setNewRemoteAuthUsername("");
@@ -2841,11 +2625,6 @@ function SillyClientLauncher() {
         replayOnboarding={replayOnboarding}
         instances={instances}
         setInstances={setInstances}
-        onImportBackup={content => {
-          const incoming = parseInstanceBackup(content);
-          setInstances(previous => mergeInstanceBackup(previous, incoming));
-        }}
-        importInputRef={importInputRef}
         appUpdateState={appUpdateState}
         appUpdateInfo={appUpdateInfo}
         checkForAppUpdate={checkForAppUpdate}
@@ -3039,25 +2818,6 @@ function SillyClientLauncher() {
         setNewRemoteAuthUsername={setNewRemoteAuthUsername}
         newRemoteAuthPassword={newRemoteAuthPassword}
         setNewRemoteAuthPassword={setNewRemoteAuthPassword}
-        migrationAccessMode={migrationAccessMode}
-        setMigrationAccessMode={setMigrationAccessMode}
-        migrationSourcePath={migrationSourcePath}
-        setMigrationSourcePath={handleSetMigrationSourcePath}
-        migrationIncludeSecrets={migrationIncludeSecrets}
-        setMigrationIncludeSecrets={setMigrationIncludeSecrets}
-        migrationCustomDest={migrationCustomDest}
-        setMigrationCustomDest={handleSetMigrationCustomDest}
-        onPickSourceFolder={handlePickSourceFolder}
-        onPickSourceZip={handlePickSourceZip}
-        onPickTargetFolder={handlePickTargetFolder}
-        migrationPreflight={
-          migrationSourcePath
-            ? {
-                version: "1.12.8",
-                nativePlugins: ["better-sqlite3", "sharp"],
-              }
-            : null
-        }
         newInstanceError={newInstanceError}
         isCreatingInstance={isCreatingInstance}
         createInstance={createInstance}

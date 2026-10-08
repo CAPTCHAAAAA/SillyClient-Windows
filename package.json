@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "npm run build && electron .",
     "check": "tsc --noEmit",
-    "test": "node --test tests/runtime-hardening.test.cjs",
+    "test": "node --test tests/runtime-hardening.test.cjs tests/instance-import.test.cjs",
     "build": "tsc",
     "pack": "npm run build && electron-builder --win",
     "prepare:runtime": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-NodeRuntime.ps1",

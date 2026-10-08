@@ -1691,6 +1691,25 @@ select option {
   transform: none;
 }
 
+/* 管理面板 Tab 行：整排内凹槽。
+   槽底 rgba(0,0,0,.32)/.04 取自 LaunchConsoleModal 日志区；内凹阴影取自
+   .ios-task-surface .ios-choice-control[aria-pressed="true"]。 */
+.manage-tab-strip {
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.11),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.035);
+}
+.ios-task-surface.is-light .manage-tab-strip {
+  background: rgba(0, 0, 0, 0.04);
+  box-shadow:
+    inset 0 1px 3px rgba(28, 18, 24, 0.065),
+    inset 0 -0.5px 0 rgba(255, 255, 255, 0.6);
+}
+.manage-tab-strip .ios-choice-control[aria-pressed="false"] {
+  box-shadow: none;
+}
+
 .ios-task-surface .ios-choice-control[aria-pressed="false"] {
   box-shadow:
     inset 0 0.5px 0 rgba(255, 255, 255, 0.07),

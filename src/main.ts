@@ -1,3 +1,10 @@
+/**
+ * SillyClient Windows - Electron 主进程宿主
+ *
+ * 状态：FROZEN（2026-10-09 起终态冻结，此路线为最完美解，严禁随意改动！）
+ * 详见权威冻结准则：docs/WINDOWS-BACKEND-ARCHITECTURE-FREEZE.md
+ */
+
 import {
   app, BrowserWindow, ipcMain, protocol, shell, Menu, session,
   type IpcMainInvokeEvent, type WebContents,
@@ -5,44 +12,17 @@ import {
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// Plugin and paths modules are implemented by separate sub-agents.
-// @ts-ignore — module './plugin' is created separately; suppresses resolution error until it exists.
-import * as pluginModule from './plugin';
-// @ts-ignore — module './runtime/paths' is created separately.
-import * as pathsModule from './runtime/paths';
+import * as plugin from './plugin';
+import * as paths from './runtime/paths';
 import { loadRemoteBasicAuth } from './remote-auth';
 import {
   decideLauncherNavigation, decideTavernNavigation, isLauncherUrl, parseHttpUrl,
   type NavigationDecision,
 } from './external-navigation';
-
-// ---------------------------------------------------------------------------
-// Module contracts (defensive: these modules are implemented by other agents)
-// ---------------------------------------------------------------------------
-
-interface PluginContract {
-  handle(method: string, options: any): Promise<any>;
-  setMainWindow?(win: BrowserWindow | null): void;
-  notify?(eventName: string, data: any): void;
-  isServerReady?(): boolean;
-  getCurrentUrl?(): string | null;
-  getCurrentInstanceId?(): string | null;
-  getCurrentOperationId?(): string | null;
-  canCloseTavern?(options?: { instanceId?: string; operationId?: string }): boolean;
-  stopCurrentServer?(options?: { instanceId?: string; operationId?: string }): Promise<void>;
-  cleanup?(): Promise<void>;
-}
-
-interface PathsContract {
-  getFrontendDistDir?(): string | null;
-  bootstrapDir?: string;
-  coversDir?: string;
-}
-
-type ContentOpenMode = 'webview' | 'browser';
-
-const plugin = pluginModule as unknown as PluginContract;
-const paths = pathsModule as unknown as PathsContract;
+import type {
+  ContentOpenMode,
+  GetStatusResult,
+} from './contracts/ipc-contracts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -127,7 +107,7 @@ function pushMode(mode: 'launcher' | 'tavern'): void {
 // ---------------------------------------------------------------------------
 
 function resolveFrontendDist(): string | null {
-  const fromPaths = paths.getFrontendDistDir?.() ?? null;
+  const fromPaths = paths.getFrontendDistDir();
   if (fromPaths && fs.existsSync(fromPaths)) return fromPaths;
   return null;
 }
@@ -379,11 +359,11 @@ function createMainWindow(): void {
   });
 
   mainWindow.on('closed', () => {
-    plugin.setMainWindow?.(null);
+    plugin.setMainWindow(null);
     mainWindow = null;
   });
 
-  plugin.setMainWindow?.(mainWindow);
+  plugin.setMainWindow(mainWindow);
 }
 
 // ---------------------------------------------------------------------------
@@ -556,16 +536,14 @@ async function clearTavernData(): Promise<void> {
   }
 }
 
-function getStatus(): {
-  mode: string; url: string | null; serverReady: boolean; instanceId?: string; operationId?: string;
-} {
-  const serverReady = plugin.isServerReady?.() ?? false;
+function getStatus(): GetStatusResult {
+  const serverReady = plugin.isServerReady();
   return {
     mode: tavernWindow ? 'tavern' : 'launcher',
-    url: serverReady ? plugin.getCurrentUrl?.() || null : currentTavernUrl,
+    url: serverReady ? plugin.getCurrentUrl() || null : currentTavernUrl,
     serverReady,
-    instanceId: serverReady ? plugin.getCurrentInstanceId?.() || undefined : undefined,
-    operationId: serverReady ? plugin.getCurrentOperationId?.() || undefined : undefined,
+    instanceId: serverReady ? plugin.getCurrentInstanceId() || undefined : undefined,
+    operationId: serverReady ? plugin.getCurrentOperationId() || undefined : undefined,
   };
 }
 
@@ -655,9 +633,9 @@ function registerIpc(): void {
         return { success: true };
 
       case 'returnToTavern': {
-        const url = currentTavernUrl || plugin.getCurrentUrl?.();
-        const instanceId = currentTavernInstanceId || plugin.getCurrentInstanceId?.();
-        if (!url || !plugin.isServerReady?.()) {
+        const url = currentTavernUrl || plugin.getCurrentUrl();
+        const instanceId = currentTavernInstanceId || plugin.getCurrentInstanceId();
+        if (!url || !plugin.isServerReady()) {
           throw new Error('当前没有正在运行的实例');
         }
         await enterImmersive(url, instanceId || undefined);
@@ -671,9 +649,9 @@ function registerIpc(): void {
         return { mode: saveContentOpenMode(options?.mode) };
 
       case 'closeTavern':
-        if (plugin.canCloseTavern?.(options) === false) return { success: true };
+        if (plugin.canCloseTavern(options) === false) return { success: true };
         exitImmersive();
-        await plugin.stopCurrentServer?.(options);
+        await plugin.stopCurrentServer(options);
         return { success: true };
 
       case 'reloadTavern':
@@ -738,7 +716,7 @@ async function cleanupBeforeQuit(): Promise<void> {
   tavernViewRevision++;
   stopTopColorPoll();
   destroyTavernWindow();
-  await plugin.cleanup?.();
+  await plugin.cleanup();
   cleanupCompleted = true;
 }
 

@@ -1,12 +1,18 @@
 # Windows 架构
 
+> **架构状态：FROZEN（2026-10-09 终态冻结）**  
+> 后端已完成钟表级纯净清洗与解耦，详见权威冻结准则：[WINDOWS-BACKEND-ARCHITECTURE-FREEZE.md](WINDOWS-BACKEND-ARCHITECTURE-FREEZE.md)。此分层路线已达最完美形态，**禁止随意更改架构路线**。
+
 Windows 客户端把共享 React 控制台放在管理窗口中，把 SillyTavern 放在独立阅读窗口中。两个窗口连接同一个本地 Node.js 服务。
 
 ```mermaid
 flowchart TD
-    UI["React 控制台"] --> Preload["preload / IPC"]
-    Preload --> Plugin["plugin.ts"]
-    Plugin --> Runtime["runtime/process.ts"]
+    UI["React 控制台"] --> Preload["preload.ts (Capacitor Shim)"]
+    Preload --> Main["main.ts (IPC 处理与窗口生命周期)"]
+    Main --> Contracts["contracts/ipc-contracts.ts (强类型契约)"]
+    Contracts --> Plugin["plugin.ts (Facade & Dispatcher)"]
+    Plugin --> Domains["自治领域服务 (port-finder, system-dialogs, file-ops, provision-workflow, ...)"]
+    Domains --> Runtime["runtime/ (底层基础设施: process, paths, instances, cleanup)"]
     Runtime --> Node["内置 node.exe"]
     Node --> Server["SillyTavern 实例"]
     Server --> Reader["独立 Electron 窗口"]
@@ -14,10 +20,12 @@ flowchart TD
 
 ## 边界
 
-- `main.ts` 只处理应用生命周期、协议和窗口。
-- `preload.ts` 暴露受控 IPC，不给页面直接的 Node.js 权限。
-- `plugin.ts` 实现共享 `TarvenEnv` 接口并推送进度、日志和状态。
-- `runtime/` 负责实例目录、下载、解压、依赖安装和子进程。
+- `main.ts` 只处理应用生命周期、协议和窗口视图，不包含业务实现；拔除历史弱类型断言。
+- `preload.ts` 暴露受控 IPC，通过强类型协议交互，不给页面直接的 Node.js 权限。
+- `contracts/ipc-contracts.ts` 严格规范 40+ 项强类型请求/响应契约，与前端 1:1 对齐。
+- `plugin.ts` 纯净门面与调度器（代码量严格受限在约 280 行），负责全局调度，不内联长业务。
+- 独立领域服务（`src/*.ts`）实现具体业务闭环，自治高内聚。
+- `runtime/` 负责实例目录、持久注册表、底层子进程与加密存储等基础设施。
 
 控制台关闭阅读窗口时不终止服务。进程生命周期由实例操作控制，窗口生命周期不能顺带删除实例数据。
 

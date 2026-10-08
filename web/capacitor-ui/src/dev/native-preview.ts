@@ -157,6 +157,26 @@ export const nativePreview: TarvenEnvPlugin = {
   },
   async pickImage() { return { path: "" }; },
   async pickZipFile() { return { path: "D:\\Synthetic\\backup.zip", sizeBytes: 1 }; },
+  async inspectImportArchive(options: { archivePath: string }) {
+    record("inspectImportArchive", options);
+    return {
+      importEntries: 12,
+      importBytes: 3_145_728,
+      skippedEntries: 240,
+      skippedBytes: 52_428_800,
+      hasSecrets: true,
+      hasConfig: true,
+      importable: true,
+    };
+  },
+  async importInstanceData(options: { instanceId: string; archivePath: string; includeOptional?: boolean }) {
+    record("importInstanceData", options);
+    return { imported: 12, bytes: 3_145_728, skipped: 240 };
+  },
+  async exportInstance(options: { instanceId: string; installPath?: string }) {
+    record("exportInstance", options);
+    return { path: `D:\\Downloads\\SillyClient-导出\\${options.instanceId}-synthetic.zip`, bytes: 1048576 };
+  },
   async saveTextFile(options) { record("saveTextFile", options); },
   async readTextFile() { return { content: '{"version":2,"instances":[]}', fileName: "synthetic.json" }; },
   async scanInstances() {

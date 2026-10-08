@@ -145,6 +145,23 @@ export interface PreinstallSelection {
 
 export type InstallPathMode = "root" | "exact"
 
+export interface LegacyInstanceLocation {
+  instanceId: string
+  name: string
+  currentPath: string
+  targetPath: string
+  version?: string
+}
+
+export interface InstanceRelocationResult {
+  success: boolean
+  instanceId: string
+  oldPath: string
+  newPath: string
+  unchanged?: boolean
+  retainedSourcePath?: string
+}
+
 export interface TarvenEnvPlugin {
   provisionAndStart(options: {
     port: number
@@ -174,7 +191,7 @@ export interface TarvenEnvPlugin {
   getStatus(): Promise<{ serverReady: boolean; mode: string; url?: string; instanceId?: string; operationId?: string }>
 
   /** 拉取 GitHub SillyTavern releases 列表。 */
-  fetchReleases(): Promise<{ releases: GithubRelease[] }>
+  fetchReleases(): Promise<{ releases: GithubRelease[]; warning?: string }>
 
   /** Installation selectors return an executable root; source selectors may return document URIs. */
   pickDirectory(options?: { purpose?: "installation" | "source" }): Promise<{
@@ -289,39 +306,22 @@ export interface TarvenEnvPlugin {
 
   /** 检测保存在旧版路径（如 C 盘 AppData）的待迁移实例 */
   checkLegacyInstances(): Promise<{
-    instances: Array<{
-      instanceId: string
-      name: string
-      currentPath: string
-      targetPath: string
-      version?: string
-    }>
+    instances: LegacyInstanceLocation[]
   }>
 
   /** 单个实例无损迁移 / 路径重定位 */
   relocateInstance(options: {
     instanceId: string
     targetPath?: string
-  }): Promise<{
-    success: boolean
-    instanceId: string
-    oldPath: string
-    newPath: string
-    unchanged?: boolean
-  }>
+    installPath?: string
+  }): Promise<InstanceRelocationResult>
 
   /** 一键批量无损迁移旧路径实例至当前客户端默认实例目录 */
   migrateLegacyInstances(options?: {
     instanceIds?: string[]
   }): Promise<{
     success: boolean
-    results: Array<{
-      success: boolean
-      instanceId: string
-      oldPath: string
-      newPath: string
-      unchanged?: boolean
-    }>
+    results: InstanceRelocationResult[]
   }>
 
   /** 重命名实例并同步修改底层物理存储文件夹与注册表 */
@@ -336,6 +336,29 @@ export interface TarvenEnvPlugin {
     oldPath: string
     newPath: string
   }>
+
+  /** 只读预检：压缩包里有多少用户数据会被导入、多少依赖/程序文件会被忽略。 */
+  inspectImportArchive(options: { archivePath: string }): Promise<{
+    importEntries: number
+    importBytes: number
+    skippedEntries: number
+    skippedBytes: number
+    hasSecrets: boolean
+    hasConfig: boolean
+    importable: boolean
+  }>
+
+  /** 把压缩包里的用户数据无损导入到已有实例：只覆盖用户数据，依赖与程序文件永不写入。 */
+  importInstanceData(options: {
+    instanceId: string
+    installPath?: string
+    archivePath: string
+    includeOptional?: boolean
+    operationId?: string
+  }): Promise<{ imported: number; bytes: number; skipped: number }>
+
+  /** 导出实例为 ZIP 到 Download/SillyClient-导出，返回保存路径与字节数。 */
+  exportInstance(options: { instanceId: string; installPath?: string }): Promise<{ path: string; bytes: number }>
 
   /** 设置或更新实例访问密码（本地安全开关） */
   setInstancePassword(options: {
