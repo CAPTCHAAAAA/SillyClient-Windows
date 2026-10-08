@@ -11,6 +11,7 @@ import { LayerBackdrop } from "../common/LayerBackdrop";
 import { TarvenEnv } from "../../capacitor-plugin";
 import type { TavernInstance } from "../../types";
 
+
 export interface RelocateInstanceModalProps {
   instance: TavernInstance | null;
   isOpen: boolean;
@@ -203,8 +204,8 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
               className={cn(
                 "p-1.5 rounded-lg transition-colors",
                 isLight
-                  ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                  : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                  ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                  : "text-white/40 hover:text-white/85"
               )}
               aria-label="关闭"
             >
@@ -270,38 +271,35 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                 <label className={cn("text-xs font-medium block", isLight ? "text-[#1a1625]/70" : "text-white/70")}>
                   目标位置
                 </label>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => handleSwitchMode("default")}
-                    aria-pressed={targetMode === "default"}
                     className={cn(
-                      "ios-choice-control motion-control flex-1 h-9 rounded-xl text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                      "ios-choice-control py-2 rounded-xl text-xs font-medium transition-all border",
                       targetMode === "default"
                         ? isLight
-                          ? "bg-[#1a1625]/8 border-[#1a1625]/15 text-[#1a1625]"
-                          : "bg-white/10 border-white/15 text-white"
+                          ? "bg-black/[0.08] border-black/15 text-[#1a1625] shadow-sm"
+                          : "bg-white/[0.10] border-white/20 text-white shadow-sm"
                         : isLight
-                        ? "bg-transparent border-black/[0.06] text-[#1a1625]/35 hover:border-black/12 hover:text-[#1a1625]/55"
-                        : "bg-transparent border-white/[0.06] text-white/35 hover:border-white/12 hover:text-white/55"
+                        ? "bg-transparent border-black/[0.06] text-[#1a1625]/35 hover:text-[#1a1625]/75"
+                        : "bg-transparent border-white/[0.06] text-white/35 hover:text-white/75"
                     )}
                   >
                     默认目录 (instances/)
                   </button>
-
                   <button
                     type="button"
                     onClick={() => handleSwitchMode("custom")}
-                    aria-pressed={targetMode === "custom"}
                     className={cn(
-                      "ios-choice-control motion-control flex-1 h-9 rounded-xl text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
+                      "ios-choice-control py-2 rounded-xl text-xs font-medium transition-all border",
                       targetMode === "custom"
                         ? isLight
-                          ? "bg-[#1a1625]/8 border-[#1a1625]/15 text-[#1a1625]"
-                          : "bg-white/10 border-white/15 text-white"
+                          ? "bg-black/[0.08] border-black/15 text-[#1a1625] shadow-sm"
+                          : "bg-white/[0.10] border-white/20 text-white shadow-sm"
                         : isLight
-                        ? "bg-transparent border-black/[0.06] text-[#1a1625]/35 hover:border-black/12 hover:text-[#1a1625]/55"
-                        : "bg-transparent border-white/[0.06] text-white/35 hover:border-white/12 hover:text-white/55"
+                        ? "bg-transparent border-black/[0.06] text-[#1a1625]/35 hover:text-[#1a1625]/75"
+                        : "bg-transparent border-white/[0.06] text-white/35 hover:text-white/75"
                     )}
                   >
                     自定义目录
@@ -363,8 +361,8 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                       className={cn(
                         "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0 transition-colors",
                         isLight
-                          ? "border-black/[0.08] text-[#1a1625]/50 hover:bg-black/[0.04]"
-                          : "border-white/[0.08] text-white/50 hover:bg-white/[0.04]"
+                          ? "border-black/[0.08] text-[#1a1625]/50 hover:text-[#1a1625]/85"
+                          : "border-white/[0.08] text-white/50 hover:text-white/85"
                       )}
                     >
                       浏览
@@ -406,10 +404,10 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
             <button
               onClick={onClose}
               className={cn(
-                "motion-control px-5 h-8 rounded-full text-xs font-medium transition-all border",
+                "motion-control px-5 h-8 rounded-full text-xs font-medium transition-colors border",
                 isLight
-                  ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
-                  : "bg-white/20 border-white/15 text-white hover:bg-white/30"
+                  ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625]"
+                  : "bg-white/20 border-white/15 text-white/70 hover:text-white"
               )}
             >
               完成
@@ -421,10 +419,10 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                 disabled={migrating}
                 onClick={onClose}
                 className={cn(
-                  "motion-control px-4 h-8 rounded-full text-xs font-medium transition-all border disabled:opacity-40",
+                  "motion-control px-4 h-8 rounded-full text-xs font-medium transition-colors border disabled:opacity-40",
                   isLight
-                    ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:bg-black/[0.04]"
-                    : "bg-transparent border-white/[0.08] text-white/60 hover:bg-white/[0.04]"
+                    ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:text-[#1a1625]"
+                    : "bg-transparent border-white/[0.08] text-white/60 hover:text-white"
                 )}
               >
                 取消
@@ -434,10 +432,10 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                 disabled={isRunning || migrating || (targetMode === "custom" && !customPath.trim())}
                 onClick={handleExecuteRelocate}
                 className={cn(
-                  "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-all border disabled:opacity-40",
+                  "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-colors border disabled:opacity-40",
                   isLight
-                    ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14] active:bg-black/[0.18]"
-                    : "bg-white/20 border-white/15 text-white hover:bg-white/30 active:bg-white/35"
+                    ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625] active:bg-black/[0.18]"
+                    : "bg-white/20 border-white/15 text-white/70 hover:text-white active:bg-white/35"
                 )}
               >
                 {migrating ? (

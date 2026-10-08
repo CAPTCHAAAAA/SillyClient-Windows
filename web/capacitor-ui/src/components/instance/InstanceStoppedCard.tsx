@@ -325,10 +325,10 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
                   }}
                   disabled={launchingId === instance.id}
                   className={cn(
-                    "motion-control h-7 px-4 rounded-full text-[11px] font-semibold flex items-center justify-center gap-1 disabled:opacity-50",
+                    "motion-control h-7 px-4 rounded-full text-[11px] font-semibold flex items-center justify-center gap-1 transition-colors disabled:opacity-50",
                     isLight
-                      ? "bg-black/[0.07] text-[#1a1625] hover:bg-black/[0.14]"
-                      : "bg-white/15 text-white hover:bg-white/25"
+                      ? "bg-black/[0.07] text-[#1a1625]/60 hover:text-[#1a1625]"
+                      : "bg-white/15 text-white/60 hover:text-white"
                   )}
                 >
                   <Play className="w-2.5 h-2.5" />{" "}
@@ -344,18 +344,13 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
                     onOpenMenu(instance, r);
                   }}
                   className={cn(
-                    "motion-control w-7 h-7 rounded-full flex items-center justify-center",
+                    "motion-control w-7 h-7 rounded-full flex items-center justify-center transition-colors",
                     isLight
-                      ? "bg-black/[0.07] hover:bg-black/[0.14]"
-                      : "bg-white/15 hover:bg-white/25"
+                      ? "bg-black/[0.07] text-[#1a1625]/50 hover:text-[#1a1625]"
+                      : "bg-white/15 text-white/50 hover:text-white"
                   )}
                 >
-                  <MoreVertical
-                    className={cn(
-                      "w-3 h-3",
-                      isLight ? "text-[#1a1625]" : "text-white"
-                    )}
-                  />
+                  <MoreVertical className="w-3 h-3 text-current transition-colors" />
                 </button>
               </div>
             </div>

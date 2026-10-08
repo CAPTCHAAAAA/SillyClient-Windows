@@ -191,10 +191,10 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
             onReturnToTavern?.(instance);
           }}
           className={cn(
-            "motion-control px-4 h-8 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 transition-all border active:scale-[0.98]",
+            "motion-control px-4 h-8 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 transition-colors border active:scale-[0.98]",
             isLight
-              ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14] active:bg-black/[0.18]"
-              : "bg-white/20 border-white/15 text-white hover:bg-white/30 active:bg-white/35"
+              ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625] active:bg-black/[0.18]"
+              : "bg-white/20 border-white/15 text-white/70 hover:text-white active:bg-white/35"
           )}
         >
           <Play className="w-3 h-3 fill-current" />
@@ -208,10 +208,10 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
             onStopInstance?.(instance);
           }}
           className={cn(
-            "motion-control px-3.5 h-8 rounded-full text-xs font-medium transition-all border active:scale-[0.98]",
+            "motion-control px-3.5 h-8 rounded-full text-xs font-medium transition-colors border active:scale-[0.98]",
             isLight
-              ? "bg-black/[0.04] border-black/[0.06] text-red-900/50 hover:text-red-900/80 hover:bg-black/[0.08]"
-              : "bg-white/[0.08] border-white/[0.06] text-red-400/55 hover:text-red-300/90 hover:bg-white/[0.14]"
+              ? "bg-black/[0.04] border-black/[0.06] text-red-900/50 hover:text-red-900/80"
+              : "bg-white/[0.08] border-white/[0.06] text-red-400/55 hover:text-red-300/90"
           )}
         >
           关闭
@@ -230,16 +230,11 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
           className={cn(
             "motion-control w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border transition-colors",
             isLight
-              ? "bg-black/[0.04] border-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.08]"
-              : "bg-white/[0.08] border-white/[0.06] text-white/60 hover:bg-white/[0.14]"
+              ? "bg-black/[0.04] border-black/[0.06] text-[#1a1625]/50 hover:text-[#1a1625]"
+              : "bg-white/[0.08] border-white/[0.06] text-white/50 hover:text-white"
           )}
         >
-          <MoreVertical
-            className={cn(
-              "w-3.5 h-3.5",
-              isLight ? "text-[#1a1625]/60" : "text-white/60"
-            )}
-          />
+          <MoreVertical className="w-3.5 h-3.5 text-current transition-colors" />
         </button>
       </div>
     </div>

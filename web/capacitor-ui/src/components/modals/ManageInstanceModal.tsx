@@ -14,6 +14,7 @@ import type { TavernInstance, ManageTab } from "../../types";
 import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 import { instanceLogs } from "../../lib/log-store";
 
+
 export interface ManageInstanceModalProps {
   instance: TavernInstance | null;
   isOpen: boolean;
@@ -354,12 +355,13 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
           )}
         </div>
         <button
+          aria-label="关闭"
           onClick={onClose}
           className={cn(
-            "motion-control p-1.5 rounded-lg",
+            "motion-control p-1.5 rounded-lg transition-colors",
             isLight
-              ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-              : "hover:bg-white/5 text-white/30 hover:text-white/60"
+              ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+              : "text-white/40 hover:text-white/85"
           )}
         >
           <X className="w-4 h-4" />
@@ -424,14 +426,14 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
               onClick={() => setManageFilter(filter.id)}
               aria-pressed={manageFilter === filter.id}
               className={cn(
-                "ios-choice-control motion-control rounded-full px-3 py-1 text-[11px] font-medium",
+                "ios-choice-control motion-control rounded-full px-3 py-1 text-[11px] font-medium transition-colors",
                 manageFilter === filter.id
                   ? isLight
                     ? "bg-[#1a1625]/10 text-[#1a1625]"
                     : "bg-white/10 text-white"
                   : isLight
-                  ? "text-[#1a1625]/40 hover:text-[#1a1625]/65"
-                  : "text-white/40 hover:text-white/70"
+                  ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                  : "text-white/40 hover:text-white/85"
               )}
             >
               {filter.label}
@@ -468,26 +470,24 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     onSelectInstance(item);
                   }}
                   className={cn(
-                    "motion-control mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left",
+                    "motion-control mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left group transition-colors",
                     selected
                       ? isLight
                         ? "bg-black/[0.07]"
                         : "bg-white/[0.08]"
-                      : isLight
-                      ? "hover:bg-black/[0.035]"
-                      : "hover:bg-white/[0.04]"
+                      : "bg-transparent"
                   )}
                 >
                   <span
                     className={cn(
-                      "flex h-7 w-7 flex-shrink-0 items-center justify-center",
+                      "flex h-7 w-7 flex-shrink-0 items-center justify-center transition-colors",
                       selected
                         ? isLight
                           ? "text-[#1a1625]/75"
                           : "text-white/80"
                         : isLight
-                        ? "text-[#1a1625]/35"
-                        : "text-white/35"
+                        ? "text-[#1a1625]/35 group-hover:text-[#1a1625]/75"
+                        : "text-white/35 group-hover:text-white/75"
                     )}
                   >
                     {item.icon}
@@ -495,22 +495,24 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   <span className="min-w-0 flex-1">
                     <span
                       className={cn(
-                        "block truncate text-xs font-medium",
+                        "block truncate text-xs font-medium transition-colors",
                         selected
                           ? isLight
                             ? "text-[#1a1625]/85"
                             : "text-white/85"
                           : isLight
-                          ? "text-[#1a1625]/55"
-                          : "text-white/55"
+                          ? "text-[#1a1625]/55 group-hover:text-[#1a1625]/85"
+                          : "text-white/55 group-hover:text-white/85"
                       )}
                     >
                       {item.subtitle || item.name}
                     </span>
                     <span
                       className={cn(
-                        "mt-0.5 block truncate text-[10px]",
-                        isLight ? "text-[#1a1625]/28" : "text-white/28"
+                        "mt-0.5 block truncate text-[10px] transition-colors",
+                        isLight
+                          ? "text-[#1a1625]/28 group-hover:text-[#1a1625]/50"
+                          : "text-white/28 group-hover:text-white/50"
                       )}
                     >
                       {item.type === "local"
@@ -538,39 +540,39 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             className={cn(
-              "flex flex-shrink-0 items-center gap-1.5 overflow-x-auto border-b px-4 py-2 scrollbar-subtle",
+              "flex-shrink-0 border-b px-4 py-2.5",
               isLight ? "border-black/[0.06]" : "border-white/[0.06]"
             )}
           >
-            {(
-              [
-                { id: "launch", label: "启动参数" },
-                { id: "storage", label: "存储路径" },
-                { id: "terminal", label: "实例终端" },
-                { id: "about", label: "关于实例" },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                aria-pressed={manageTab === tab.id}
-                onClick={() => {
-                  setManageTab(tab.id);
-                }}
-                className={cn(
-                  "ios-choice-control motion-control flex h-8 flex-shrink-0 items-center rounded-lg px-3 text-[11px] font-medium border transition-colors",
-                  manageTab === tab.id
-                    ? isLight
-                      ? "bg-black/[0.07] text-[#1a1625]/80"
-                      : "bg-white/[0.08] text-white/80"
-                    : isLight
-                    ? "text-[#1a1625]/35 hover:text-[#1a1625]/60"
-                    : "text-white/35 hover:text-white/60"
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
+            <div className="flex items-center gap-1">
+              {(
+                [
+                  { id: "launch", label: "启动参数" },
+                  { id: "storage", label: "存储路径" },
+                  { id: "terminal", label: "实例终端" },
+                  { id: "about", label: "关于实例" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setManageTab(tab.id)}
+                  aria-pressed={manageTab === tab.id}
+                  className={cn(
+                    "ios-choice-control motion-control rounded-lg px-3 py-1.5 text-xs font-medium transition-colors",
+                    manageTab === tab.id
+                      ? isLight
+                        ? "bg-black/[0.08] text-[#1a1625]"
+                        : "bg-white/[0.10] text-white"
+                      : isLight
+                      ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                      : "text-white/40 hover:text-white/85"
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Tab 内容区（向导级平滑高度自适应 + 同位驻留高斯模糊交叉溶变） */}
@@ -800,8 +802,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                           className={cn(
                             "motion-control text-[10px] font-medium px-2 py-0.5 rounded-md border transition-colors",
                             isLight
-                              ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625]/70 hover:bg-black/[0.08]"
-                              : "bg-white/[0.06] border-white/[0.08] text-white/70 hover:bg-white/[0.12]"
+                              ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625]/60 hover:text-[#1a1625]"
+                              : "bg-white/[0.06] border-white/[0.08] text-white/60 hover:text-white"
                           )}
                         >
                           修改密码
@@ -940,8 +942,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                             className={cn(
                               "motion-control h-7 px-3 rounded-lg text-xs font-medium border transition-colors",
                               isLight
-                                ? "border-black/[0.08] text-[#1a1625]/60 hover:bg-black/5"
-                                : "border-white/[0.08] text-white/60 hover:bg-white/5"
+                                ? "border-black/[0.08] text-[#1a1625]/60 hover:text-[#1a1625]"
+                                : "border-white/[0.08] text-white/60 hover:text-white"
                             )}
                           >
                             取消
@@ -1003,12 +1005,12 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                               }
                             }}
                             className={cn(
-                              "motion-control h-7 px-3.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-40",
+                              "motion-control h-7 px-3.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-40",
                               passwordMode === "clear"
-                                ? "bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                                ? "bg-red-500/10 text-red-500/70 border border-red-500/20 hover:text-red-500"
                                 : isLight
-                                  ? "bg-black text-white hover:bg-black/85"
-                                  : "bg-white text-[#14101e] hover:bg-white/90"
+                                  ? "bg-black text-white/80 hover:text-white"
+                                  : "bg-white text-[#14101e]/80 hover:text-[#14101e]"
                             )}
                           >
                             {passwordSaving
@@ -1092,10 +1094,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       type="button"
                       onClick={() => onPickCover(mp)}
                       className={cn(
-                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium transition-colors",
                         isLight
-                          ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
-                          : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
+                          ? "bg-black/[0.06] text-[#1a1625]/60 hover:text-[#1a1625]"
+                          : "bg-white/[0.07] text-white/60 hover:text-white"
                       )}
                     >
                       更换插图
@@ -1130,10 +1132,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         type="button"
                         onClick={() => onOpenRelocate(mp)}
                         className={cn(
-                          "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                          "motion-control h-8 rounded-xl px-3 text-[11px] font-medium transition-colors",
                           isLight
-                            ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
-                            : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
+                            ? "bg-black/[0.06] text-[#1a1625]/60 hover:text-[#1a1625]"
+                            : "bg-white/[0.07] text-white/60 hover:text-white"
                         )}
                       >
                         迁移目录
@@ -1144,95 +1146,16 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     <ManageItem label="实例维护" isLight={isLight}>
                       <button type="button" onClick={() => onOpenMaintenance(mp)}
                         className={cn(
-                          "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
+                          "motion-control h-8 rounded-xl px-3 text-[11px] font-medium transition-colors",
                           isLight
-                            ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
-                            : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
+                            ? "bg-black/[0.06] text-[#1a1625]/60 hover:text-[#1a1625]"
+                            : "bg-white/[0.07] text-white/60 hover:text-white"
                         )}>
                         扫描
                       </button>
                     </ManageItem>
                   )}
-                  <div
-                    className={cn(
-                      "flex items-center justify-between gap-4 rounded-xl px-4 py-3",
-                      isLight ? "bg-black/[0.025]" : "bg-white/[0.025]"
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <div
-                        className={cn(
-                          "text-xs font-medium",
-                          isLight ? "text-[#1a1625]/70" : "text-white/70"
-                        )}
-                      >
-                        实例重命名
-                      </div>
-                      <div
-                        className={cn(
-                          "mt-1 truncate text-[10px]",
-                          isLight ? "text-[#1a1625]/30" : "text-white/30"
-                        )}
-                      >
-                        修改实例的显示名称
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        onTriggerRename(mp);
-                      }}
-                      className={cn(
-                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
-                        isLight
-                          ? "bg-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.09]"
-                          : "bg-white/[0.07] text-white/60 hover:bg-white/[0.11]"
-                      )}
-                    >
-                      重命名
-                    </button>
-                  </div>
-                  <div
-                    className={cn(
-                      "flex items-center justify-between gap-4 rounded-xl px-4 py-3",
-                      isLight ? "bg-black/[0.025]" : "bg-white/[0.025]"
-                    )}
-                  >
-                    <div className="min-w-0">
-                      <div
-                        className={cn(
-                          "text-xs font-medium",
-                          isLight ? "text-[#1a1625]/70" : "text-white/70"
-                        )}
-                      >
-                        删除实例
-                      </div>
-                      <div
-                        className={cn(
-                          "mt-1 truncate text-[10px]",
-                          isLight ? "text-[#1a1625]/30" : "text-white/30"
-                        )}
-                      >
-                        移除实例及其全部本地数据
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        onTriggerDelete(mp);
-                      }}
-                      className={cn(
-                        "motion-control h-8 rounded-xl px-3 text-[11px] font-medium",
-                        isLight
-                          ? "bg-red-900/[0.07] text-red-900/60 hover:bg-red-900/[0.11]"
-                          : "bg-red-400/[0.08] text-red-300/60 hover:bg-red-400/[0.13]"
-                      )}
-                    >
-                      删除
-                    </button>
-                  </div>
+
                 </div>
               </div>
 
@@ -1440,10 +1363,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
               disabled={isSavingManagePanel}
               onClick={onSaveManagedInstance}
               className={cn(
-                "motion-control h-8 rounded-xl px-3 text-[11px] font-medium disabled:pointer-events-none disabled:opacity-50",
+                "motion-control h-8 rounded-xl px-3 text-[11px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-50",
                 isLight
-                  ? "bg-black/[0.05] text-[#1a1625]/55 hover:bg-black/[0.08]"
-                  : "bg-white/[0.06] text-white/55 hover:bg-white/[0.10]"
+                  ? "bg-black/[0.05] text-[#1a1625]/55 hover:text-[#1a1625]"
+                  : "bg-white/[0.06] text-white/55 hover:text-white"
               )}
             >
               {isSavingManagePanel ? "验证中" : "保存"}
@@ -1456,7 +1379,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
               onClose();
               onLaunchInstance(mp);
             }}
-            className="motion-control flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-xl bg-white/90 px-4 text-[11px] font-semibold text-[#1a1625] hover:bg-white disabled:pointer-events-none disabled:opacity-50"
+            className="motion-control flex h-8 min-w-28 items-center justify-center gap-1.5 rounded-xl bg-white/90 px-4 text-[11px] font-semibold text-[#1a1625]/75 hover:text-[#1a1625] transition-colors disabled:pointer-events-none disabled:opacity-50"
           >
             <Play className="h-3 w-3" />
             {launchingId === mp.id ? "启动中" : "启动"}

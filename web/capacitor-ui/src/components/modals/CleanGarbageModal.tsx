@@ -87,8 +87,8 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
             className={cn(
               "p-1.5 rounded-lg transition-colors",
               isLight
-                ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                : "text-white/40 hover:text-white/85"
             )}
           >
             <X className="w-4 h-4" />
@@ -177,10 +177,10 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
             onClick={onClose}
             disabled={cleaningGarbage}
             className={cn(
-              "motion-control px-4 h-8 rounded-xl text-[11px] font-medium disabled:opacity-50",
+              "motion-control px-4 h-8 rounded-xl text-[11px] font-medium transition-colors disabled:opacity-50",
               isLight
-                ? "bg-black/[0.05] text-[#1a1625]/45 hover:bg-black/[0.08]"
-                : "bg-white/[0.06] text-white/45 hover:bg-white/10"
+                ? "bg-black/[0.05] text-[#1a1625]/50 hover:text-[#1a1625]/85"
+                : "bg-white/[0.06] text-white/50 hover:text-white/85"
             )}
           >
             取消
@@ -202,10 +202,10 @@ export const CleanGarbageModal: React.FC<CleanGarbageModalProps> = ({
             }}
             disabled={cleaningGarbage || garbageItems.length === 0}
             className={cn(
-              "motion-control px-4 h-8 rounded-xl text-[11px] font-semibold disabled:opacity-50",
+              "motion-control px-4 h-8 rounded-xl text-[11px] font-semibold transition-colors disabled:opacity-50",
               isLight
-                ? "bg-[#1a1625] text-[#f5f3ef] hover:bg-[#1a1625]/90"
-                : "bg-white/90 text-[#1a1625] hover:bg-white"
+                ? "bg-[#1a1625] text-[#f5f3ef]/80 hover:text-[#f5f3ef]"
+                : "bg-white/90 text-[#1a1625]/80 hover:text-[#1a1625]"
             )}
           >
             全部清理

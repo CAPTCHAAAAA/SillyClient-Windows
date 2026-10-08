@@ -400,8 +400,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
             className={cn(
               "motion-instance-card flex-shrink-0 w-60 h-[320px] rounded-[18px] overflow-hidden snap-center group relative cursor-pointer text-left focus:outline-none",
               isLight
-                ? "bg-black/[0.03] border border-black/[0.08] hover:border-black/15"
-                : "bg-white/[0.04] border border-white/[0.06] hover:border-white/15"
+                ? "bg-black/[0.03] border border-black/[0.08]"
+                : "bg-white/[0.04] border border-white/[0.06]"
             )}
             data-card-index="0"
           >
@@ -412,13 +412,13 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
                   isLight ? "bg-black/[0.06]" : "bg-white/[0.08]"
                 )}
               >
-                <Play className={cn("w-3.5 h-3.5 fill-current", isLight ? "text-[#1a1625]/40" : "text-white/40")} />
+                <Play className={cn("w-3.5 h-3.5 fill-current transition-colors", isLight ? "text-[#1a1625]/40 group-hover:text-[#1a1625]/80" : "text-white/40 group-hover:text-white/80")} />
               </div>
               <div>
-                <div className={cn("text-base font-semibold mb-0.5", isLight ? "text-[#1a1625]" : "text-white")}>
+                <div className={cn("text-base font-semibold mb-0.5 transition-colors", isLight ? "text-[#1a1625]" : "text-white")}>
                   {isWeb && !isShowcase && !import.meta.env.DEV ? "下载 APK" : "新建实例"}
                 </div>
-                <div className={cn("text-xs", isLight ? "text-[#1a1625]/40" : "text-white/40")}>
+                <div className={cn("text-xs transition-colors", isLight ? "text-[#1a1625]/40 group-hover:text-[#1a1625]/75" : "text-white/40 group-hover:text-white/75")}>
                   {isWeb && !isShowcase && !import.meta.env.DEV ? "获取最新版本" : "设置新的酒馆环境"}
                 </div>
               </div>
@@ -464,8 +464,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
               activeSlide === 0
                 ? isLight ? "text-[#1a1625]/15 cursor-default opacity-40" : "text-white/15 cursor-default opacity-40"
                 : isLight
-                  ? "text-[#1a1625]/60 hover:text-[#1a1625] hover:bg-[#1a1625]/8 active:scale-95 cursor-pointer"
-                  : "text-white/60 hover:text-white hover:bg-white/10 active:scale-95 cursor-pointer"
+                  ? "text-[#1a1625]/50 hover:text-[#1a1625] active:scale-95 cursor-pointer"
+                  : "text-white/50 hover:text-white active:scale-95 cursor-pointer"
             )}
           >
             <ChevronLeft className="w-4 h-4" />
@@ -517,8 +517,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
               activeSlide === totalSlides - 1
                 ? isLight ? "text-[#1a1625]/15 cursor-default opacity-40" : "text-white/15 cursor-default opacity-40"
                 : isLight
-                  ? "text-[#1a1625]/60 hover:text-[#1a1625] hover:bg-[#1a1625]/8 active:scale-95 cursor-pointer"
-                  : "text-white/60 hover:text-white hover:bg-white/10 active:scale-95 cursor-pointer"
+                  ? "text-[#1a1625]/50 hover:text-[#1a1625] active:scale-95 cursor-pointer"
+                  : "text-white/50 hover:text-white active:scale-95 cursor-pointer"
             )}
           >
             <ChevronRight className="w-4 h-4" />

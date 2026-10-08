@@ -164,8 +164,8 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
             className={cn(
               "p-1 rounded-md transition-colors",
               isLight
-                ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                : "text-white/40 hover:text-white/85"
             )}
           >
             <Eraser className="w-3.5 h-3.5" />
@@ -175,8 +175,8 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
             className={cn(
               "p-1 rounded-md transition-colors",
               isLight
-                ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                : "text-white/40 hover:text-white/85"
             )}
           >
             <X className="w-3.5 h-3.5" />

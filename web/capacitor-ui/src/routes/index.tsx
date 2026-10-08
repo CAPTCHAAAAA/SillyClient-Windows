@@ -2528,7 +2528,7 @@ function SillyClientLauncher() {
           </div>
 
           <div className="flex-1 flex items-center justify-center">
-            <button onClick={toggleBgPanel} className={cn("flex items-center gap-2 px-4 py-1.5 rounded-full transition-all max-w-[200px] border", isLight ? "hover:bg-black/5 border-black/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05),0_1px_2px_rgba(255,255,255,0.5)]" : "hover:bg-white/10 border-white/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.2),0_1px_2px_rgba(255,255,255,0.1)]")}>
+            <button onClick={toggleBgPanel} className={cn("flex items-center gap-2 px-4 py-1.5 rounded-full transition-all max-w-[200px] border", isLight ? "border-black/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05),0_1px_2px_rgba(255,255,255,0.5)]" : "border-white/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.2),0_1px_2px_rgba(255,255,255,0.1)]")}>
               <span className={cn("text-sm font-medium truncate", isLight ? "text-[#1a1625]" : "text-white")}>
                 {new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
               </span>
@@ -2582,8 +2582,8 @@ function SillyClientLauncher() {
             className={cn(
               "motion-control h-7 px-3 rounded-full text-xs font-semibold transition-all border",
               isLight
-                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
-                : "bg-white/20 border-white/15 text-white hover:bg-white/30"
+                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625]"
+                : "bg-white/20 border-white/15 text-white/70 hover:text-white"
             )}
           >
             查看
@@ -2593,7 +2593,7 @@ function SillyClientLauncher() {
             aria-label="关闭更新提示"
             className={cn(
               "motion-control w-7 h-7 rounded-full flex items-center justify-center transition-all",
-              isLight ? "hover:bg-black/5 text-[#1a1625]/50" : "hover:bg-white/10 text-white/50"
+              isLight ? "text-[#1a1625]/40 hover:text-[#1a1625]/85" : "text-white/40 hover:text-white/85"
             )}
           >
             <X className="w-3.5 h-3.5" />
@@ -2664,7 +2664,7 @@ function SillyClientLauncher() {
                   }}
                   className={cn(
                     "motion-menu-item w-full px-4 py-3 text-left text-sm flex items-center gap-3 transition-colors",
-                    isLight ? "bg-[#f5f3ef]/95 hover:bg-black/5 text-[#1a1625]/80" : "bg-[#1a1625]/95 hover:bg-white/10 text-white/80"
+                    isLight ? "bg-[#f5f3ef]/95 text-[#1a1625]/60 hover:text-[#1a1625]" : "bg-[#1a1625]/95 text-white/60 hover:text-white"
                   )}
                 >
                   <span className="scale-75">{t.icon}</span>
@@ -3206,7 +3206,7 @@ function SillyClientLauncher() {
               setShowWhatsNew(true);
               setIsWhatsNewClosing(false);
             }}
-            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/90 hover:bg-white/20 active:bg-white/25 font-medium transition-all"
+            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/70 hover:text-white active:bg-white/25 font-medium transition-colors"
           >
             更新画布
           </button>
@@ -3215,7 +3215,7 @@ function SillyClientLauncher() {
               setShowLegacyMigration(true);
               setIsLegacyMigrationClosing(false);
             }}
-            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/90 hover:bg-white/20 active:bg-white/25 font-medium transition-all"
+            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/70 hover:text-white active:bg-white/25 font-medium transition-colors"
           >
             旧版迁移
           </button>
@@ -3226,7 +3226,7 @@ function SillyClientLauncher() {
               setShowNewInstancePanel(true);
               setIsNewInstancePanelClosing(false);
             }}
-            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/90 hover:bg-white/20 active:bg-white/25 font-medium transition-all"
+            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/70 hover:text-white active:bg-white/25 font-medium transition-colors"
           >
             打开向导
           </button>
@@ -3245,7 +3245,7 @@ function SillyClientLauncher() {
                 { msg: "解压运行时与核心组件...", level: "info" },
               ]);
             }}
-            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/90 hover:bg-white/20 active:bg-white/25 font-medium transition-all"
+            className="motion-control h-7 px-3 rounded-full border border-white/10 bg-white/10 text-white/70 hover:text-white active:bg-white/25 font-medium transition-colors"
           >
             模拟过渡
           </button>
@@ -3263,7 +3263,7 @@ function SillyClientLauncher() {
                 { msg: "服务可访问，实例创建完成", level: "success" },
               ]);
             }}
-            className="motion-control h-7 px-3 rounded-full border border-white/20 bg-white/20 text-white hover:bg-white/30 active:bg-white/35 font-semibold transition-all"
+            className="motion-control h-7 px-3 rounded-full border border-white/20 bg-white/20 text-white/80 hover:text-white active:bg-white/35 font-semibold transition-colors"
           >
             模拟完成态
           </button>
@@ -3274,7 +3274,7 @@ function SillyClientLauncher() {
               setIsNewInstancePanelClosing(false);
             }}
             title="关闭弹层"
-            className="motion-control w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white hover:bg-white/10 transition-all"
+            className="motion-control w-7 h-7 rounded-full flex items-center justify-center text-white/40 hover:text-white transition-colors"
           >
             <X className="w-3 h-3" />
           </button>

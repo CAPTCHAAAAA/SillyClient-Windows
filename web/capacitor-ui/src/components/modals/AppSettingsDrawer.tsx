@@ -11,6 +11,7 @@ import { createInstanceBackup } from "../../lib/instance-persistence";
 import { openExternalUrl } from "../../lib/external-links";
 import { APP_VERSION } from "../../constants/app-version";
 
+
 export interface AppSettingsDrawerProps {
   isOpen: boolean;
   isClosing?: boolean;
@@ -267,8 +268,8 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
             className={cn(
               "motion-control p-1.5 rounded-lg transition-colors",
               isLight
-                ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                : "text-white/40 hover:text-white/85"
             )}
           >
             <X className="w-4 h-4" />
