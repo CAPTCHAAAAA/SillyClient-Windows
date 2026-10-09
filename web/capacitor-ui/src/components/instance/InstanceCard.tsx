@@ -21,6 +21,14 @@ export interface InstanceCardProps {
   isExternallyRenaming?: boolean;
   onClearExternalRenaming?: () => void;
   isWindows?: boolean;
+  onLongPress?: (instance: TavernInstance) => void;
+  style?: React.CSSProperties;
+  className?: string;
+  isReordering?: boolean;
+  isDropping?: boolean;
+  isReorderCommitting?: boolean;
+  onPointerDownCapture?: (e: React.PointerEvent) => void;
+  onClickCapture?: (e: React.MouseEvent) => void;
 }
 
 /**
@@ -40,13 +48,20 @@ export const InstanceCard = React.memo<InstanceCardProps>((props) => {
     <FlipCard
       data-card-index={String(props.index + 1)}
       data-card-running={isRunning ? "true" : "false"}
-      className="flex-shrink-0 snap-center"
+      data-reordering={props.isReordering ? "true" : undefined}
+      data-dropping={props.isDropping ? "true" : undefined}
+      data-reorder-committing={props.isReorderCommitting ? "true" : undefined}
+      className={`flex-shrink-0 snap-center${props.className ? ` ${props.className}` : ""}`}
+      style={props.style}
       width={240}
       height={320}
       radius={26}
       flipped={isRunning}
       axis="y"
       flipOnClick={false}
+      onLongPress={props.onLongPress ? () => props.onLongPress?.(props.instance) : undefined}
+      onPointerDownCapture={props.onPointerDownCapture}
+      onClickCapture={props.onClickCapture}
       draggable={false}
       tilt={true}
       tiltMax={3.8}
@@ -64,7 +79,7 @@ export const InstanceCard = React.memo<InstanceCardProps>((props) => {
       color={props.isLight ? "#1a1625" : "#f5f5f5"}
       shadow={true}
       shadowColor="#000000"
-      shadowOpacity={props.isLight ? 0.10 : 0.38}
+      shadowOpacity={props.isLight ? 0.05 : 0.18}
       front={
         <InstanceStoppedCard
           instance={props.instance}

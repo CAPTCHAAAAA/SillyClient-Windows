@@ -32,6 +32,8 @@ export interface InstanceCarouselProps {
   onNewInstance: () => void;
   activeSlide?: number;
   onActiveSlideChange?: (index: number) => void;
+  onLongPressCard?: (instance: TavernInstance) => void;
+  onReorderInstances?: (newInstances: TavernInstance[]) => void;
 }
 
 /**
@@ -62,6 +64,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   onNewInstance,
   activeSlide: activeSlideProp,
   onActiveSlideChange,
+  onLongPressCard,
+  onReorderInstances,
 }, ref) => {
   const carouselRef = useRef<HTMLDivElement>(null);
   const [internalActiveSlide, setInternalActiveSlide] = useState(activeSlideProp ?? 0);
@@ -228,6 +232,235 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     velocityX: 0,
   });
 
+  // 手机桌面级长按拖拽重排状态机 (Springboard Drag-to-Reorder)
+  const [reorderState, setReorderState] = useState<{
+    active: boolean;
+    draggedIndex: number;
+    targetIndex: number;
+    dragOffset: number;
+    isDropping: boolean;
+  } | null>(null);
+
+  // 瞬时提交保护标记：DOM 节点换位首帧强制关闭所有 transition，消除闪烁
+  const [isReorderCommitting, setIsReorderCommitting] = useState(false);
+
+  const reorderStateRef = useRef(reorderState);
+  reorderStateRef.current = reorderState;
+
+  const pointerStartRef = useRef<{ x: number; y: number; cardIndex: number; pointerId: number } | null>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const justReorderedRef = useRef(false);
+  const autoScrollRafRef = useRef<number | null>(null);
+
+  // 动态测量卡片槽位物理步长 (240px card + 28px gap = 268px)
+  const getCardStride = useCallback(() => {
+    const el = carouselRef.current;
+    if (!el) return 268;
+    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+    if (cards.length >= 3) {
+      const diff = cards[2].offsetLeft - cards[1].offsetLeft;
+      if (diff > 100) return diff;
+    }
+    return 268;
+  }, []);
+
+  const startAutoScroll = useCallback((direction: -1 | 1) => {
+    if (autoScrollRafRef.current) return;
+    const step = () => {
+      const el = carouselRef.current;
+      if (!el || !reorderStateRef.current?.active) {
+        autoScrollRafRef.current = null;
+        return;
+      }
+      el.scrollLeft += direction * 7;
+      autoScrollRafRef.current = requestAnimationFrame(step);
+    };
+    autoScrollRafRef.current = requestAnimationFrame(step);
+  }, []);
+
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollRafRef.current) {
+      cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
+    }
+  }, []);
+
+  // 卡片按下手势监听：按住 320ms 且无大幅滑动时触发手机桌面级长按拖拽重排
+  const handleCardPointerDown = useCallback((instanceIndex: number, e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, input, textarea, select, [contenteditable='true'], .ios-task-surface, a")) {
+      return;
+    }
+
+    pointerStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      cardIndex: instanceIndex,
+      pointerId: e.pointerId,
+    };
+
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      const start = pointerStartRef.current;
+      if (!start || start.cardIndex !== instanceIndex) return;
+
+      try { navigator.vibrate?.([25]); } catch {}
+
+      const el = carouselRef.current;
+      if (el) {
+        setCarouselSnapLock(el, "drag", true);
+        el.style.scrollBehavior = "auto";
+      }
+
+      dragState.current.isDown = false;
+      justReorderedRef.current = true;
+
+      const initial = {
+        active: true,
+        draggedIndex: instanceIndex,
+        targetIndex: instanceIndex,
+        dragOffset: 0,
+        isDropping: false,
+      };
+      reorderStateRef.current = initial;
+      setReorderState(initial);
+    }, 320);
+  }, []);
+
+  // 全局指针跟踪与 Springboard 邻卡实时让位调度
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      const start = pointerStartRef.current;
+      if (!start) return;
+
+      const currentReorder = reorderStateRef.current;
+      if (!currentReorder?.active) {
+        // 未进入重排，若移动超标则取消长按计时器（认定为正常浏览滚动）
+        const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+        if (dist > 7) {
+          if (longPressTimerRef.current) {
+            clearTimeout(longPressTimerRef.current);
+            longPressTimerRef.current = null;
+          }
+        }
+        return;
+      }
+
+      // 已处于拖拽重排模式中
+      e.preventDefault();
+      const dx = e.clientX - start.x;
+      const stride = getCardStride();
+      const slotDelta = Math.round(dx / stride);
+      const newTarget = Math.max(0, Math.min(instances.length - 1, currentReorder.draggedIndex + slotDelta));
+
+      if (newTarget !== currentReorder.targetIndex) {
+        try { navigator.vibrate?.([10]); } catch {}
+      }
+
+      const nextState = {
+        ...currentReorder,
+        dragOffset: dx,
+        targetIndex: newTarget,
+      };
+      reorderStateRef.current = nextState;
+      setReorderState(nextState);
+
+      // 视口边缘自动推进
+      const el = carouselRef.current;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const edgeThreshold = 80;
+        if (e.clientX - rect.left < edgeThreshold) {
+          startAutoScroll(-1);
+        } else if (rect.right - e.clientX < edgeThreshold) {
+          startAutoScroll(1);
+        } else {
+          stopAutoScroll();
+        }
+      }
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      stopAutoScroll();
+
+      const currentReorder = reorderStateRef.current;
+      if (!currentReorder?.active) {
+        pointerStartRef.current = null;
+        return;
+      }
+
+      // 执行放手落位吸附动画
+      const stride = getCardStride();
+      const finalOffset = (currentReorder.targetIndex - currentReorder.draggedIndex) * stride;
+
+      const droppingState = {
+        ...currentReorder,
+        dragOffset: finalOffset,
+        isDropping: true,
+      };
+      reorderStateRef.current = droppingState;
+      setReorderState(droppingState);
+
+      setTimeout(() => {
+        const fromIdx = currentReorder.draggedIndex;
+        const toIdx = currentReorder.targetIndex;
+
+        // 1. 瞬时进入无过渡提交保护期，强制所有卡片 transition: none，消除 DOM 重排抽搐
+        setIsReorderCommitting(true);
+        setReorderState(null);
+        reorderStateRef.current = null;
+        pointerStartRef.current = null;
+
+        if (fromIdx !== toIdx) {
+          const next = [...instances];
+          const [moved] = next.splice(fromIdx, 1);
+          next.splice(toIdx, 0, moved);
+          onReorderInstances?.(next);
+          // 指示器平滑对齐目标 slide，不发起抢占性 smooth 滚动
+          setActiveSlide(toIdx + 1);
+        }
+
+        // 2. 双 rAF 跨帧保护：等待 React 完成真实 DOM 节点调换并在首个合成帧绘制完成后，平稳释放冻结
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setIsReorderCommitting(false);
+
+            // 3. 在 DOM 节点彻底稳定后平稳解除原生 Scroll-Snap 锁定，杜绝滚动争抢
+            const el = carouselRef.current;
+            if (el) {
+              setCarouselSnapLock(el, "drag", false);
+              el.style.scrollBehavior = "";
+            }
+
+            setTimeout(() => {
+              justReorderedRef.current = false;
+            }, 200);
+          });
+        });
+      }, 220);
+    };
+
+    const onPointerCancel = (e: PointerEvent) => {
+      onPointerUp(e);
+    };
+
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+      stopAutoScroll();
+    };
+  }, [getCardStride, goToSlide, instances, onReorderInstances, startAutoScroll, stopAutoScroll]);
+
   useEffect(() => {
     const el = carouselRef.current;
     if (!el) return;
@@ -256,6 +489,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     };
 
     const onMouseMove = (e: MouseEvent) => {
+      if (reorderStateRef.current?.active) return;
       if (!dragState.current.isDown) return;
       const x = e.pageX;
       const walk = x - dragState.current.startX;
@@ -276,6 +510,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     };
 
     const onMouseUp = () => {
+      if (reorderStateRef.current?.active) return;
       if (!dragState.current.isDown) return;
       dragState.current.isDown = false;
       el.style.cursor = "grab";
@@ -313,6 +548,11 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
     // 拖拽完成拦截点击穿透，防止松开鼠标时意外触发展开或激活按钮
     const onClickCapture = (e: MouseEvent) => {
+      if (justReorderedRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (dragState.current.hasDragged) {
         e.preventDefault();
         e.stopPropagation();
@@ -426,27 +666,82 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
           </button>
 
           {/* 解耦后的实例卡片列表 */}
-          {instances.map((instance, index) => (
-            <InstanceCard
-              key={instance.id}
-              instance={instance}
-              index={index}
-              isLight={isLight}
-              glassBg={glassBg}
-              hoveredCard={hoveredCard}
-              setHoveredCard={setHoveredCard}
-              activeCardMenu={activeCardMenu}
-              launchingId={launchingId}
-              onLaunch={onLaunch}
-              onReturnToTavern={onReturnToTavern}
-              onStopInstance={onStopInstance}
-              onOpenMenu={onOpenMenu}
-              onRenameSave={onRenameSave}
-              isExternallyRenaming={externallyRenamingId === instance.id}
-              onClearExternalRenaming={onClearExternalRenaming}
-              isWindows={isWindows}
-            />
-          ))}
+          {instances.map((instance, index) => {
+            const stride = getCardStride();
+            const isBeingDragged = reorderState?.active && reorderState.draggedIndex === index;
+            const isDropping = isBeingDragged && reorderState.isDropping;
+
+            let shiftX = 0;
+            if (reorderState?.active && !isBeingDragged) {
+              const { draggedIndex, targetIndex } = reorderState;
+              if (draggedIndex < targetIndex) {
+                if (index > draggedIndex && index <= targetIndex) {
+                  shiftX = -stride;
+                }
+              } else if (draggedIndex > targetIndex) {
+                if (index >= targetIndex && index < draggedIndex) {
+                  shiftX = stride;
+                }
+              }
+            }
+
+            // 针对 DOM 重排瞬态的精密样式隔离：
+            // 1. 提交帧 (isReorderCommitting)：强制关闭一切 transition 并重置 transform，使新物理位置与 0 位移完美对齐，0 帧闪烁；
+            // 2. 拖拽与落位帧：保持高刷新率物理跟随与 cubic-bezier 吸附；
+            // 3. 邻卡让位帧：平滑侧移让位；
+            // 4. 常态：不施加多余 inline transform/transition，纯净原生排版。
+            const cardStyle: React.CSSProperties | undefined = isReorderCommitting
+              ? {
+                  transform: "none",
+                  transition: "none !important",
+                }
+              : isBeingDragged
+              ? {
+                  transform: `translate3d(${reorderState.dragOffset}px, 0, 0)`,
+                  zIndex: 50,
+                  transition: isDropping ? "transform 220ms cubic-bezier(0.2, 0, 0, 1)" : "none",
+                  pointerEvents: isDropping ? "none" : "auto",
+                }
+              : shiftX !== 0
+              ? {
+                  transform: `translate3d(${shiftX}px, 0, 0)`,
+                  transition: "transform 260ms cubic-bezier(0.2, 0, 0, 1)",
+                }
+              : reorderState?.active
+              ? {
+                  transform: "translate3d(0, 0, 0)",
+                  transition: "transform 260ms cubic-bezier(0.2, 0, 0, 1)",
+                }
+              : undefined;
+
+            return (
+              <InstanceCard
+                key={instance.id}
+                instance={instance}
+                index={index}
+                style={cardStyle}
+                isReordering={isBeingDragged}
+                isDropping={isDropping}
+                isReorderCommitting={isReorderCommitting}
+                onPointerDownCapture={(e) => handleCardPointerDown(index, e)}
+                isLight={isLight}
+                glassBg={glassBg}
+                hoveredCard={hoveredCard}
+                setHoveredCard={setHoveredCard}
+                activeCardMenu={activeCardMenu}
+                launchingId={launchingId}
+                onLaunch={onLaunch}
+                onReturnToTavern={onReturnToTavern}
+                onStopInstance={onStopInstance}
+                onOpenMenu={onOpenMenu}
+                onRenameSave={onRenameSave}
+                isExternallyRenaming={externallyRenamingId === instance.id}
+                onClearExternalRenaming={onClearExternalRenaming}
+                isWindows={isWindows}
+                onLongPress={onLongPressCard}
+              />
+            );
+          })}
 
           {/* 右侧视口居中弹性垫片 */}
           <div className="flex-shrink-0 w-[calc(50%-120px)]" aria-hidden />
