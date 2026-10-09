@@ -421,8 +421,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
           const [moved] = next.splice(fromIdx, 1);
           next.splice(toIdx, 0, moved);
           onReorderInstances?.(next);
-          // 指示器平滑对齐目标 slide，不发起抢占性 smooth 滚动
-          setActiveSlide(toIdx + 1);
         }
 
         // 2. 双 rAF 跨帧保护：等待 React 完成真实 DOM 节点调换并在首个合成帧绘制完成后，平稳释放冻结
