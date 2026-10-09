@@ -377,10 +377,10 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   return (
     <div className="w-full max-w-6xl mx-auto px-6 md:px-8">
       <div className="relative">
-        {/* 轮播滑动轨道 */}
+        {/* 轮播滑动轨道：垂直上下预留 36px+ 充足空间，杜绝全向 3D 体积光阴影被滚动容器边缘裁切分层 */}
         <div
           ref={carouselRef}
-          className="carousel-scrollbar-hidden flex gap-5 overflow-x-auto snap-x snap-mandatory px-3 py-4 -mx-2"
+          className="carousel-scrollbar-hidden flex gap-7 overflow-x-auto snap-x snap-mandatory px-3 py-9 -mx-2 -my-4"
           style={{
             scrollbarWidth: "none",
             msOverflowStyle: "none",
@@ -398,10 +398,10 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
             type="button"
             onClick={onNewInstance}
             className={cn(
-              "motion-instance-card flex-shrink-0 w-60 h-[320px] rounded-[18px] overflow-hidden snap-center group relative cursor-pointer text-left focus:outline-none",
+              "motion-instance-card flex-shrink-0 w-60 h-[320px] rounded-[26px] overflow-hidden snap-center group relative cursor-pointer text-left focus:outline-none",
               isLight
-                ? "bg-black/[0.03] border border-black/[0.08]"
-                : "bg-white/[0.04] border border-white/[0.06]"
+                ? "bg-black/[0.03]"
+                : "bg-white/[0.04]"
             )}
             data-card-index="0"
           >

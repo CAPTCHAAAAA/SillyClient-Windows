@@ -1169,7 +1169,7 @@
           /* 5 — 实例卡片：保持原透明玻璃底 + 轻微柔焦边缘。
              全部可调项走 CSS 变量，由右侧调试面板实时驱动（初值=v6）。
              圆角率 22px + background-clip: border-box 保证真圆角渲染。 */
-          .motion-instance-card {
+          .motion-instance-card:not(.flip-card__face *) {
             border-radius: var(--sf-radius, 22px) !important;
             background-clip: border-box !important;
             background-color: rgba(var(--sf-fog-rgb, 255 250 252) / var(--sf-fog, 0)) !important;
@@ -1180,6 +1180,27 @@
               inset 0 0 var(--sf-glow2-spread, 40px) 0 rgba(var(--sf-glow2-rgb, 196 120 142) / var(--sf-glow2, 0.01)),
               0 var(--sf-sh-y, 3px) var(--sf-sh-blur, 12px) rgba(var(--sf-sh-rgb, 7 5 10) / var(--sf-sh-a, 0.075)) !important;
             transition: box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+          }
+
+          .flip-card__face .motion-instance-card,
+          .flip-card__face .motion-instance-card > div,
+          .flip-card__face .motion-instance-card > .relative,
+          .flip-card__face .motion-instance-card .relative.h-full.flex-col,
+          .flip-card__face .preview-card-noise,
+          .flip-card__face .ios-task-surface {
+            border-radius: 26px !important;
+            box-shadow: none !important;
+            border: none !important;
+            outline: none !important;
+          }
+
+          .flip-card__face .motion-instance-card::before,
+          .flip-card__face .motion-instance-card::after,
+          .flip-card__face .motion-instance-card > .relative::before,
+          .flip-card__face .motion-instance-card > .relative::after,
+          .flip-card__face .motion-instance-card .relative.h-full.flex-col::before,
+          .flip-card__face .motion-instance-card .relative.h-full.flex-col::after {
+            border-radius: 26px !important;
           }
 
           /* 噪点层：强度由 --sf-noise 驱动（调试面板） */

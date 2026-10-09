@@ -86,12 +86,12 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
   return (
     <div
       className={cn(
-        "ios-task-surface w-full h-full rounded-[18px] relative flex flex-col justify-between p-3.5 overflow-hidden border backdrop-blur-[40px] saturate-180 cursor-default select-text",
+        "ios-task-surface w-full h-full rounded-[26px] relative flex flex-col justify-between p-3.5 overflow-hidden backdrop-blur-[40px] saturate-180 cursor-default select-text",
         glassBg
           ? glassBg
           : isLight
-            ? "bg-white/70 border-black/5 shadow-[0_16px_60px_rgba(0,0,0,0.10)]"
-            : "bg-[#1a1625]/70 border-white/10 shadow-[0_16px_60px_rgba(0,0,0,0.35)]",
+            ? "bg-white/85"
+            : "bg-[#1a1625]/90",
         isLight && "is-light"
       )}
     >
@@ -117,21 +117,15 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
         </span>
       </div>
 
-      {/* 控制台内部设计：对齐 LaunchConsoleModal 色差内凹效果，内部 r 角更小更方（rounded-lg），边框完全对齐 */}
+      {/* 控制台内部设计：深度下沉物理凹陷舱体，多层顶部下沉内阴影 + 底部发丝倒角高光反光线，空间深度感极其明显 */}
       <div
         onClick={() => terminalInputRef.current?.focus()}
         className={cn(
-          "flex-1 min-h-0 mb-3 rounded-lg p-2.5 flex flex-col cursor-text select-text overflow-hidden font-mono text-[10.5px] leading-relaxed border transition-colors",
-          "shadow-[inset_0_2px_6px_rgba(0,0,0,0.35),inset_0_0.5px_0_rgba(0,0,0,0.2)]",
+          "flex-1 min-h-0 mb-3 rounded-lg p-2.5 flex flex-col cursor-text select-text overflow-hidden font-mono text-[10.5px] leading-relaxed relative z-10 transition-colors border",
           isLight
-            ? "bg-black/[0.04] border-black/[0.10]"
-            : "bg-black/[0.38] border-white/[0.05]"
+            ? "bg-[#e5e0da] border-black/15 shadow-[inset_0_3px_8px_rgba(0,0,0,0.16),inset_0_1px_2px_rgba(0,0,0,0.12),inset_0_-1px_0.5px_rgba(255,255,255,0.9),0_1px_1px_rgba(255,255,255,0.8)]"
+            : "bg-[#09080e] border-black/50 shadow-[inset_0_4px_10px_-1px_rgba(0,0,0,0.85),inset_0_1.5px_3px_rgba(0,0,0,0.95),inset_0_-1px_0.5px_rgba(255,255,255,0.08),0_1px_1px_rgba(255,255,255,0.05)]"
         )}
-        style={{
-          backgroundColor: isLight
-            ? undefined
-            : "var(--sc-console-mask-bg, rgba(0, 0, 0, var(--sc-console-mask-opacity, 0.38)))",
-        }}
       >
         {/* 日志流与命令行输入 */}
         <div ref={logsContainerRef} data-native-log-list className="flex-1 overflow-y-auto space-y-1 scrollbar-subtle pr-1 font-mono text-[10px]">
