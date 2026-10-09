@@ -1243,12 +1243,12 @@
             /* transform 过渡只用于离开卡片时的回正（400ms 平滑归零）；
                指针在卡上时 JS 把 --tilt-dur 切到 0ms 实现即时跟随，
                避免缓动滞后带来的"整排晃动"观感。 */
-            transition: box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1),
-              transform var(--tilt-dur, 400ms) cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+            transition: box-shadow 200ms ease,
+              transform var(--tilt-dur, 150ms) cubic-bezier(0.16, 1, 0.3, 1) !important;
           }
 
-          .carousel-scrollbar-hidden > [data-card-motion-managed]:not(.motion-instance-card) {
-            transition: transform var(--tilt-dur, 400ms) cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+          .carousel-scrollbar-hidden:not([data-carousel-committing]) > [data-card-motion-managed]:not(.motion-instance-card):not([data-reordering]):not([data-dropping]):not([data-reorder-committing]) {
+            transition: transform var(--tilt-dur, 150ms) cubic-bezier(0.16, 1, 0.3, 1) !important;
           }
 
           [data-card-motion-managed][data-card-pressure] > [aria-hidden="false"] > .ios-task-surface {
@@ -2053,7 +2053,7 @@
             while (curr && curr.parentElement !== track) {
               curr = curr.parentElement;
             }
-            if (!curr?.hasAttribute?.("data-card-index")) {
+            if (!curr?.hasAttribute?.("data-card-index") || curr?.classList?.contains("flip-card")) {
               return null;
             }
             return { track, card: curr };
@@ -2100,6 +2100,27 @@
             )) || (selection && !selection.isCollapsed
               && (card.contains(selection.anchorNode) || card.contains(selection.focusNode)));
           };
+          const solveCubicBezier = (p1x, p1y, p2x, p2y) => {
+            return (t) => {
+              if (t <= 0) return 0;
+              if (t >= 1) return 1;
+              let u = t;
+              for (let i = 0; i < 6; i++) {
+                const f = 3 * (1 - u) * (1 - u) * u * p1x + 3 * (1 - u) * u * u * p2x + u * u * u - t;
+                const df = 3 * (1 - u) * (1 - u) * p1x + 6 * (1 - u) * u * (p2x - p1x) + 3 * u * u * (1 - p2x);
+                if (Math.abs(f) < 1e-4) break;
+                u -= f / (df || 1);
+              }
+              return 3 * (1 - u) * (1 - u) * u * p1y + 3 * (1 - u) * u * u * p2y + u * u * u;
+            };
+          };
+
+          // 紧致敏捷的微触感按压与利落回弹（杜绝过冲与果冻晃动）
+          const bezierPress = solveCubicBezier(0.2, 0, 0, 1);
+          const bezierRelease = solveCubicBezier(0.16, 1, 0.3, 1);
+          const PRESS_DUR_MS = 80;
+          const RELEASE_DUR_MS = 150;
+
           const stateFor = ({ card, track }) => {
             let state = states.get(card);
             if (!state) {
@@ -2107,28 +2128,34 @@
                 card, track, hoverU: 0, hoverV: 0, hover: false, hoverReturn: null,
                 channels: Array.from({ length: 3 }, () => ({ value: 0, velocity: 0, target: 0 })),
                 lastTime: view.performance.now(), pressureLock: false, tiltLock: false,
+                pressPhase: "idle", pressStart: 0, pressStartDepth: 0,
+                releaseStart: 0, releaseStartDepth: 0, depth: 0, pressMoving: false,
               };
               states.set(card, state);
             }
             card.dataset.cardMotionManaged = "true";
             return state;
           };
-          const pressMoving = (state) => state.channels.some((channel) =>
-            Math.abs(channel.value - channel.target) > 0.0008 || Math.abs(channel.velocity) > 0.025);
+          const pressMoving = (state) => !!state.pressMoving;
           const render = (state) => {
             const rawDeg = parseFloat(doc.documentElement.style.getPropertyValue("--sf-tilt-max"));
             const deg = Number.isFinite(rawDeg) ? rawDeg : TILT_MAX_DEG;
-            const [x, y, depth] = state.channels.map((channel) => channel.value);
-            const angleY = state.hoverU * deg / 2 + clamp(x, -1, 1) * 3;
-            const angleX = -state.hoverV * deg / 2 - clamp(y, -1, 1) * 3;
+            const depth = state.depth || 0;
+            const angleY = state.hoverU * deg / 2;
+            const angleX = -state.hoverV * deg / 2;
+            const currentScale = Math.max(0.993, 1 - depth * 0.007);
+            const currentZ = clamp(-depth * 2, -2, 0.3);
             const tilt = `perspective(900px) rotateY(${angleY.toFixed(3)}deg) rotateX(${angleX.toFixed(3)}deg) ` +
-              `translateZ(${clamp(-depth * 5, -5, 0.3).toFixed(3)}px) scale(${Math.max(0.985, 1 - depth * 0.015).toFixed(5)})`;
+              `translateZ(${currentZ.toFixed(3)}px) scale(${currentScale.toFixed(5)})`;
             state.card.style.transform = tilt;
           };
           const neutral = (state, immediate = false) => {
-            state.card.style.setProperty("--tilt-dur", immediate ? "0ms" : "400ms");
+            state.card.style.setProperty("--tilt-dur", immediate ? "0ms" : "150ms");
             state.card.style.removeProperty("--preview-tilt");
             state.card.style.transform = immediate ? "none" : "";
+            state.pressPhase = "idle";
+            state.pressMoving = false;
+            state.depth = 0;
             snap(state, "pressure", false);
             snap(state, "tilt", false);
             states.delete(state.card);
@@ -2140,7 +2167,9 @@
             state.hover = false;
             state.hoverReturn = null;
             state.hoverU = state.hoverV = 0;
-            state.channels.forEach((channel) => { channel.value = channel.velocity = channel.target = 0; });
+            state.depth = 0;
+            state.pressPhase = "idle";
+            state.pressMoving = false;
             if (hovered === state) hovered = null;
             if (held?.state === state) {
               blockedPointers.add(held.id);
@@ -2162,40 +2191,49 @@
             held = hovered = null;
           };
 
-          // Closed-form damped springs preserve position and velocity when a press is interrupted.
+          // 优雅贝塞尔曲线驱动物理按压与回弹
           const advance = (state, now) => {
-            const dt = Math.min(0.064, Math.max(0, (now - state.lastTime) / 1000));
             state.lastTime = now;
             const down = held?.state === state;
-            const frequency = down ? 34 : 20;
-            const damping = down ? 1 : 0.8;
-            for (const channel of state.channels) {
-              const delta = channel.value - channel.target;
-              const velocity = channel.velocity;
-              const decay = Math.exp(-damping * frequency * dt);
-              if (damping === 1) {
-                const b = velocity + frequency * delta;
-                channel.value = channel.target + (delta + b * dt) * decay;
-                channel.velocity = (velocity - frequency * b * dt) * decay;
+
+            if (down) {
+              if (state.pressPhase !== "down") {
+                state.pressPhase = "down";
+                state.pressStart = now;
+                state.pressStartDepth = state.depth || 0;
+              }
+              const p = clamp((now - state.pressStart) / PRESS_DUR_MS, 0, 1);
+              const eased = bezierPress(p);
+              state.depth = state.pressStartDepth + (1 - state.pressStartDepth) * eased;
+              state.pressMoving = p < 1;
+            } else {
+              if (state.pressPhase === "down") {
+                state.pressPhase = "up";
+                state.releaseStart = now;
+                state.releaseStartDepth = state.depth || 0;
+              }
+              if (state.pressPhase === "up") {
+                const p = clamp((now - state.releaseStart) / RELEASE_DUR_MS, 0, 1);
+                // 贝塞尔回弹曲线：随着 p 变化，bezierRelease(p) 达到 ~1.038 微超调，实现极致温润灵动的微果冻回弹
+                const easedOut = bezierRelease(p);
+                state.depth = state.releaseStartDepth * (1 - easedOut);
+                state.pressMoving = p < 1;
+                if (p >= 1) {
+                  state.pressPhase = "idle";
+                  state.depth = 0;
+                  state.pressMoving = false;
+                }
               } else {
-                const w = frequency * Math.sqrt(1 - damping * damping);
-                const b = (velocity + damping * frequency * delta) / w;
-                const cosine = Math.cos(w * dt);
-                const sine = Math.sin(w * dt);
-                const position = delta * cosine + b * sine;
-                channel.value = channel.target + position * decay;
-                channel.velocity = (w * (-delta * sine + b * cosine) - damping * frequency * position) * decay;
+                state.depth = 0;
+                state.pressMoving = false;
               }
             }
-            if (!pressMoving(state)) state.channels.forEach((channel) => {
-              channel.value = channel.target;
-              channel.velocity = 0;
-            });
+
             if (state.hoverReturn) {
-              const progress = clamp((now - state.hoverReturn.start) / 400, 0, 1);
+              const progress = clamp((now - state.hoverReturn.start) / 420, 0, 1);
               const amount = Math.pow(1 - progress, 4);
               state.hoverU = state.hoverReturn.u * amount;
-              state.hoverV = state.hoverReturn.v * amount;
+              state.hoverV = state.hoverV * amount;
               if (progress === 1) state.hoverReturn = null;
             }
           };

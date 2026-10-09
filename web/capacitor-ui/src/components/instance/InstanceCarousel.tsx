@@ -76,12 +76,16 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     onActiveSlideChange?.(index);
   }, [onActiveSlideChange]);
 
+  // 本地实例列表原子状态：确保拖拽落位在子组件内部同帧原子提交新顺序，杜绝跨组件 props 延迟导致的闪现
+  const [localInstances, setLocalInstances] = useState(instances);
+
   useEffect(() => {
-    if (activeSlideProp !== undefined) {
-      setInternalActiveSlide(activeSlideProp);
+    if (!reorderStateRef.current?.active) {
+      setLocalInstances(instances);
     }
-  }, [activeSlideProp]);
-  const totalSlides = instances.length + 1; // 0: 新建实例, 1..N: 实例卡片
+  }, [instances]);
+
+  const totalSlides = localInstances.length + 1; // 0: 新建实例, 1..N: 实例卡片
 
   // 程序化滚动状态锁定，防止滚动中间帧触发指示器闪烁
   const isProgrammaticScrollingRef = useRef(false);
@@ -244,13 +248,25 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   // 瞬时提交保护标记：DOM 节点换位首帧强制关闭所有 transition，消除闪烁
   const [isReorderCommitting, setIsReorderCommitting] = useState(false);
 
+  // 在 DOM 节点物理重排提交的首帧（浏览器绘制前），同步强制抹平所有卡片 transition 与 transform
+  useLayoutEffect(() => {
+    if (!isReorderCommitting) return;
+    const el = carouselRef.current;
+    if (!el) return;
+    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+    cards.forEach(card => {
+      card.style.transition = "none";
+      card.style.transform = "none";
+    });
+    void el.offsetHeight; // 强制刷新渲染管线，彻底杀灭任何进行中的插值动画
+  }, [isReorderCommitting]);
+
   const reorderStateRef = useRef(reorderState);
   reorderStateRef.current = reorderState;
 
   const pointerStartRef = useRef<{ x: number; y: number; cardIndex: number; pointerId: number } | null>(null);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
   const justReorderedRef = useRef(false);
-  const autoScrollRafRef = useRef<number | null>(null);
 
   // 动态测量卡片槽位物理步长 (240px card + 28px gap = 268px)
   const getCardStride = useCallback(() => {
@@ -262,27 +278,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       if (diff > 100) return diff;
     }
     return 268;
-  }, []);
-
-  const startAutoScroll = useCallback((direction: -1 | 1) => {
-    if (autoScrollRafRef.current) return;
-    const step = () => {
-      const el = carouselRef.current;
-      if (!el || !reorderStateRef.current?.active) {
-        autoScrollRafRef.current = null;
-        return;
-      }
-      el.scrollLeft += direction * 7;
-      autoScrollRafRef.current = requestAnimationFrame(step);
-    };
-    autoScrollRafRef.current = requestAnimationFrame(step);
-  }, []);
-
-  const stopAutoScroll = useCallback(() => {
-    if (autoScrollRafRef.current) {
-      cancelAnimationFrame(autoScrollRafRef.current);
-      autoScrollRafRef.current = null;
-    }
   }, []);
 
   // 卡片按下手势监听：按住 320ms 且无大幅滑动时触发手机桌面级长按拖拽重排
@@ -328,7 +323,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     }, 320);
   }, []);
 
-  // 全局指针跟踪与 Springboard 邻卡实时让位调度
+  // 全局指针跟踪与 Springboard 邻卡实时让位调度（视口容器绝对静止，杜绝自动滚屏与 snap 暴冲）
   useEffect(() => {
     const onPointerMove = (e: PointerEvent) => {
       const start = pointerStartRef.current;
@@ -347,12 +342,12 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         return;
       }
 
-      // 已处于拖拽重排模式中
+      // 已处于拖拽重排模式中：纯在当前视口内平滑计算槽位，容器保持完全静止
       e.preventDefault();
       const dx = e.clientX - start.x;
       const stride = getCardStride();
       const slotDelta = Math.round(dx / stride);
-      const newTarget = Math.max(0, Math.min(instances.length - 1, currentReorder.draggedIndex + slotDelta));
+      const newTarget = Math.max(0, Math.min(localInstances.length - 1, currentReorder.draggedIndex + slotDelta));
 
       if (newTarget !== currentReorder.targetIndex) {
         try { navigator.vibrate?.([10]); } catch {}
@@ -365,20 +360,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       };
       reorderStateRef.current = nextState;
       setReorderState(nextState);
-
-      // 视口边缘自动推进
-      const el = carouselRef.current;
-      if (el) {
-        const rect = el.getBoundingClientRect();
-        const edgeThreshold = 80;
-        if (e.clientX - rect.left < edgeThreshold) {
-          startAutoScroll(-1);
-        } else if (rect.right - e.clientX < edgeThreshold) {
-          startAutoScroll(1);
-        } else {
-          stopAutoScroll();
-        }
-      }
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -386,7 +367,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
       }
-      stopAutoScroll();
 
       const currentReorder = reorderStateRef.current;
       if (!currentReorder?.active) {
@@ -394,7 +374,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         return;
       }
 
-      // 执行放手落位吸附动画
+      // 执行放手落位吸附动画（180ms 与 CSS 严格对齐）
       const stride = getCardStride();
       const finalOffset = (currentReorder.targetIndex - currentReorder.draggedIndex) * stride;
 
@@ -410,26 +390,36 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         const fromIdx = currentReorder.draggedIndex;
         const toIdx = currentReorder.targetIndex;
 
-        // 1. 瞬时进入无过渡提交保护期，强制所有卡片 transition: none，消除 DOM 重排抽搐
+        if (fromIdx !== toIdx) {
+          const next = [...localInstances];
+          const [moved] = next.splice(fromIdx, 1);
+          next.splice(toIdx, 0, moved);
+
+          // 原子更新：在子组件同一个渲染周期中，将本地渲染数据更新为新顺序，彻底消灭跨组件 props 时差闪现
+          setLocalInstances(next);
+          onReorderInstances?.(next);
+        }
+
+        // 瞬时进入无过渡提交保护期，强制所有卡片 transition: none，消除 DOM 重排抽搐
         setIsReorderCommitting(true);
         setReorderState(null);
         reorderStateRef.current = null;
         pointerStartRef.current = null;
 
-        if (fromIdx !== toIdx) {
-          const next = [...instances];
-          const [moved] = next.splice(fromIdx, 1);
-          next.splice(toIdx, 0, moved);
-          onReorderInstances?.(next);
-        }
-
-        // 2. 双 rAF 跨帧保护：等待 React 完成真实 DOM 节点调换并在首个合成帧绘制完成后，平稳释放冻结
+        // 双 rAF 跨帧保护：等待 React 完成真实 DOM 节点调换并在首个合成帧绘制完成后，平稳释放冻结
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
+            const el = carouselRef.current;
+            if (el) {
+              const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+              cards.forEach(card => {
+                card.style.transition = "";
+                card.style.transform = "";
+              });
+            }
             setIsReorderCommitting(false);
 
-            // 3. 在 DOM 节点彻底稳定后平稳解除原生 Scroll-Snap 锁定，杜绝滚动争抢
-            const el = carouselRef.current;
+            // 在 DOM 彻底稳定后平稳解除原生 Scroll-Snap 锁定，视口完全静止
             if (el) {
               setCarouselSnapLock(el, "drag", false);
               el.style.scrollBehavior = "";
@@ -440,7 +430,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
             }, 200);
           });
         });
-      }, 220);
+      }, 180);
     };
 
     const onPointerCancel = (e: PointerEvent) => {
@@ -455,9 +445,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerCancel);
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-      stopAutoScroll();
     };
-  }, [getCardStride, goToSlide, instances, onReorderInstances, startAutoScroll, stopAutoScroll]);
+  }, [getCardStride, localInstances, onReorderInstances]);
 
   useEffect(() => {
     const el = carouselRef.current;
@@ -618,6 +607,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         {/* 轮播滑动轨道：垂直上下预留 36px+ 充足空间，杜绝全向 3D 体积光阴影被滚动容器边缘裁切分层 */}
         <div
           ref={carouselRef}
+          data-carousel-committing={isReorderCommitting ? "true" : undefined}
           className="carousel-scrollbar-hidden flex gap-7 overflow-x-auto snap-x snap-mandatory px-3 py-9 -mx-2 -my-4"
           style={{
             scrollbarWidth: "none",
@@ -664,7 +654,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
           </button>
 
           {/* 解耦后的实例卡片列表 */}
-          {instances.map((instance, index) => {
+          {localInstances.map((instance, index) => {
             const stride = getCardStride();
             const isBeingDragged = reorderState?.active && reorderState.draggedIndex === index;
             const isDropping = isBeingDragged && reorderState.isDropping;
@@ -685,19 +675,19 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
             // 针对 DOM 重排瞬态的精密样式隔离：
             // 1. 提交帧 (isReorderCommitting)：强制关闭一切 transition 并重置 transform，使新物理位置与 0 位移完美对齐，0 帧闪烁；
-            // 2. 拖拽与落位帧：保持高刷新率物理跟随与 cubic-bezier 吸附；
+            // 2. 拖拽与落位帧：保持高刷新率物理跟随与 180ms cubic-bezier 吸附；
             // 3. 邻卡让位帧：平滑侧移让位；
             // 4. 常态：不施加多余 inline transform/transition，纯净原生排版。
             const cardStyle: React.CSSProperties | undefined = isReorderCommitting
               ? {
                   transform: "none",
-                  transition: "none !important",
+                  transition: "none",
                 }
               : isBeingDragged
               ? {
                   transform: `translate3d(${reorderState.dragOffset}px, 0, 0)`,
                   zIndex: 50,
-                  transition: isDropping ? "transform 220ms cubic-bezier(0.2, 0, 0, 1)" : "none",
+                  transition: isDropping ? "transform 180ms cubic-bezier(0.2, 0, 0, 1)" : "none",
                   pointerEvents: isDropping ? "none" : "auto",
                 }
               : shiftX !== 0

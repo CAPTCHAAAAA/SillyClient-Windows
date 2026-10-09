@@ -96,18 +96,20 @@ select:focus-visible {
   --glass: oklch(1 0 0 / 0.15);
   --glass-border: oklch(0 0 0 / 0.06);
 
-  /* 动效 */
-  --motion-press: 90ms;
-  --motion-fast: 160ms;
-  --motion-base: 240ms;
-  --motion-layout: 280ms;
+  /* 动效：紧致克制按压与利落回弹，杜绝过冲与果冻颤动，保持沉稳硬朗质感 */
+  --motion-press: 80ms;
+  --motion-release: 150ms;
+  --motion-fast: 140ms;
+  --motion-base: 220ms;
+  --motion-layout: 260ms;
+  --motion-ease-press: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-release: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --motion-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1);
   --transition-fast: var(--motion-fast) var(--motion-ease-out);
   --transition-normal: var(--motion-base) var(--motion-ease-out);
   --transition-spring: var(--motion-layout) var(--motion-ease-in-out);
-
 }
 
 /* 深色模式 - iOS 黑白灰绿 */
@@ -545,23 +547,30 @@ select:focus-visible {
 
 button {
   -webkit-tap-highlight-color: transparent;
+  transition:
+    transform var(--motion-release) var(--motion-ease-release),
+    filter var(--motion-release) ease;
 }
 
-/* 按钮按压反馈：短促压缩，松手后从当前值自然回到原位。 */
+/* 按钮按压反馈：紧致敏捷微触感 */
 button:active:not(:disabled) {
-  filter: brightness(0.96) saturate(0.96);
-  transform: scale(0.985);
-  transition: transform var(--motion-press) var(--motion-ease-out), filter var(--motion-press) ease-out;
+  filter: brightness(0.97) saturate(0.98);
+  transform: scale(0.98);
+  transition:
+    transform var(--motion-press) var(--motion-ease-press),
+    filter var(--motion-press) ease-out;
 }
 
 .motion-control {
   transition-property: transform, filter, color, background-color, border-color, box-shadow, opacity;
-  transition-duration: var(--motion-fast);
-  transition-timing-function: var(--motion-ease-out);
+  transition-duration: var(--motion-release);
+  transition-timing-function: var(--motion-ease-release);
 }
 
 .motion-control:active:not(:disabled) {
-  transform: translateY(0) scale(0.985);
+  transform: translateY(0) scale(0.975);
+  transition-duration: var(--motion-press);
+  transition-timing-function: var(--motion-ease-press);
 }
 
 .carousel-pagination {
@@ -904,10 +913,11 @@ header span[class*="truncate"] {
     inset 0 -1px 0 rgba(0, 0, 0, 0.06),
     0 0 12px rgba(7, 5, 10, 0.08),
     0 2px 5px rgba(7, 5, 10, 0.055);
-  transform: translate3d(0, 0, 0);
+  transform: scale(1) translate3d(0, 0, 0);
   backface-visibility: hidden;
   will-change: transform;
   transition:
+    transform var(--motion-release) var(--motion-ease-release),
     border-color var(--motion-fast) ease,
     box-shadow var(--motion-layout) var(--motion-ease-out),
     opacity var(--motion-fast) ease;
@@ -936,12 +946,17 @@ header span[class*="truncate"] {
 }
 
 .motion-instance-card:active {
-  opacity: 0.95;
-  transition-duration: var(--motion-press);
+  opacity: 0.98;
+  transform: translateY(1px);
+  transition:
+    transform var(--motion-press) var(--motion-ease-press),
+    box-shadow var(--motion-press) var(--motion-ease-press),
+    opacity var(--motion-press) ease;
 }
 
-.motion-instance-card:active:not([data-card-motion-managed]):not([data-card-motion-managed] .motion-instance-card) {
-  transform: scale(0.985) translate3d(0, 0, 0);
+/* 当卡片位于 FlipCard 容器内时，由外层 FlipCard 统领微动效，内部不再重复变形叠加 */
+.flip-card .motion-instance-card:active {
+  transform: none !important;
 }
 
 .motion-panel-stack {

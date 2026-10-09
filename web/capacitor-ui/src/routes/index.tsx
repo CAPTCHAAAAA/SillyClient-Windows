@@ -937,6 +937,12 @@ function SillyClientLauncher() {
     );
   }, []);
 
+  // 手机桌面级长按拖拽重排持久化
+  const handleReorderInstances = useCallback((newInstances: TavernInstance[]) => {
+    setInstances(newInstances);
+    saveInstances(newInstances);
+  }, []);
+
   // 下拉刷新:触发远程状态检测与本地实例同步
   const handlePullRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -2710,6 +2716,7 @@ function SillyClientLauncher() {
           }}
           externallyRenamingId={externallyRenamingId}
           onClearExternalRenaming={() => setExternallyRenamingId(null)}
+          onReorderInstances={handleReorderInstances}
           isWindows={isWindows}
           isWeb={isWeb}
           isShowcase={isShowcase}

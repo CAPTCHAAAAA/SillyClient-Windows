@@ -46,6 +46,7 @@ export const InstanceCard = React.memo<InstanceCardProps>((props) => {
 
   return (
     <FlipCard
+      data-instance-id={props.instance.id}
       data-card-index={String(props.index + 1)}
       data-card-running={isRunning ? "true" : "false"}
       data-reordering={props.isReordering ? "true" : undefined}
