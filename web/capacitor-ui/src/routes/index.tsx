@@ -229,9 +229,21 @@ function SillyClientLauncher() {
   });
   const [showBgPanel, setShowBgPanel] = useState(false);
   const [isPanelClosing, setIsPanelClosing] = useState(false);
-  const [bgMode, setBgMode] = useState<BgMode>("dynamic");
+  const [bgMode, setBgMode] = useState<BgMode>(() => {
+    try {
+      const saved = localStorage.getItem("sillyclient.bgMode") || localStorage.getItem("bgMode");
+      if (saved === "dynamic" || saved === "custom") return saved;
+    } catch {}
+    return "dynamic";
+  });
   const [dynamicPaused, setDynamicPaused] = useState(false);
-  const [themeStyle, setThemeStyle] = useState<ThemeStyle>("dark");
+  const [themeStyle, setThemeStyle] = useState<ThemeStyle>(() => {
+    try {
+      const saved = localStorage.getItem("sillyclient.themeStyle") || localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") return saved;
+    } catch {}
+    return "dark";
+  });
   const [themeSmoothing, setThemeSmoothing] = useState(false);
   const themeSmoothingTimer = useRef<number | null>(null);
   const [customWallpaperUrl, setCustomWallpaperUrl] = useState<string | null>(null);
@@ -548,7 +560,7 @@ function SillyClientLauncher() {
     ? "bg-white/70 border-black/5 shadow-[0_16px_60px_rgba(0,0,0,0.10)]"
     : isDynamic
       ? "bg-[#1c1420]/70 border-white/10 shadow-[0_16px_60px_rgba(0,0,0,0.30)]"
-      : "bg-[#1a1625]/70 border-white/10 shadow-[0_16px_60px_rgba(0,0,0,0.35)]";
+      : "bg-[#0d0d12]/85 border-white/[0.08] shadow-[0_16px_60px_rgba(0,0,0,0.50)]";
 
 
 
@@ -864,6 +876,14 @@ function SillyClientLauncher() {
     ro.observe(activeEl);
     return () => ro.disconnect();
   }, [bgMode, showBgPanel, customWallpaperUrl]);
+
+  // 背景模式与主题风格持久化到 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("sillyclient.bgMode", bgMode);
+      localStorage.setItem("sillyclient.themeStyle", themeStyle);
+    } catch {}
+  }, [bgMode, themeStyle]);
 
   // 实例列表持久化到 localStorage
   useEffect(() => {
@@ -3104,6 +3124,8 @@ function SillyClientLauncher() {
         isClosing={isManagePanelClosing}
         onClose={closeManagePanel}
         isLight={isLight}
+        bgMode={bgMode}
+        themeStyle={themeStyle}
         glassBg={glassBg}
         isWindows={isWindows}
         allInstances={instances}
