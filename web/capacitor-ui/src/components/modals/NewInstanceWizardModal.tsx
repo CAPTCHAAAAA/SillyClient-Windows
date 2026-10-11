@@ -89,18 +89,18 @@ function InfoBadgeButton({
           : readTitle || "点击查看说明"
       }
       className={cn(
-        "motion-control relative w-4 h-4 rounded-full flex items-center justify-center transition-all duration-300",
+        "motion-control relative w-4 h-4 rounded-full flex items-center justify-center transition-colors duration-200",
         isUnread
           ? isLight
-            ? "bg-rose-500/10 border border-rose-500/40 text-rose-600 hover:bg-rose-500/20 shadow-[0_0_8px_rgba(244,63,94,0.22)]"
-            : "bg-rose-500/15 border border-rose-500/40 text-rose-400 hover:bg-rose-500/25 shadow-[0_0_8px_rgba(244,63,94,0.30)]"
+            ? "bg-rose-500/10 border border-rose-500/30 text-rose-600/75 hover:text-rose-600"
+            : "bg-rose-500/15 border border-rose-500/30 text-rose-400/75 hover:text-rose-400"
           : isOpen
           ? isLight
             ? "bg-black/10 text-[#1a1625]"
             : "bg-white/15 text-white"
           : isLight
-          ? "text-[#1a1625]/30 hover:text-[#1a1625]/70 hover:bg-black/5"
-          : "text-white/30 hover:text-white/70 hover:bg-white/5"
+          ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+          : "text-white/40 hover:text-white/85"
       )}
     >
       {isUnread ? (
@@ -468,10 +468,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                 <button
                   onClick={onPickInstallFolder}
                   className={cn(
-                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0",
+                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0 transition-colors",
                     isLight
-                      ? "border-black/[0.08] text-[#1a1625]/50 hover:bg-black/[0.04]"
-                      : "border-white/[0.08] text-white/50 hover:bg-white/[0.04]"
+                      ? "border-black/[0.08] text-[#1a1625]/50 hover:text-[#1a1625]/85"
+                      : "border-white/[0.08] text-white/50 hover:text-white/85"
                   )}
                 >
                   浏览
@@ -548,10 +548,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                     }
                   }}
                   className={cn(
-                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0",
+                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0 transition-colors",
                     isLight
-                      ? "border-black/[0.08] text-[#1a1625]/50 hover:bg-black/[0.04]"
-                      : "border-white/[0.08] text-white/50 hover:bg-white/[0.04]"
+                      ? "border-black/[0.08] text-[#1a1625]/50 hover:text-[#1a1625]/85"
+                      : "border-white/[0.08] text-white/50 hover:text-white/85"
                   )}
                 >
                   {newInstanceLocalZip ? "更换" : "导入 ZIP"}
@@ -732,11 +732,11 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
               onClose();
             }}
             className={cn(
-              "motion-control px-4 h-8 rounded-full text-xs font-medium transition-all border",
+              "motion-control px-4 h-8 rounded-full text-xs font-medium transition-colors border",
               "disabled:pointer-events-none disabled:opacity-40",
               isLight
-                ? "bg-black/[0.04] border-black/[0.06] text-[#1a1625]/60 hover:bg-black/[0.08]"
-                : "bg-white/[0.08] border-white/[0.06] text-white/60 hover:bg-white/[0.14]"
+                ? "bg-black/[0.04] border-black/[0.06] text-[#1a1625]/60 hover:text-[#1a1625]"
+                : "bg-white/[0.08] border-white/[0.06] text-white/60 hover:text-white"
             )}
           >
             取消
@@ -745,10 +745,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
             onClick={createInstance}
             disabled={isCreatingInstance}
             className={cn(
-              "motion-control px-5 h-8 rounded-full text-xs font-semibold disabled:pointer-events-none disabled:opacity-50 flex items-center gap-1.5 transition-all border",
+              "motion-control px-5 h-8 rounded-full text-xs font-semibold disabled:pointer-events-none disabled:opacity-50 flex items-center gap-1.5 transition-colors border",
               isLight
-                ? "bg-[#1a1625] border-[#1a1625] text-white hover:bg-[#1a1625]/90 active:bg-[#1a1625]/80 shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
-                : "bg-white border-white text-[#14101e] hover:bg-white/90 active:bg-white/80 shadow-[0_2px_10px_rgba(255,255,255,0.12)]"
+                ? "bg-[#1a1625] border-[#1a1625] text-white/80 hover:text-white active:bg-[#1a1625]/80 shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
+                : "bg-white border-white text-[#14101e]/80 hover:text-[#14101e] active:bg-white/80 shadow-[0_2px_10px_rgba(255,255,255,0.12)]"
             )}
           >
             {isCreatingInstance && (
