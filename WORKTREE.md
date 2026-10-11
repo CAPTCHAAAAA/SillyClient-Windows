@@ -66,6 +66,7 @@ npm --prefix .worktrees/release-hardening-windows run pack
 | 2026-10-09 | Agent (0bb65de) | 依用户指令在设置抽屉还原并保留“敬请期待”原型占位符，完成全量打包与验证 | 规范合规 |
 | 2026-10-11 | Agent | 工作树 Fast-Forward 完全对齐 main（0bb65de），80 项测试在隔离树全绿通过，完善新 Agent 同步开发接手文档 | 基线对齐 |
 | 2026-10-11 | Agent (ccad821) | **Windows 1.12.0 发布**：承接 WIP + 同步主仓 580ab07 已验收通用前端基线（3D 卡片/FlipCard/竖版管理菜单/Terminal 拖拽/9 modal 悬停精修），保留平台终态（导入数据 ZIP、空白弹窗门控、双 Tab 设置、平台契约），补齐 routes bg/theme 持久化与拖拽重排接线；前端 tsc+vite 全绿、80 项测试全绿、NSIS 打包并静默覆盖安装本机（SillyClient.exe 1.12.0.0）；lts 分支与 main 均已推送 | 已发布 |
+| 2026-10-11 | Agent (3b2f9ad) | **R2 修复（用户实测反馈）**：主页搜索栏同步为已验收 `.home-search` 轻内凹结构；routes 补传 `bgMode`/`themeStyle` 给管理菜单（跟随用户主题）；AppSettingsDrawer 与向导 6 处按钮/徽标对齐悬停纯字体高亮约定；重审确认向导「安装目录（必选）」等为更新的平台功能予以保留。80 项测试全绿、重打包覆盖重装验证，产物 SHA-256 更换为 `3c282648…` | R2 修复 |
 
 ---
 
