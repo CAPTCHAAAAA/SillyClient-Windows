@@ -43,13 +43,23 @@ function readRegistry(): InstanceRegistry {
     const instances: Record<string, InstanceRecord> = Object.create(null);
     for (const [key, value] of Object.entries(records)) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error('Invalid instance registry record');
+        // Single-record tolerance: one damaged or out-of-bounds entry must never
+        // poison the whole registry read (frozen storage contract §4).
+        console.warn(`[instances] skipping invalid registry record: ${key}`);
+        continue;
       }
       const record = value as Partial<InstanceRecord>;
+      let instancePath: string;
+      try {
+        instancePath = registeredDirectory(record.path);
+      } catch {
+        console.warn(`[instances] skipping record with invalid registered path: ${key}`);
+        continue;
+      }
       const instanceId = normalizeInstanceId(record.instanceId || key);
       instances[instanceId] = {
         instanceId,
-        path: registeredDirectory(record.path),
+        path: instancePath,
         createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
         lastUsedAt: typeof record.lastUsedAt === 'string' ? record.lastUsedAt : undefined,
         totalUsageMs: Number.isFinite(record.totalUsageMs) ? Math.max(0, Number(record.totalUsageMs)) : 0,

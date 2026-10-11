@@ -413,8 +413,27 @@ test('a missing registered custom path never adopts a same-ID managed directory 
   assert.equal(fs.existsSync(path.join(impostor, 'server.js')), true);
 });
 
-test('registered instances reject conflicting explicit paths without replacing registration or deleting another directory', async (t) => {
+test('a missing registered path heals onto an existing explicit card path from the directory transition', async (t) => {
   const harness = pluginHarness(t);
+  const abandoned = path.join(harness.root, 'abandoned-hidden');
+  const moved = path.join(harness.root, 'moved-custom');
+  serverFiles(moved);
+  harness.load('src/runtime/instances.ts').registerInstance('custom', abandoned);
+  fs.rmSync(abandoned, { recursive: true, force: true });
+  const info = await harness.plugin.handle('getInstanceInfo', {
+    instanceId: 'custom', installPath: moved, installPathMode: 'exact',
+  });
+  assert.equal(info.path, moved);
+  assert.equal(info.status, 'stopped');
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    instanceId: 'custom', operationId: 'heal-op', port: 8000, installPath: moved, installPathMode: 'exact',
+  }), { ready: true });
+  assert.equal(harness.starts(), 1);
+  // The healed launch re-registers usage at the real location, repairing the stale registration.
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('custom')?.path, moved);
+});
+
+test('registered instances reject conflicting explicit paths without replacing registration or deleting another directory', async (t) => {  const harness = pluginHarness(t);
   const registered = path.join(harness.root, 'registered');
   const other = path.join(harness.root, 'other');
   serverFiles(registered);
@@ -451,15 +470,23 @@ test('copy migration targets remain exact and malformed target paths cannot be s
   assert.equal(fs.existsSync(path.join(source, 'server.js')), true);
 });
 
-test('invalid registered paths fail closed instead of disappearing from a registry snapshot', (t) => {
+test('invalid registered paths are isolated to their own record and never poison the registry snapshot', (t) => {
   const root = fixture(t);
   const paths = pathsFor(root);
   const store = loader({ './paths': paths })('src/runtime/instances.ts');
-  const bytes = JSON.stringify({ version: 1, instances: { custom: { instanceId: 'custom', path: 'relative-folder' } } });
+  const bytes = JSON.stringify({ version: 1, instances: {
+    custom: { instanceId: 'custom', path: 'relative-folder' },
+    healthy: { instanceId: 'healthy', path: path.join(root, 'healthy') },
+  } });
   fs.writeFileSync(paths.instanceRegistryPath, bytes);
-  assert.throws(() => store.getInstanceRecord('custom'), /registered|registry/i);
-  assert.throws(() => store.registerInstance('other', path.join(root, 'other')), /registered|registry/i);
-  assert.equal(fs.readFileSync(paths.instanceRegistryPath, 'utf8'), bytes);
+  assert.equal(store.getInstanceRecord('custom'), null);
+  assert.equal(store.getInstanceRecord('healthy')?.path, path.join(root, 'healthy'));
+  assert.throws(() => store.registerInstance('other', 'relative-folder'), /registered/i);
+  store.registerInstance('other', path.join(root, 'other'));
+  const written = JSON.parse(fs.readFileSync(paths.instanceRegistryPath, 'utf8'));
+  assert.equal(written.instances.healthy.path, path.join(root, 'healthy'));
+  assert.equal(written.instances.other.path, path.join(root, 'other'));
+  assert.equal(written.instances.custom, undefined);
 });
 
 test('provision accepts the real numeric heartbeat defaults and preserves requested intervals in CLI and new YAML', async (t) => {

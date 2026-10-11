@@ -556,6 +556,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   }, [instance?.id, instance?.hasPassword]);
 
   const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalAboutInfo(null);
@@ -1577,6 +1578,22 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     更换插图
                   </button>
                 </ManageItem>
+                  {mp.type === "local" && onOpenRelocate && (
+                    <ManageItem
+                      label="存储迁移"
+                      desc="无损搬迁至新目录或软件默认路径"
+                      isLight={isLight}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => onOpenRelocate(mp)}
+                        className={manageCapsuleButtonClass(isLight)}
+                        style={{ fontSize: 16 }}
+                      >
+                        迁移目录
+                      </button>
+                    </ManageItem>
+                  )}
                   {mp.type === "local" && (
                     <ManageItem
                       label="导入数据（ZIP）"
@@ -1626,6 +1643,56 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         style={{ fontSize: 16 }}
                       >
                         扫描
+                      </button>
+                    </ManageItem>
+                  )}
+                  <ManageItem
+                    label="实例重命名"
+                    desc="修改实例的显示名称"
+                    isLight={isLight}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onTriggerRename(mp);
+                      }}
+                      className={manageCapsuleButtonClass(isLight)}
+                      style={{ fontSize: 16 }}
+                    >
+                      重命名
+                    </button>
+                  </ManageItem>
+                  {mp.type === "local" && (
+                    <ManageItem
+                      label="导出实例（ZIP）"
+                      desc={exportStatus || "自选保存位置导出为 ZIP 压缩包，方便迁移与备份"}
+                      isLight={isLight}
+                    >
+                      <button
+                        type="button"
+                        disabled={exportStatus === "正在打包…" || exportStatus === "请选择保存位置…"}
+                        onClick={async () => {
+                          setExportStatus("请选择保存位置…");
+                          try {
+                            const res = await TarvenEnv.exportInstance({
+                              instanceId: mp.installDir || mp.id,
+                              installPath: mp.installPath,
+                            });
+                            if (res.canceled) {
+                              setExportStatus(null);
+                              return;
+                            }
+                            const name = res.path.split(/[/\\]/).pop() || res.path;
+                            setExportStatus(`已导出：${name}`);
+                          } catch (error) {
+                            setExportStatus(error instanceof Error ? error.message : "导出失败，请重试");
+                          }
+                        }}
+                        className={manageCapsuleButtonClass(isLight)}
+                        style={{ fontSize: 16 }}
+                      >
+                        导出
                       </button>
                     </ManageItem>
                   )}

@@ -24,13 +24,19 @@ export function resolveInstanceDir(
     const selected = paths.serverDirFor(instanceId, installPath, installPathMode);
     if (recorded) {
       if (installPath?.trim() && path.resolve(selected).toLowerCase() !== path.resolve(recorded).toLowerCase()) {
+        // Hidden-directory → user-directory transition leftovers: the registration may
+        // still point at the abandoned location while the instance data already lives
+        // at the explicit card path. Heal onto the existing directory; otherwise the
+        // conflict protection stays in force.
+        if (!fs.existsSync(recorded) && fs.existsSync(selected)) return selected;
         throw new Error('Selected installation path conflicts with the registered instance');
       }
       return recorded;
     }
     return selected;
   }
-  // Missing registrations retain their original path, never a same-ID default.
+  // Registrations retain their original path even when it no longer exists —
+  // never adopt a same-ID default directory that may hold different data.
   if (recorded) return recorded;
   const defaultDir = paths.serverDirFor(instanceId);
   if (fs.existsSync(defaultDir)) return defaultDir;
