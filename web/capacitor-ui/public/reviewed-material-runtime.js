@@ -765,131 +765,118 @@
             background: rgba(255, 255, 255, 0.12);
           }
 
-          /* 磨砂强度滑块：恢复原点纹凹槽，保留当前扁平拨杆。 */
+          /* 磨砂强度：内凹轨道不动。进度溶进轨道，滑杆是细环，拖动无极跟手。 */
+          @property --blur-t {
+            syntax: "<number>";
+            inherits: true;
+            initial-value: 0;
+          }
+
+          .preview-blur-field {
+            position: relative;
+            height: 32px;
+            touch-action: none;
+            cursor: grab;
+            user-select: none;
+            -webkit-user-select: none;
+            transition: --blur-t 220ms cubic-bezier(0.22, 1, 0.36, 1);
+          }
+
+          .preview-blur-field.is-dragging {
+            cursor: grabbing;
+            transition: none;
+          }
+
+          .preview-blur-field:focus-visible {
+            outline: none;
+          }
+
+          .preview-blur-track {
+            position: relative;
+            height: 32px;
+            border-radius: 999px;
+            overflow: hidden;
+            background:
+              linear-gradient(100deg, rgba(255, 255, 255, 0.07), transparent 42%, rgba(0, 0, 0, 0.08) 100%),
+              linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.035));
+            -webkit-backdrop-filter: blur(12.9px) saturate(1.35);
+            backdrop-filter: blur(12.9px) saturate(1.35);
+            box-shadow:
+              inset 0 2px 4px rgba(0, 0, 0, 0.28),
+              inset 1.11px 1.67px 4.45px rgba(0, 0, 0, 0.10),
+              inset 1.11px 1.67px 4.45px rgba(0, 0, 0, 0.08),
+              inset 0 -0.7px 1px rgba(255, 255, 255, 0.16);
+          }
+
+          .preview-blur-fill {
+            position: absolute;
+            z-index: 0;
+            inset: 0 auto 0 0;
+            width: calc(29px + (100% - 32px) * var(--blur-t, 0));
+            max-width: 100%;
+            border-radius: inherit;
+            pointer-events: none;
+            background:
+              linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.08) calc(100% - 26px), rgba(255, 255, 255, 0));
+          }
+
+          .preview-blur-knob {
+            --t: var(--blur-t, 0);
+            position: absolute;
+            z-index: 2;
+            top: 50%;
+            left: calc(16px + (100% - 32px) * var(--t, 0));
+            width: 26px;
+            height: 26px;
+            border: 2px solid rgba(255, 255, 255, 0.72);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.16);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+          }
+
+          .preview-blur-field:active .preview-blur-knob,
+          .preview-blur-field.is-dragging .preview-blur-knob {
+            border-color: rgba(255, 255, 255, 0.86);
+          }
+
           .preview-blur-slider {
+            position: absolute;
+            inset: 0;
+            z-index: 3;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            opacity: 0.001;
+            cursor: pointer;
+            pointer-events: none;
             -webkit-appearance: none;
             appearance: none;
-            width: 100%;
-            height: 24px;
             background: transparent;
             outline: none;
-            cursor: pointer;
           }
 
-          .preview-blur-slider::-webkit-slider-runnable-track {
-            height: 13px;
-            border-radius: 9999px;
-            border: 1px solid rgba(255, 255, 255, 0.07);
-            background-image:
-              radial-gradient(circle at 50% 50%,
-                rgba(255, 255, 255, 0.17) 0 0.9px,
-                rgba(255, 255, 255, 0.17) 0.9px,
-                transparent 1.9px),
-              linear-gradient(to right,
-                rgba(255, 255, 255, 0.10) var(--pct, 44%),
-                rgba(255, 255, 255, 0.03) calc(var(--pct, 44%) + 8px));
-            background-size:
-              14px 100%,
-              100% 100%;
-            background-repeat: repeat-x, no-repeat;
+          body[data-preview-light] .preview-blur-track {
+            background:
+              linear-gradient(100deg, rgba(255, 255, 255, 0.34), transparent 46%, rgba(28, 18, 24, 0.05) 100%),
+              linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.28));
             box-shadow:
-              inset 0 1.5px 3px rgba(0, 0, 0, 0.16),
-              inset 0 -0.5px 0 rgba(255, 255, 255, 0.045);
+              inset 0 2px 4px rgba(28, 18, 24, 0.12),
+              inset 1.11px 1.67px 4.45px rgba(28, 18, 24, 0.10),
+              inset 1.11px 1.67px 4.45px rgba(28, 18, 24, 0.06),
+              inset 0 -0.56px 1.11px rgba(255, 255, 255, 0.45);
           }
 
-          .preview-blur-slider::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 18px;
-            height: 10px;
-            margin-top: 1.5px;
-            border: 0;
-            border-radius: 5px;
-            background: rgba(232, 229, 235, 0.94);
-            box-shadow:
-              0 1px 2px rgba(7, 5, 10, 0.24),
-              inset 0 0 0 0.5px rgba(28, 23, 34, 0.16),
-              inset 0 0.5px 0 rgba(255, 255, 255, 0.48);
-            cursor: pointer;
+          body[data-preview-light] .preview-blur-knob {
+            border-color: rgba(26, 22, 37, 0.78);
+            background: rgba(255, 255, 255, 0.62);
+            box-shadow: 0 0.5px 1px rgba(28, 18, 24, 0.16);
           }
 
-          .preview-blur-slider::-moz-range-track {
-            height: 13px;
-            border-radius: 9999px;
-            border: 1px solid rgba(255, 255, 255, 0.07);
-            background-image:
-              radial-gradient(circle at 50% 50%,
-                rgba(255, 255, 255, 0.17) 0 0.9px,
-                rgba(255, 255, 255, 0.17) 0.9px,
-                transparent 1.9px),
-              linear-gradient(to right,
-                rgba(255, 255, 255, 0.10) var(--pct, 44%),
-                rgba(255, 255, 255, 0.03) calc(var(--pct, 44%) + 8px));
-            background-size:
-              14px 100%,
-              100% 100%;
-            background-repeat: repeat-x, no-repeat;
-            box-shadow:
-              inset 0 1.5px 3px rgba(0, 0, 0, 0.16),
-              inset 0 -0.5px 0 rgba(255, 255, 255, 0.045);
-          }
-
-          .preview-blur-slider::-moz-range-thumb {
-            width: 18px;
-            height: 10px;
-            border: 0;
-            border-radius: 5px;
-            background: rgba(232, 229, 235, 0.94);
-            box-shadow:
-              0 1px 2px rgba(7, 5, 10, 0.24),
-              inset 0 0 0 0.5px rgba(28, 23, 34, 0.16),
-              inset 0 0.5px 0 rgba(255, 255, 255, 0.48);
-            cursor: pointer;
-          }
-
-          body[data-preview-light] .preview-blur-slider::-webkit-slider-runnable-track {
-            border-color: rgba(36, 30, 43, 0.10);
-            background-image:
-              radial-gradient(circle at 50% 50%,
-                rgba(36, 30, 43, 0.18) 0 0.9px,
-                rgba(36, 30, 43, 0.18) 0.9px,
-                transparent 1.9px),
-              linear-gradient(to right,
-                rgba(36, 30, 43, 0.12) var(--pct, 44%),
-                rgba(36, 30, 43, 0.045) calc(var(--pct, 44%) + 8px));
-            box-shadow:
-              inset 0 1.5px 3px rgba(36, 30, 43, 0.10),
-              inset 0 -0.5px 0 rgba(255, 255, 255, 0.5);
-          }
-
-          body[data-preview-light] .preview-blur-slider::-webkit-slider-thumb {
-            background: rgba(255, 255, 255, 0.94);
-            box-shadow:
-              0 1px 2px rgba(36, 30, 43, 0.15),
-              inset 0 0 0 0.5px rgba(36, 30, 43, 0.11),
-              inset 0 0.5px 0 rgba(255, 255, 255, 0.64);
-          }
-
-          body[data-preview-light] .preview-blur-slider::-moz-range-track {
-            border-color: rgba(36, 30, 43, 0.10);
-            background-image:
-              radial-gradient(circle at 50% 50%,
-                rgba(36, 30, 43, 0.18) 0 0.9px,
-                rgba(36, 30, 43, 0.18) 0.9px,
-                transparent 1.9px),
-              linear-gradient(to right,
-                rgba(36, 30, 43, 0.12) var(--pct, 44%),
-                rgba(36, 30, 43, 0.045) calc(var(--pct, 44%) + 8px));
-            box-shadow:
-              inset 0 1.5px 3px rgba(36, 30, 43, 0.10),
-              inset 0 -0.5px 0 rgba(255, 255, 255, 0.5);
-          }
-
-          body[data-preview-light] .preview-blur-slider::-moz-range-thumb {
-            background: rgba(255, 255, 255, 0.94);
-            box-shadow:
-              0 1px 2px rgba(36, 30, 43, 0.15),
-              inset 0 0 0 0.5px rgba(36, 30, 43, 0.11),
-              inset 0 0.5px 0 rgba(255, 255, 255, 0.64);
+          body[data-preview-light] .preview-blur-fill {
+            background:
+              linear-gradient(90deg, rgba(26, 22, 37, 0.16), rgba(26, 22, 37, 0.07) calc(100% - 26px), rgba(26, 22, 37, 0));
           }
 
           /* 4b — 壁纸导入组块：中性玻璃材质，替换原有大红大绿状态色 */
@@ -1169,7 +1156,7 @@
           /* 5 — 实例卡片：保持原透明玻璃底 + 轻微柔焦边缘。
              全部可调项走 CSS 变量，由右侧调试面板实时驱动（初值=v6）。
              圆角率 22px + background-clip: border-box 保证真圆角渲染。 */
-          .motion-instance-card {
+          .motion-instance-card:not(.flip-card__face *) {
             border-radius: var(--sf-radius, 22px) !important;
             background-clip: border-box !important;
             background-color: rgba(var(--sf-fog-rgb, 255 250 252) / var(--sf-fog, 0)) !important;
@@ -1180,6 +1167,27 @@
               inset 0 0 var(--sf-glow2-spread, 40px) 0 rgba(var(--sf-glow2-rgb, 196 120 142) / var(--sf-glow2, 0.01)),
               0 var(--sf-sh-y, 3px) var(--sf-sh-blur, 12px) rgba(var(--sf-sh-rgb, 7 5 10) / var(--sf-sh-a, 0.075)) !important;
             transition: box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+          }
+
+          .flip-card__face .motion-instance-card,
+          .flip-card__face .motion-instance-card > div,
+          .flip-card__face .motion-instance-card > .relative,
+          .flip-card__face .motion-instance-card .relative.h-full.flex-col,
+          .flip-card__face .preview-card-noise,
+          .flip-card__face .ios-task-surface {
+            border-radius: 26px !important;
+            box-shadow: none !important;
+            border: none !important;
+            outline: none !important;
+          }
+
+          .flip-card__face .motion-instance-card::before,
+          .flip-card__face .motion-instance-card::after,
+          .flip-card__face .motion-instance-card > .relative::before,
+          .flip-card__face .motion-instance-card > .relative::after,
+          .flip-card__face .motion-instance-card .relative.h-full.flex-col::before,
+          .flip-card__face .motion-instance-card .relative.h-full.flex-col::after {
+            border-radius: 26px !important;
           }
 
           /* 噪点层：强度由 --sf-noise 驱动（调试面板） */
@@ -1222,12 +1230,12 @@
             /* transform 过渡只用于离开卡片时的回正（400ms 平滑归零）；
                指针在卡上时 JS 把 --tilt-dur 切到 0ms 实现即时跟随，
                避免缓动滞后带来的"整排晃动"观感。 */
-            transition: box-shadow 400ms cubic-bezier(0.22, 1, 0.36, 1),
-              transform var(--tilt-dur, 400ms) cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+            transition: box-shadow 200ms ease,
+              transform var(--tilt-dur, 150ms) cubic-bezier(0.16, 1, 0.3, 1) !important;
           }
 
-          .carousel-scrollbar-hidden > [data-card-motion-managed]:not(.motion-instance-card) {
-            transition: transform var(--tilt-dur, 400ms) cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+          .carousel-scrollbar-hidden:not([data-carousel-committing]) > [data-card-motion-managed]:not(.motion-instance-card):not([data-reordering]):not([data-dropping]):not([data-reorder-committing]) {
+            transition: transform var(--tilt-dur, 150ms) cubic-bezier(0.16, 1, 0.3, 1) !important;
           }
 
           [data-card-motion-managed][data-card-pressure] > [aria-hidden="false"] > .ios-task-surface {
@@ -1501,10 +1509,9 @@
 
           .motion-instance-card img {
             display: block;
-            width: 100% !important;
-            height: 100% !important;
             opacity: var(--sf-img-op, 1) !important;
-            filter: brightness(var(--sf-img-bri, 1)) saturate(var(--sf-img-sat, 1)) blur(var(--sf-img-blur, 0px)) !important;
+            filter: var(--sf-img-filter, none) !important;
+            transform: none !important;
           }
 
           /* 压掉源样式遗留的卡片伪元素盖层，保持背景通透
@@ -1590,23 +1597,69 @@
             to { opacity: 0; }
           }
 
+          /* 管理菜单左侧卡片叠在 14px 间距里。轮播用的 7px/26px 投影会被裁成圆角外的深色断层，
+             再叠上壁纸色就变成两层阴影。侧栏内改成和栏体同色的实底，不再外扩投影。 */
+          .manage-panel-surface aside .motion-instance-card,
+          .manage-panel-surface aside .motion-instance-card:hover,
+          body[data-preview-light] .manage-panel-surface aside .motion-instance-card,
+          body[data-preview-light] .manage-panel-surface aside .motion-instance-card:hover,
+          body[data-preview-dark-mode] .manage-panel-surface aside .motion-instance-card,
+          body[data-preview-dark-mode] .manage-panel-surface aside .motion-instance-card:hover {
+            background-color: rgba(255, 255, 255, 0.055) !important;
+            -webkit-backdrop-filter: none !important;
+            backdrop-filter: none !important;
+            box-shadow:
+              inset 0 0 0 1px rgba(255, 255, 255, 0.05),
+              inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+          }
+
+          .manage-panel-surface aside .motion-instance-card::after,
+          body[data-preview-light] .manage-panel-surface aside .motion-instance-card::after,
+          body[data-preview-dark-mode] .manage-panel-surface aside .motion-instance-card::after {
+            background: transparent !important;
+          }
+
+          body[data-preview-light] .manage-panel-surface.is-light aside .motion-instance-card,
+          body[data-preview-light] .manage-panel-surface.is-light aside .motion-instance-card:hover,
+          .manage-panel-surface.is-light aside .motion-instance-card,
+          .manage-panel-surface.is-light aside .motion-instance-card:hover {
+            background-color: rgba(255, 255, 255, 0.28) !important;
+            box-shadow:
+              inset 0 0 0 1px rgba(26, 22, 37, 0.05),
+              inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+          }
+
         `;
 
         const textNodesMatching = (node, value) =>
           Array.from(node.querySelectorAll("span")).filter((item) => item.textContent.trim() === value);
 
-        const setWallpaperBlur = (doc, value) => {
-          wallpaperBlur = Number(value);
-          doc.documentElement.style.setProperty("--preview-wallpaper-blur", `${wallpaperBlur}px`);
+        const setWallpaperBlur = (doc, value, visualT) => {
+          const min = 0;
+          const max = 16;
+          const numeric = Math.min(max, Math.max(min, Number(value)));
+          const t = visualT == null
+            ? (max === min ? 0 : (numeric - min) / (max - min))
+            : Math.min(1, Math.max(0, Number(visualT)));
+          const shown = min + t * (max - min);
+          wallpaperBlur = shown;
+          doc.documentElement.style.setProperty("--preview-wallpaper-blur", `${shown}px`);
           const output = doc.querySelector(".preview-wallpaper-blur-control output");
-          if (output) output.value = `${wallpaperBlur} px`;
-          const slider = doc.querySelector(".preview-blur-slider");
-          if (slider) {
-            const min = Number(slider.min) || 0;
-            const max = Number(slider.max) || 16;
-            const pct = ((wallpaperBlur - min) / (max - min)) * 100;
-            slider.style.setProperty("--pct", `${pct}%`);
+          if (output) output.value = formatBlur(shown);
+          const field = doc.querySelector(".preview-blur-field");
+          const slider = field?.querySelector(".preview-blur-slider");
+          if (field) {
+            field.style.setProperty("--blur-t", String(t));
+            field.setAttribute("aria-valuenow", String(Math.round(shown * 10) / 10));
+            field.setAttribute("aria-valuetext", formatBlur(shown));
+            field.querySelectorAll(".preview-blur-dot").forEach((dot) => dot.remove());
           }
+          if (slider) slider.value = String(shown);
+        };
+
+        const formatBlur = (value) => {
+          const rounded = Math.round(Number(value) * 10) / 10;
+          return `${Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)} px`;
         };
 
         const getBackgroundPanel = (doc) =>
@@ -1678,8 +1731,9 @@
           const wallpaperGroup = wallpaperLabel?.parentElement;
           if (!wallpaperGroup) return;
           if (existing) {
-            if (wallpaperGroup.nextElementSibling !== existing) wallpaperGroup.after(existing);
-            return;
+            if (!existing.querySelector(".preview-blur-fill")) existing.remove();
+            else if (wallpaperGroup.nextElementSibling !== existing) wallpaperGroup.after(existing);
+            if (existing.isConnected) return;
           }
 
           const isLight = !!doc.body.dataset.previewLight;
@@ -1697,17 +1751,84 @@
           output.value = `${wallpaperBlur} px`;
           label.append(title, output);
 
+          const field = doc.createElement("div");
+          field.className = "preview-blur-field";
+          const track = doc.createElement("div");
+          track.className = "preview-blur-track";
+          track.setAttribute("aria-hidden", "true");
+          const fill = doc.createElement("span");
+          fill.className = "preview-blur-fill";
+          track.append(fill);
+          const blurMin = 0;
+          const blurMax = 16;
+          const knob = doc.createElement("span");
+          knob.className = "preview-blur-knob";
+          track.append(knob);
+
           const input = doc.createElement("input");
           input.className = "preview-blur-slider";
           input.type = "range";
-          input.min = "0";
-          input.max = "16";
-          input.step = "1";
+          input.min = String(blurMin);
+          input.max = String(blurMax);
+          input.step = "any";
           input.value = String(wallpaperBlur);
           input.setAttribute("aria-label", "壁纸磨砂强度");
-          input.addEventListener("input", () => setWallpaperBlur(doc, input.value));
+          input.tabIndex = -1;
 
-          control.append(label, input);
+          const valueFromPointer = (event) => {
+            const rect = track.getBoundingClientRect();
+            const inset = 16;
+            const span = Math.max(1, rect.width - inset * 2);
+            const x = Math.min(rect.width - inset, Math.max(inset, event.clientX - rect.left));
+            const ratio = (x - inset) / span;
+            return { t: ratio, value: blurMin + ratio * (blurMax - blurMin) };
+          };
+
+          field.tabIndex = 0;
+          field.setAttribute("role", "slider");
+          field.setAttribute("aria-label", "壁纸磨砂强度");
+          field.setAttribute("aria-valuemin", String(blurMin));
+          field.setAttribute("aria-valuemax", String(blurMax));
+          field.setAttribute("aria-orientation", "horizontal");
+          field.addEventListener("pointerdown", (event) => {
+            if (event.button != null && event.button !== 0) return;
+            event.preventDefault();
+            field.setPointerCapture(event.pointerId);
+            field.classList.add("is-dragging");
+            const apply = (pointerEvent) => {
+              const next = valueFromPointer(pointerEvent);
+              setWallpaperBlur(doc, next.value, next.t);
+            };
+            const end = (pointerEvent) => {
+              if (field.hasPointerCapture?.(pointerEvent.pointerId)) {
+                field.releasePointerCapture(pointerEvent.pointerId);
+              }
+              field.classList.remove("is-dragging");
+              const next = valueFromPointer(pointerEvent);
+              setWallpaperBlur(doc, next.value, next.t);
+              field.removeEventListener("pointermove", apply);
+              field.removeEventListener("pointerup", end);
+              field.removeEventListener("pointercancel", end);
+            };
+            apply(event);
+            field.addEventListener("pointermove", apply);
+            field.addEventListener("pointerup", end);
+            field.addEventListener("pointercancel", end);
+          });
+          field.addEventListener("keydown", (event) => {
+            const current = Number(input.value);
+            let next = null;
+            if (event.key === "ArrowRight" || event.key === "ArrowUp") next = Math.round(current) + 1;
+            else if (event.key === "ArrowLeft" || event.key === "ArrowDown") next = Math.round(current) - 1;
+            else if (event.key === "Home") next = blurMin;
+            else if (event.key === "End") next = blurMax;
+            if (next == null) return;
+            event.preventDefault();
+            setWallpaperBlur(doc, Math.min(blurMax, Math.max(blurMin, next)));
+          });
+
+          field.append(track, input);
+          control.append(label, field);
           wallpaperGroup.after(control);
           setWallpaperBlur(doc, wallpaperBlur);
         };
@@ -2032,7 +2153,7 @@
             while (curr && curr.parentElement !== track) {
               curr = curr.parentElement;
             }
-            if (!curr?.hasAttribute?.("data-card-index")) {
+            if (!curr?.hasAttribute?.("data-card-index") || curr?.classList?.contains("flip-card")) {
               return null;
             }
             return { track, card: curr };
@@ -2079,6 +2200,27 @@
             )) || (selection && !selection.isCollapsed
               && (card.contains(selection.anchorNode) || card.contains(selection.focusNode)));
           };
+          const solveCubicBezier = (p1x, p1y, p2x, p2y) => {
+            return (t) => {
+              if (t <= 0) return 0;
+              if (t >= 1) return 1;
+              let u = t;
+              for (let i = 0; i < 6; i++) {
+                const f = 3 * (1 - u) * (1 - u) * u * p1x + 3 * (1 - u) * u * u * p2x + u * u * u - t;
+                const df = 3 * (1 - u) * (1 - u) * p1x + 6 * (1 - u) * u * (p2x - p1x) + 3 * u * u * (1 - p2x);
+                if (Math.abs(f) < 1e-4) break;
+                u -= f / (df || 1);
+              }
+              return 3 * (1 - u) * (1 - u) * u * p1y + 3 * (1 - u) * u * u * p2y + u * u * u;
+            };
+          };
+
+          // 紧致敏捷的微触感按压与利落回弹（杜绝过冲与果冻晃动）
+          const bezierPress = solveCubicBezier(0.2, 0, 0, 1);
+          const bezierRelease = solveCubicBezier(0.16, 1, 0.3, 1);
+          const PRESS_DUR_MS = 80;
+          const RELEASE_DUR_MS = 150;
+
           const stateFor = ({ card, track }) => {
             let state = states.get(card);
             if (!state) {
@@ -2086,28 +2228,34 @@
                 card, track, hoverU: 0, hoverV: 0, hover: false, hoverReturn: null,
                 channels: Array.from({ length: 3 }, () => ({ value: 0, velocity: 0, target: 0 })),
                 lastTime: view.performance.now(), pressureLock: false, tiltLock: false,
+                pressPhase: "idle", pressStart: 0, pressStartDepth: 0,
+                releaseStart: 0, releaseStartDepth: 0, depth: 0, pressMoving: false,
               };
               states.set(card, state);
             }
             card.dataset.cardMotionManaged = "true";
             return state;
           };
-          const pressMoving = (state) => state.channels.some((channel) =>
-            Math.abs(channel.value - channel.target) > 0.0008 || Math.abs(channel.velocity) > 0.025);
+          const pressMoving = (state) => !!state.pressMoving;
           const render = (state) => {
             const rawDeg = parseFloat(doc.documentElement.style.getPropertyValue("--sf-tilt-max"));
             const deg = Number.isFinite(rawDeg) ? rawDeg : TILT_MAX_DEG;
-            const [x, y, depth] = state.channels.map((channel) => channel.value);
-            const angleY = state.hoverU * deg / 2 + clamp(x, -1, 1) * 3;
-            const angleX = -state.hoverV * deg / 2 - clamp(y, -1, 1) * 3;
+            const depth = state.depth || 0;
+            const angleY = state.hoverU * deg / 2;
+            const angleX = -state.hoverV * deg / 2;
+            const currentScale = Math.max(0.993, 1 - depth * 0.007);
+            const currentZ = clamp(-depth * 2, -2, 0.3);
             const tilt = `perspective(900px) rotateY(${angleY.toFixed(3)}deg) rotateX(${angleX.toFixed(3)}deg) ` +
-              `translateZ(${clamp(-depth * 5, -5, 0.3).toFixed(3)}px) scale(${Math.max(0.985, 1 - depth * 0.015).toFixed(5)})`;
+              `translateZ(${currentZ.toFixed(3)}px) scale(${currentScale.toFixed(5)})`;
             state.card.style.transform = tilt;
           };
           const neutral = (state, immediate = false) => {
-            state.card.style.setProperty("--tilt-dur", immediate ? "0ms" : "400ms");
+            state.card.style.setProperty("--tilt-dur", immediate ? "0ms" : "150ms");
             state.card.style.removeProperty("--preview-tilt");
             state.card.style.transform = immediate ? "none" : "";
+            state.pressPhase = "idle";
+            state.pressMoving = false;
+            state.depth = 0;
             snap(state, "pressure", false);
             snap(state, "tilt", false);
             states.delete(state.card);
@@ -2119,7 +2267,9 @@
             state.hover = false;
             state.hoverReturn = null;
             state.hoverU = state.hoverV = 0;
-            state.channels.forEach((channel) => { channel.value = channel.velocity = channel.target = 0; });
+            state.depth = 0;
+            state.pressPhase = "idle";
+            state.pressMoving = false;
             if (hovered === state) hovered = null;
             if (held?.state === state) {
               blockedPointers.add(held.id);
@@ -2141,40 +2291,49 @@
             held = hovered = null;
           };
 
-          // Closed-form damped springs preserve position and velocity when a press is interrupted.
+          // 优雅贝塞尔曲线驱动物理按压与回弹
           const advance = (state, now) => {
-            const dt = Math.min(0.064, Math.max(0, (now - state.lastTime) / 1000));
             state.lastTime = now;
             const down = held?.state === state;
-            const frequency = down ? 34 : 20;
-            const damping = down ? 1 : 0.8;
-            for (const channel of state.channels) {
-              const delta = channel.value - channel.target;
-              const velocity = channel.velocity;
-              const decay = Math.exp(-damping * frequency * dt);
-              if (damping === 1) {
-                const b = velocity + frequency * delta;
-                channel.value = channel.target + (delta + b * dt) * decay;
-                channel.velocity = (velocity - frequency * b * dt) * decay;
+
+            if (down) {
+              if (state.pressPhase !== "down") {
+                state.pressPhase = "down";
+                state.pressStart = now;
+                state.pressStartDepth = state.depth || 0;
+              }
+              const p = clamp((now - state.pressStart) / PRESS_DUR_MS, 0, 1);
+              const eased = bezierPress(p);
+              state.depth = state.pressStartDepth + (1 - state.pressStartDepth) * eased;
+              state.pressMoving = p < 1;
+            } else {
+              if (state.pressPhase === "down") {
+                state.pressPhase = "up";
+                state.releaseStart = now;
+                state.releaseStartDepth = state.depth || 0;
+              }
+              if (state.pressPhase === "up") {
+                const p = clamp((now - state.releaseStart) / RELEASE_DUR_MS, 0, 1);
+                // 贝塞尔回弹曲线：随着 p 变化，bezierRelease(p) 达到 ~1.038 微超调，实现极致温润灵动的微果冻回弹
+                const easedOut = bezierRelease(p);
+                state.depth = state.releaseStartDepth * (1 - easedOut);
+                state.pressMoving = p < 1;
+                if (p >= 1) {
+                  state.pressPhase = "idle";
+                  state.depth = 0;
+                  state.pressMoving = false;
+                }
               } else {
-                const w = frequency * Math.sqrt(1 - damping * damping);
-                const b = (velocity + damping * frequency * delta) / w;
-                const cosine = Math.cos(w * dt);
-                const sine = Math.sin(w * dt);
-                const position = delta * cosine + b * sine;
-                channel.value = channel.target + position * decay;
-                channel.velocity = (w * (-delta * sine + b * cosine) - damping * frequency * position) * decay;
+                state.depth = 0;
+                state.pressMoving = false;
               }
             }
-            if (!pressMoving(state)) state.channels.forEach((channel) => {
-              channel.value = channel.target;
-              channel.velocity = 0;
-            });
+
             if (state.hoverReturn) {
-              const progress = clamp((now - state.hoverReturn.start) / 400, 0, 1);
+              const progress = clamp((now - state.hoverReturn.start) / 420, 0, 1);
               const amount = Math.pow(1 - progress, 4);
               state.hoverU = state.hoverReturn.u * amount;
-              state.hoverV = state.hoverReturn.v * amount;
+              state.hoverV = state.hoverV * amount;
               if (progress === 1) state.hoverReturn = null;
             }
           };
@@ -2813,6 +2972,10 @@
           el.style.setProperty("--sf-img-bri", String(v.imgBri / 100));
           el.style.setProperty("--sf-img-sat", String(v.imgSat / 100));
           el.style.setProperty("--sf-img-blur", v.imgBlur + "px");
+          el.style.setProperty("--sf-img-filter",
+            v.imgBri === 100 && v.imgSat === 100 && v.imgBlur === 0
+              ? "none"
+              : "brightness(" + (v.imgBri / 100) + ") saturate(" + (v.imgSat / 100) + ") blur(" + v.imgBlur + "px)");
           el.style.setProperty("--sf-cover", String(v.cover / 100));
           el.style.setProperty("--sf-grad-bc", String(v.gradBc / 100));
           el.style.setProperty("--sf-grad-be", String(v.gradBe / 100));

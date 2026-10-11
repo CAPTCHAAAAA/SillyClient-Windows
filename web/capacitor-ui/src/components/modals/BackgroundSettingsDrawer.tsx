@@ -4,6 +4,7 @@ import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import type { BgMode, ThemeStyle } from "../../types";
 
+
 export interface BackgroundSettingsDrawerProps {
   isOpen: boolean;
   isClosing?: boolean;
@@ -105,8 +106,8 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
             className={cn(
               "p-1 rounded-lg transition-colors",
               isLight
-                ? "hover:bg-black/5 text-[#1a1625]/60"
-                : "hover:bg-white/5 text-white/40"
+                ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                : "text-white/40 hover:text-white/85"
             )}
           >
             <X className="w-4 h-4" />
@@ -123,36 +124,20 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
           >
             背景模式
           </span>
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="ios-choice-track" role="group" aria-label="背景模式">
             <button
+              type="button"
               onClick={() => switchThemeMode(() => setBgMode("dynamic"))}
               aria-pressed={bgMode === "dynamic"}
-              className={cn(
-                "ios-choice-control px-2 py-2 rounded-lg text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                bgMode === "dynamic"
-                  ? isLight
-                    ? "bg-black/10 border-black/20 text-[#1a1625]"
-                    : "bg-white/10 border-white/20 text-white/90"
-                  : isLight
-                  ? "bg-black/5 border-black/10 text-[#1a1625]/60 hover:bg-black/10"
-                  : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10"
-              )}
+              className="ios-choice-control px-2 py-2 text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
             >
               基础
             </button>
             <button
+              type="button"
               onClick={() => switchThemeMode(() => setBgMode("custom"))}
               aria-pressed={bgMode === "custom"}
-              className={cn(
-                "ios-choice-control px-2 py-2 rounded-lg text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                bgMode === "custom"
-                  ? isLight
-                    ? "bg-black/10 border-black/20 text-[#1a1625]"
-                    : "bg-white/10 border-white/20 text-white/90"
-                  : isLight
-                  ? "bg-black/5 border-black/10 text-[#1a1625]/60 hover:bg-black/10"
-                  : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10"
-              )}
+              className="ios-choice-control px-2 py-2 text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
             >
               自定义
             </button>
@@ -234,34 +219,20 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
               >
                 主题风格
               </span>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="ios-choice-track" role="group" aria-label="主题风格">
                 <button
+                  type="button"
                   onClick={() => switchThemeMode(() => setThemeStyle("dark"))}
                   aria-pressed={themeStyle === "dark"}
-                  className={cn(
-                    "ios-choice-control flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all border",
-                    themeStyle === "dark"
-                      ? "bg-indigo-500/20 border-indigo-500/40 text-indigo-300"
-                      : isLight
-                      ? "bg-black/5 border-black/10 text-[#1a1625]/60 hover:bg-black/10"
-                      : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10"
-                  )}
+                  className="ios-choice-control flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
                 >
                   <Moon className="w-3.5 h-3.5" /> 暗夜
                 </button>
                 <button
+                  type="button"
                   onClick={() => switchThemeMode(() => setThemeStyle("light"))}
                   aria-pressed={themeStyle === "light"}
-                  className={cn(
-                    "ios-choice-control flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all border",
-                    themeStyle === "light"
-                      ? isLight
-                        ? "bg-black/10 border-black/20 text-[#1a1625]"
-                        : "bg-white/10 border-white/20 text-white/90"
-                      : isLight
-                      ? "bg-black/5 border-black/10 text-[#1a1625]/60 hover:bg-black/10"
-                      : "bg-white/5 border-white/10 text-white/60 hover:bg-white/10"
-                  )}
+                  className="ios-choice-control flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
                 >
                   <Sun className="w-3.5 h-3.5" /> 白天
                 </button>
@@ -280,10 +251,10 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
               <button
                 onClick={onSelectWallpaperFile}
                 className={cn(
-                  "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all border",
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-colors border",
                   isLight
-                    ? "bg-black/5 border-black/10 hover:bg-black/10 text-[#1a1625]"
-                    : "bg-white/5 border-white/10 hover:bg-white/10 text-white"
+                    ? "bg-black/5 border-black/10 text-[#1a1625]/75 hover:text-[#1a1625]"
+                    : "bg-white/5 border-white/10 text-white/75 hover:text-white"
                 )}
               >
                 <div
@@ -327,10 +298,10 @@ export const BackgroundSettingsDrawer: React.FC<BackgroundSettingsDrawerProps> =
                 <button
                   onClick={() => setCustomWallpaperUrl(null)}
                   className={cn(
-                    "w-full px-3 py-2 rounded-lg text-[10px] font-medium transition-all border",
+                    "w-full px-3 py-2 rounded-lg text-[10px] font-medium transition-colors border",
                     isLight
-                      ? "bg-red-500/10 border-red-500/20 text-red-500 hover:bg-red-500/15"
-                      : "bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/15"
+                      ? "bg-red-500/10 border-red-500/20 text-red-500/70 hover:text-red-500"
+                      : "bg-red-500/10 border-red-500/20 text-red-400/70 hover:text-red-400"
                   )}
                 >
                   移除壁纸

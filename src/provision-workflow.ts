@@ -30,6 +30,7 @@ export function writeInstanceConfig(serverDir: string, port: number, config: any
     `listen: ${c.listen ?? true}`,
     `whitelistMode: false`,
     `securityOverride: true`,
+    `enableServerPlugins: true`,
     'protocol:',
     `  ipv4: ${c.ipv4 ?? true}`,
     `  ipv6: ${c.ipv6 ?? false}`,

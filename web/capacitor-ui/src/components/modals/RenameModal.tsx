@@ -86,8 +86,8 @@ export const RenameModal: React.FC<RenameModalProps> = ({
               className={cn(
                 "motion-control p-1.5 rounded-lg transition-colors",
                 isLight
-                  ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                  : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                  ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                  : "text-white/40 hover:text-white/85"
               )}
             >
               <X className="w-4 h-4" />
@@ -144,8 +144,8 @@ export const RenameModal: React.FC<RenameModalProps> = ({
             className={cn(
               "flex-1 h-8 rounded-full text-xs font-medium border transition-colors disabled:opacity-40",
               isLight
-                ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:bg-black/[0.04]"
-                : "bg-transparent border-white/[0.08] text-white/60 hover:bg-white/[0.04]"
+                ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:text-[#1a1625]"
+                : "bg-transparent border-white/[0.08] text-white/60 hover:text-white"
             )}
           >
             取消
@@ -157,8 +157,8 @@ export const RenameModal: React.FC<RenameModalProps> = ({
             className={cn(
               "flex-1 h-8 rounded-full text-xs font-medium border transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5",
               isLight
-                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
-                : "bg-white/20 border-white/15 text-white hover:bg-white/30"
+                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625]"
+                : "bg-white/20 border-white/15 text-white/70 hover:text-white"
             )}
           >
             {saving ? (

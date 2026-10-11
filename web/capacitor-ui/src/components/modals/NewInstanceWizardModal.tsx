@@ -1,4 +1,4 @@
-import React, { useState, useRef, useLayoutEffect } from "react";
+import React, { useState, useRef, useLayoutEffect, useEffect } from "react";
 import { ChevronDown, AlertTriangle, LoaderCircle, Info } from "lucide-react";
 import { TarvenEnv } from "../../capacitor-plugin";
 import { cn } from "../../lib/utils";
@@ -292,6 +292,39 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
     isOpen,
   ]);
 
+  const wizardBodyRef = useRef<HTMLDivElement>(null);
+  const [wizardBodyFade, setWizardBodyFade] = useState({ top: false, bottom: false });
+
+  const syncWizardBodyFade = () => {
+    const el = wizardBodyRef.current;
+    if (!el) return;
+    const canScroll = el.scrollHeight > el.clientHeight + 1;
+    if (!canScroll) {
+      setWizardBodyFade({ top: false, bottom: false });
+      return;
+    }
+    const top = el.scrollTop > 4;
+    const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 4;
+    setWizardBodyFade({ top, bottom });
+  };
+
+  useEffect(() => {
+    const node = wizardBodyRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    syncWizardBodyFade();
+    const observer = new ResizeObserver(() => syncWizardBodyFade());
+    observer.observe(node);
+    Array.from(node.children).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, [
+    isOpen,
+    newInstanceMode,
+    wizardHeight,
+    newInstanceError,
+    newInstanceCompanionPresetEnabled,
+    newRemoteAuthEnabled,
+  ]);
+
   const handleSwitchMode = (mode: WizardMode) => {
     if (mode === newInstanceMode) return;
     if (wizardContainerRef.current) {
@@ -301,6 +334,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
   };
 
   if (!isOpen && !isClosing) return null;
+
+  const wizardBodyMask = wizardBodyFade.top || wizardBodyFade.bottom
+    ? `linear-gradient(to bottom, ${wizardBodyFade.top ? "transparent" : "#000"} 0, #000 36px, #000 calc(100% - 36px), ${wizardBodyFade.bottom ? "transparent" : "#000"} 100%)`
+    : undefined;
 
   return (
     <div
@@ -336,7 +373,20 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-hidden">
+      <div
+        style={{
+          flex: "1 1 auto",
+          WebkitMaskImage: wizardBodyMask,
+          maskImage: wizardBodyMask,
+        }}
+        className="flex min-h-0 flex-col overflow-hidden"
+      >
+      <div
+        ref={wizardBodyRef}
+        onScroll={syncWizardBodyFade}
+        className="min-h-0 overflow-y-auto p-5 space-y-5 scrollbar-hidden"
+        style={{ flex: "1 1 auto" }}
+      >
         {/* 实例名称 */}
         <NewInstanceField label="名称" isLight={isLight}>
           <input
@@ -363,36 +413,20 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
           >
             实例模式
           </div>
-          <div className="flex gap-2">
+          <div className="ios-choice-track" role="group" aria-label="实例模式">
             <button
+              type="button"
               onClick={() => handleSwitchMode("local")}
               aria-pressed={newInstanceMode === "local"}
-              className={cn(
-                "ios-choice-control motion-control flex-1 h-9 rounded-xl text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                newInstanceMode === "local"
-                  ? isLight
-                    ? "bg-[#1a1625]/8 border-[#1a1625]/15 text-[#1a1625]"
-                    : "bg-white/10 border-white/15 text-white"
-                  : isLight
-                  ? "bg-transparent border-black/[0.06] text-[#1a1625]/35 hover:border-black/12 hover:text-[#1a1625]/55"
-                  : "bg-transparent border-white/[0.06] text-white/35 hover:border-white/12 hover:text-white/55"
-              )}
+              className="ios-choice-control py-2 text-xs font-medium border flex items-center justify-center gap-1.5 transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
             >
               本地实例
             </button>
             <button
+              type="button"
               onClick={() => handleSwitchMode("remote")}
               aria-pressed={newInstanceMode === "remote"}
-              className={cn(
-                "ios-choice-control motion-control flex-1 h-9 rounded-xl text-xs font-medium border transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                newInstanceMode === "remote"
-                  ? isLight
-                    ? "bg-[#1a1625]/8 border-[#1a1625]/15 text-[#1a1625]"
-                    : "bg-white/10 border-white/15 text-white"
-                  : isLight
-                  ? "bg-transparent border-black/[0.06] text-[#1a1625]/35 hover:border-black/12 hover:text-[#1a1625]/55"
-                  : "bg-transparent border-white/[0.06] text-white/35 hover:border-white/12 hover:text-white/55"
-              )}
+              className="ios-choice-control py-2 text-xs font-medium border flex items-center justify-center gap-1.5 transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
             >
               远程连接
             </button>
@@ -667,6 +701,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
             </div>
           </div>
         </div>
+      </div>
       </div>
 
       {/* 底部按钮 */}

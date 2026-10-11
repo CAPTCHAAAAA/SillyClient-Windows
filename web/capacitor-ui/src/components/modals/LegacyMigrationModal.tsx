@@ -123,8 +123,8 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
               className={cn(
                 "p-1.5 rounded-lg transition-colors",
                 isLight
-                  ? "hover:bg-black/5 text-[#1a1625]/30 hover:text-[#1a1625]/60"
-                  : "hover:bg-white/5 text-white/30 hover:text-white/60"
+                  ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
+                  : "text-white/40 hover:text-white/85"
               )}
               aria-label="关闭"
             >
@@ -244,10 +244,10 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
             <button
               onClick={onClose}
               className={cn(
-                "motion-control px-5 h-8 rounded-full text-xs font-medium transition-all border",
+                "motion-control px-5 h-8 rounded-full text-xs font-medium transition-colors border",
                 isLight
-                  ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
-                  : "bg-white/20 border-white/15 text-white hover:bg-white/30"
+                  ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625]"
+                  : "bg-white/20 border-white/15 text-white/70 hover:text-white"
               )}
             >
               进入控制台
@@ -259,10 +259,10 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
                   type="button"
                   onClick={onClose}
                   className={cn(
-                    "motion-control px-4 h-8 rounded-full text-xs font-medium transition-all border disabled:opacity-40",
+                    "motion-control px-4 h-8 rounded-full text-xs font-medium transition-colors border disabled:opacity-40",
                     isLight
-                      ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:bg-black/[0.04]"
-                      : "bg-transparent border-white/[0.08] text-white/60 hover:bg-white/[0.04]"
+                      ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:text-[#1a1625]"
+                      : "bg-transparent border-white/[0.08] text-white/60 hover:text-white"
                   )}
                 >
                   稍后处理
@@ -273,10 +273,10 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
                 disabled={migrating}
                 onClick={handleStartMigration}
                 className={cn(
-                  "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-all border disabled:opacity-40",
+                  "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-colors border disabled:opacity-40",
                   isLight
-                    ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14] active:bg-black/[0.18]"
-                    : "bg-white/20 border-white/15 text-white hover:bg-white/30 active:bg-white/35"
+                    ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625] active:bg-black/[0.18]"
+                    : "bg-white/20 border-white/15 text-white/70 hover:text-white active:bg-white/35"
                 )}
               >
                 {migrating ? (

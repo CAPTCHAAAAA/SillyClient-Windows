@@ -279,11 +279,33 @@ export async function installPreselectedExtensions(
       await fs.promises.mkdir(stage);
       staging.push(stage);
       const archive = path.join(stage, 'archive.zip');
-      const url = `https://codeload.github.com/${extension.repository}/zip/${extension.commit}`;
+      const rawUrl = `https://codeload.github.com/${extension.repository}/zip/${extension.commit}`;
+      const candidates = dependencies.download ? [rawUrl] : [
+        rawUrl,
+        `https://ghfast.top/${rawUrl}`,
+        `https://gh-proxy.com/${rawUrl}`,
+        `https://ghproxy.net/${rawUrl}`,
+      ];
       options.progress?.(index * 100 / extensions.length, `Downloading ${extension.displayName}`);
-      await (dependencies.download || downloadFile)(url, archive, (percent) => {
-        options.progress?.((index + percent / 100) * 100 / extensions.length, `Downloading ${extension.displayName}`);
-      }, options.signal, MAX_ARCHIVE_BYTES);
+      let downloaded = false;
+      let lastDownloadError: Error | null = null;
+      for (const mirrorUrl of candidates) {
+        checkSignal(options.signal);
+        try {
+          await (dependencies.download || downloadFile)(mirrorUrl, archive, (percent) => {
+            options.progress?.((index + percent / 100) * 100 / extensions.length, `Downloading ${extension.displayName}`);
+          }, options.signal, MAX_ARCHIVE_BYTES);
+          downloaded = true;
+          break;
+        } catch (err: any) {
+          checkSignal(options.signal);
+          lastDownloadError = err;
+          options.log?.(`Mirror download failed (${mirrorUrl}): ${err.message}`);
+        }
+      }
+      if (!downloaded) {
+        throw lastDownloadError || new Error(`Failed to download ${extension.displayName}`);
+      }
       checkSignal(options.signal);
       const archiveStat = await fs.promises.lstat(archive);
       if (!archiveStat.isFile() || archiveStat.size !== extension.archiveBytes

@@ -224,9 +224,21 @@ function SillyClientLauncher() {
   });
   const [showBgPanel, setShowBgPanel] = useState(false);
   const [isPanelClosing, setIsPanelClosing] = useState(false);
-  const [bgMode, setBgMode] = useState<BgMode>("dynamic");
+  const [bgMode, setBgMode] = useState<BgMode>(() => {
+    try {
+      const saved = localStorage.getItem("sillyclient.bgMode") || localStorage.getItem("bgMode");
+      if (saved === "dynamic" || saved === "custom") return saved;
+    } catch {}
+    return "dynamic";
+  });
   const [dynamicPaused, setDynamicPaused] = useState(false);
-  const [themeStyle, setThemeStyle] = useState<ThemeStyle>("dark");
+  const [themeStyle, setThemeStyle] = useState<ThemeStyle>(() => {
+    try {
+      const saved = localStorage.getItem("sillyclient.themeStyle") || localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") return saved;
+    } catch {}
+    return "dark";
+  });
   const [themeSmoothing, setThemeSmoothing] = useState(false);
   const themeSmoothingTimer = useRef<number | null>(null);
   const [customWallpaperUrl, setCustomWallpaperUrl] = useState<string | null>(null);
@@ -526,7 +538,7 @@ function SillyClientLauncher() {
     ? "bg-white/70 border-black/5 shadow-[0_16px_60px_rgba(0,0,0,0.10)]"
     : isDynamic
       ? "bg-[#1c1420]/70 border-white/10 shadow-[0_16px_60px_rgba(0,0,0,0.30)]"
-      : "bg-[#1a1625]/70 border-white/10 shadow-[0_16px_60px_rgba(0,0,0,0.35)]";
+      : "bg-[#0d0d12]/85 border-white/[0.08] shadow-[0_16px_60px_rgba(0,0,0,0.50)]";
 
 
 
@@ -739,6 +751,14 @@ function SillyClientLauncher() {
     return () => ro.disconnect();
   }, [bgMode, showBgPanel, customWallpaperUrl]);
 
+  // 背景模式与主题风格持久化到 localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem("sillyclient.bgMode", bgMode);
+      localStorage.setItem("sillyclient.themeStyle", themeStyle);
+    } catch {}
+  }, [bgMode, themeStyle]);
+
   // 实例列表持久化到 localStorage
   useEffect(() => {
     if (!isShowcase && !isDemoPreview) saveInstances(instances);
@@ -809,6 +829,12 @@ function SillyClientLauncher() {
         return inst;
       })
     );
+  }, []);
+
+  // 手机桌面级长按拖拽重排持久化
+  const handleReorderInstances = useCallback((newInstances: TavernInstance[]) => {
+    setInstances(newInstances);
+    saveInstances(newInstances);
   }, []);
 
   // 下拉刷新:触发远程状态检测与本地实例同步
@@ -2361,8 +2387,8 @@ function SillyClientLauncher() {
             className={cn(
               "motion-control h-7 px-3 rounded-full text-xs font-semibold transition-all border",
               isLight
-                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
-                : "bg-white/20 border-white/15 text-white hover:bg-white/30"
+                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625]"
+                : "bg-white/20 border-white/15 text-white/70 hover:text-white"
             )}
           >
             查看
@@ -2372,7 +2398,7 @@ function SillyClientLauncher() {
             aria-label="关闭更新提示"
             className={cn(
               "motion-control w-7 h-7 rounded-full flex items-center justify-center transition-all",
-              isLight ? "hover:bg-black/5 text-[#1a1625]/50" : "hover:bg-white/10 text-white/50"
+              isLight ? "text-[#1a1625]/40 hover:text-[#1a1625]/85" : "text-white/40 hover:text-white/85"
             )}
           >
             <X className="w-3.5 h-3.5" />
@@ -2443,7 +2469,7 @@ function SillyClientLauncher() {
                   }}
                   className={cn(
                     "motion-menu-item w-full px-4 py-3 text-left text-sm flex items-center gap-3 transition-colors",
-                    isLight ? "bg-[#f5f3ef]/95 hover:bg-black/5 text-[#1a1625]/80" : "bg-[#1a1625]/95 hover:bg-white/10 text-white/80"
+                    isLight ? "bg-[#f5f3ef]/95 text-[#1a1625]/60 hover:text-[#1a1625]" : "bg-[#1a1625]/95 text-white/60 hover:text-white"
                   )}
                 >
                   <span className="scale-75">{t.icon}</span>
@@ -2489,6 +2515,7 @@ function SillyClientLauncher() {
           }}
           externallyRenamingId={externallyRenamingId}
           onClearExternalRenaming={() => setExternallyRenamingId(null)}
+          onReorderInstances={handleReorderInstances}
           isWindows={isWindows}
           isWeb={isWeb}
           isShowcase={isShowcase}
