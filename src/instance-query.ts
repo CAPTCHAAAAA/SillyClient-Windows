@@ -14,46 +14,76 @@ import type {
   ScannedInstance,
 } from './contracts/ipc-contracts';
 
+/** 同一实例 ID 的历史前缀变体（local- ↔ new- 过渡期产物）。 */
+function instanceIdVariants(safeId: string): string[] {
+  if (safeId.startsWith('local-')) return [safeId, `new-${safeId.slice('local-'.length)}`];
+  if (safeId.startsWith('new-')) return [safeId, `local-${safeId.slice('new-'.length)}`];
+  return [safeId];
+}
+
+/**
+ * 无注册表记录时的全位置探测：在当前生效根、全部历史落点与旧版隐藏目录下
+ * 寻找同名（含 ID 变体）实例目录。仅认领包含 package.json 的完整实例，
+ * 命中即补登记注册表，修复旧版升级（无注册表时代）造成的实例失联。
+ */
+function discoverUnregisteredInstanceDir(safeId: string): string | null {
+  for (const root of paths.candidateInstanceRoots()) {
+    if (!fs.existsSync(root)) continue;
+    for (const candidateId of instanceIdVariants(safeId)) {
+      const candidate = path.join(root, candidateId);
+      if (!fs.existsSync(path.join(candidate, 'package.json'))) continue;
+      try {
+        if (fs.statSync(candidate).isDirectory()) return candidate;
+      } catch { /* ignore unreadable candidates */ }
+    }
+  }
+  return null;
+}
+
 export function resolveInstanceDir(
   instanceId: string,
   installPath?: string,
   installPathMode?: paths.InstallPathMode,
 ): string {
-  const recorded = instanceStore.getInstanceRecord(instanceId)?.path;
-  if (installPath !== undefined || installPathMode !== undefined) {
-    const selected = paths.serverDirFor(instanceId, installPath, installPathMode);
-    if (recorded) {
-      if (installPath?.trim() && path.resolve(selected).toLowerCase() !== path.resolve(recorded).toLowerCase()) {
-        // Hidden-directory → user-directory transition leftovers: the registration may
-        // still point at the abandoned location while the instance data already lives
-        // at the explicit card path. Heal onto the existing directory; otherwise the
-        // conflict protection stays in force.
-        if (!fs.existsSync(recorded) && fs.existsSync(selected)) return selected;
-        throw new Error('Selected installation path conflicts with the registered instance');
-      }
-      return recorded;
+  const safeId = paths.normalizeInstanceId(instanceId);
+  const selected = installPath !== undefined || installPathMode !== undefined
+    ? paths.serverDirFor(safeId, installPath, installPathMode)
+    : undefined;
+  const recorded = instanceStore.getInstanceRecord(safeId)?.path;
+
+  if (recorded) {
+    // 注册表权威：登记位置仍然存在时一律以注册表为准——前端卡片残留的旧路径
+    // （如迁移完成后未刷新的隐藏目录地址）静默自愈，绝不因此报错阻断启动。
+    if (fs.existsSync(recorded)) return recorded;
+    // 登记位置已丢失：永不认领同名其他目录（其中可能是完全不同的数据），
+    // 仅当调用方显式给出一个仍然存在的卡片路径时，原地治愈并补登记。
+    if (selected && !!installPath?.trim()
+      && path.resolve(selected).toLowerCase() !== path.resolve(recorded).toLowerCase()
+      && fs.existsSync(selected)) {
+      instanceStore.registerInstance(safeId, selected);
+      return selected;
     }
+    return recorded;
+  }
+
+  if (selected) {
+    // 显式路径不提前登记：无效选择（如指向文件）由后续校验拒绝，
+    // 登记只发生在启动成功或信息确认之后，绝不污染注册表。
     return selected;
   }
-  // Registrations retain their original path even when it no longer exists —
-  // never adopt a same-ID default directory that may hold different data.
-  if (recorded) return recorded;
-  const defaultDir = paths.serverDirFor(instanceId);
-  if (fs.existsSync(defaultDir)) return defaultDir;
-  if (instanceId.startsWith('local-')) {
-    const fallbackId = instanceId.replace('local-', 'new-');
-    const fallbackRecord = instanceStore.getInstanceRecord(fallbackId)?.path;
-    if (fallbackRecord) return fallbackRecord;
-    const fallbackDir = paths.serverDirFor(fallbackId);
-    if (fs.existsSync(fallbackDir)) return fallbackDir;
-  } else if (instanceId.startsWith('new-')) {
-    const fallbackId = instanceId.replace('new-', 'local-');
-    const fallbackRecord = instanceStore.getInstanceRecord(fallbackId)?.path;
-    if (fallbackRecord) return fallbackRecord;
-    const fallbackDir = paths.serverDirFor(fallbackId);
-    if (fs.existsSync(fallbackDir)) return fallbackDir;
+
+  // 无记录、无显式路径（旧版升级失联实例）：先查 ID 变体的注册记录，再做全位置磁盘探测。
+  for (const variantId of instanceIdVariants(safeId)) {
+    if (variantId === safeId) continue;
+    const variantRecord = instanceStore.getInstanceRecord(variantId)?.path;
+    if (variantRecord) return variantRecord;
   }
-  return defaultDir;
+  const discovered = discoverUnregisteredInstanceDir(safeId);
+  if (discovered) {
+    instanceStore.registerInstance(safeId, discovered);
+    return discovered;
+  }
+  return paths.serverDirFor(safeId);
 }
 
 export function scanInstances(
@@ -70,22 +100,15 @@ export function scanInstances(
   for (const record of repository.list()) {
     candidates.set(record.instanceId, record.path);
   }
-  const appInstancesDir = paths.appInstancesDir || path.join(paths.bootstrapDir, 'instances');
-  const legacyServersDir = paths.legacyServersDir || path.join(paths.bootstrapDir, 'servers');
-  // 1. 扫描软件目录下的 instances/ 目录
-  if (appInstancesDir && fs.existsSync(appInstancesDir)) {
-    for (const entry of fs.readdirSync(appInstancesDir, { withFileTypes: true })) {
+  // 注册表权威优先；随后按候选根顺序（当前生效根 → 安装目录默认根 → AppData 回退根 →
+  // 旧版隐藏 servers 目录）补充发现，同名实例先登记者优先——旧版隐藏目录中的实例
+  // 会被发现并补登记，但绝不遮蔽已登记记录或新落点中的同名实例。
+  for (const root of paths.candidateInstanceRoots()) {
+    if (!fs.existsSync(root)) continue;
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
       const instanceId = paths.normalizeInstanceId(entry.name);
       if (!entry.isDirectory() || candidates.has(instanceId)) continue;
-      candidates.set(instanceId, path.join(appInstancesDir, entry.name));
-    }
-  }
-  // 2. 兼容扫描旧版 C 盘下的 servers/ 目录
-  if (legacyServersDir && fs.existsSync(legacyServersDir)) {
-    for (const entry of fs.readdirSync(legacyServersDir, { withFileTypes: true })) {
-      const instanceId = paths.normalizeInstanceId(entry.name);
-      if (!entry.isDirectory() || candidates.has(instanceId)) continue;
-      candidates.set(instanceId, path.join(legacyServersDir, entry.name));
+      candidates.set(instanceId, path.join(root, entry.name));
     }
   }
   const instances: ScannedInstance[] = [];

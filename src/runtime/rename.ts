@@ -58,14 +58,15 @@ export async function renameInstance(
     if (options.installPath && fs.existsSync(options.installPath)) {
       sourcePath = options.installPath;
     } else {
-      const defaultPath = path.join(paths.appInstancesDir, safeOldId);
-      const legacyPath = path.join(paths.legacyServersDir, safeOldId);
-      if (fs.existsSync(defaultPath)) {
-        sourcePath = defaultPath;
-      } else if (fs.existsSync(legacyPath)) {
-        sourcePath = legacyPath;
-      } else {
-        throw new Error(`找不到实例 [${safeOldId}] 的物理存储目录`);
+      for (const root of paths.candidateInstanceRoots()) {
+        const candidate = path.join(root, safeOldId);
+        if (fs.existsSync(candidate)) {
+          sourcePath = candidate;
+          break;
+        }
+      }
+      if (!sourcePath || !fs.existsSync(sourcePath)) {
+        throw new Error(`找不到实例 [${safeOldId}] 的物理存储目录（已搜索当前存储根、安装目录与旧版隐藏目录）`);
       }
     }
   }

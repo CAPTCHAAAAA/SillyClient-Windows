@@ -13,6 +13,13 @@ export interface LegacyMigrationItem {
   version?: string;
 }
 
+/** 单个实例迁移成功的权威结果（后端 relocateInstance 返回）。 */
+export interface LegacyMigrationResult {
+  instanceId: string;
+  oldPath: string;
+  newPath: string;
+}
+
 export interface LegacyMigrationModalProps {
   isOpen: boolean;
   isClosing?: boolean;
@@ -20,7 +27,8 @@ export interface LegacyMigrationModalProps {
   isLight: boolean;
   glassBg: string;
   legacyInstances: LegacyMigrationItem[];
-  onMigrationComplete?: () => void;
+  /** results 为本次实际迁移成功的权威清单；allDone 表示待迁移列表已全部完成。 */
+  onMigrationComplete?: (results: LegacyMigrationResult[], allDone: boolean) => void;
 }
 
 /**
@@ -53,9 +61,12 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
     setErrorMsg(null);
 
     const successful: string[] = [];
-    try {
-      for (const item of legacyInstances) {
-        setCurrentMigratingId(item.instanceId);
+    const results: LegacyMigrationResult[] = [];
+    const failures: string[] = [];
+    // 逐项独立迁移：单项失败不阻断其余实例，失败项保留原状并明示原因。
+    for (const item of legacyInstances) {
+      setCurrentMigratingId(item.instanceId);
+      try {
         const res = await TarvenEnv.relocateInstance({
           instanceId: item.instanceId,
           targetPath: item.targetPath,
@@ -63,16 +74,20 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
         if (res.success) {
           successful.push(item.instanceId);
           setCompletedIds([...successful]);
+          results.push({ instanceId: res.instanceId, oldPath: res.oldPath, newPath: res.newPath });
         }
+      } catch (err: any) {
+        failures.push(`「${item.name}」：${err?.message || err}`);
       }
-      setIsAllDone(true);
-      onMigrationComplete?.();
-    } catch (err: any) {
-      setErrorMsg(err?.message || "迁移过程中发生异常，未完成项保留原状");
-    } finally {
-      setMigrating(false);
-      setCurrentMigratingId(null);
     }
+    if (results.length > 0) onMigrationComplete?.(results, failures.length === 0);
+    if (failures.length === 0) {
+      setIsAllDone(true);
+    } else {
+      setErrorMsg(`以下实例未能迁移，数据已保留原状，可点击再次重试：${failures.join("；")}`);
+    }
+    setMigrating(false);
+    setCurrentMigratingId(null);
   };
 
   return (
@@ -228,7 +243,7 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
           <div className="flex items-start gap-2 pt-1 text-[11px] leading-relaxed opacity-55">
             <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
             <p>
-              新版本实例统一归集至客户端根目录下的 <code className="px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[10.5px]">instances/</code> 文件夹，消除 C 盘 AppData 空间碎片并支持便携备份。受管实例在迁移过程中将自动同步底层注册表与配置，一步到位无损继续运行。
+              旧版隐藏目录中的实例将无损搬迁至当前实例存储根（默认为客户端根目录下的 <code className="px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[10.5px]">instances/</code> 文件夹，可在设置中自定义），消除 C 盘 AppData 空间碎片并支持便携备份。迁移过程中自动同步底层注册表与配置，完成后即可继续运行。
             </p>
           </div>
         </div>

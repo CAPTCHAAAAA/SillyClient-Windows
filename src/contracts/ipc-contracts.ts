@@ -178,6 +178,10 @@ export interface ProvisionAndStartParams {
   instanceId: string;
   operationId?: string;
   version: string;
+  /**
+   * 安装源仅允许在创建实例时携带。启动既有实例绝不携带安装源——
+   * 后端据此在实例目录丢失/损坏时拒绝静默下载全新实例顶替用户数据。
+   */
   zipballUrl?: string;
   localZipPath?: string;
   installPath?: string;

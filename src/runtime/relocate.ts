@@ -21,6 +21,12 @@ export interface RelocateResult {
   unchanged?: boolean;
 }
 
+/** 判断 child 是否位于 parent 目录之下（大小写不敏感，不含相等路径）。 */
+function isUnderDir(parent: string, child: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(child));
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
 /** 递归复制目录（支持跨分区） */
 async function copyDirRecursive(src: string, dest: string): Promise<void> {
   await fs.promises.mkdir(dest, { recursive: true });
@@ -92,22 +98,16 @@ async function moveDirectorySafe(source: string, target: string): Promise<void> 
  * 检测属于旧版本路径的实例（例如保存在 C 盘 AppData 的 servers 目录）
  */
 export async function checkLegacyInstances(): Promise<{ instances: LegacyInstanceItem[] }> {
-  const legacyDir = paths.legacyServersDir || path.join(paths.bootstrapDir, 'servers');
-  const appInstancesDir = paths.appInstancesDir;
+  const legacyDir = paths.legacyServersDir;
+  const activeRoot = paths.getInstancesRoot();
   const legacyCandidates = new Map<string, string>();
 
   // 1. 检查注册表中已有的实例，看其物理路径是否位于旧目录
   for (const record of instanceStore.listInstanceRecords()) {
-    const normRecordPath = path.resolve(record.path).toLowerCase();
-    const normLegacyDir = path.resolve(legacyDir).toLowerCase();
-    const normAppInstancesDir = path.resolve(appInstancesDir).toLowerCase();
-
-    // 如果位于旧 servers 目录，或者在 tarvenHome 下但不在新的 appInstancesDir 下
-    if (
-      normRecordPath.startsWith(normLegacyDir) ||
-      (normRecordPath.startsWith(path.resolve(paths.tarvenHome).toLowerCase()) &&
-        !normRecordPath.startsWith(normAppInstancesDir))
-    ) {
+    // 位于旧版隐藏 servers 目录，或位于 AppData 数据家目录下但不处于当前生效存储根
+    // （生效根与之一致时说明该回退落点正是当前合法默认，不算遗留）。
+    if (isUnderDir(legacyDir, record.path)
+      || (isUnderDir(paths.tarvenHome, record.path) && !isUnderDir(activeRoot, record.path))) {
       if (fs.existsSync(record.path) && fs.existsSync(path.join(record.path, 'package.json'))) {
         legacyCandidates.set(record.instanceId, record.path);
       }
@@ -129,7 +129,8 @@ export async function checkLegacyInstances(): Promise<{ instances: LegacyInstanc
 
   const items: LegacyInstanceItem[] = [];
   for (const [id, currentPath] of legacyCandidates) {
-    const targetPath = path.join(appInstancesDir, id);
+    // 迁移目标：当前生效存储根（尊重用户在设置中自定义的实例存储位置）
+    const targetPath = path.join(activeRoot, id);
     if (path.resolve(currentPath).toLowerCase() === path.resolve(targetPath).toLowerCase()) {
       continue;
     }
@@ -177,15 +178,17 @@ export async function relocateInstance(
   let sourcePath = record ? record.path : null;
 
   if (!sourcePath || !fs.existsSync(sourcePath)) {
-    // 尝试从 legacyServersDir 或 appInstancesDir 解析
-    const legacyPath = path.join(paths.legacyServersDir, safeId);
-    const defaultPath = path.join(paths.appInstancesDir, safeId);
-    if (fs.existsSync(legacyPath)) {
-      sourcePath = legacyPath;
-    } else if (fs.existsSync(defaultPath)) {
-      sourcePath = defaultPath;
-    } else {
-      throw new Error(`找不到实例 [${safeId}] 的物理安装目录`);
+    // 注册表失效或未登记：按候选根全位置探测（当前生效根 → 历史落点 → 旧版隐藏目录）
+    sourcePath = null;
+    for (const root of paths.candidateInstanceRoots()) {
+      const candidate = path.join(root, safeId);
+      if (fs.existsSync(candidate)) {
+        sourcePath = candidate;
+        break;
+      }
+    }
+    if (!sourcePath) {
+      throw new Error(`找不到实例 [${safeId}] 的物理安装目录（已搜索当前存储根、安装目录与旧版隐藏目录）`);
     }
   }
 
@@ -209,8 +212,8 @@ export async function relocateInstance(
       finalTarget = resolvedCustom;
     }
   } else {
-    // 默认迁移到客户端统一目录
-    finalTarget = path.join(paths.appInstancesDir, safeId);
+    // 默认迁移到当前生效存储根（尊重用户自定义的实例存储位置）
+    finalTarget = path.join(paths.getInstancesRoot(), safeId);
   }
 
   const resolvedFinalTarget = path.resolve(finalTarget);

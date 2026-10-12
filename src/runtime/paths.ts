@@ -155,10 +155,28 @@ export function setInstancesRoot(options?: { path?: string }): {
 }
 
 /**
- * 默认实例存储目录（兼容既有代码访问）：
- * 优先读取配置的实例存储根，回退至软件运行根目录下的 instances/ 文件夹
+ * 全部已知实例根位置（探测专用，绝不创建目录）：
+ * 当前生效存储根 → 安装目录默认根（1.10+ 历史落点）→ AppData 回退根（安装目录不可写时的历史落点）
+ * → 旧版隐藏 servers 目录（≤1.9.x 落点）。扫描、启动解析与迁移源定位统一以此为准，
+ * 任何位置创建的实例都不会因为"落点模型换代"而失联。
  */
-export const appInstancesDir = getDefaultInstancesRoot();
+export function candidateInstanceRoots(): string[] {
+  const candidates = [
+    getInstancesRoot(),
+    path.join(appRootDir, 'instances'),
+    path.join(tarvenHome, 'instances'),
+    legacyServersDir,
+  ];
+  const seen = new Set<string>();
+  const roots: string[] = [];
+  for (const candidate of candidates) {
+    const key = path.resolve(candidate).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    roots.push(candidate);
+  }
+  return roots;
+}
 
 export function normalizeInstanceId(instanceId: string): string {
   return instanceId
@@ -217,8 +235,6 @@ export function ensureDirs(): void {
   for (const d of [tarvenHome, bootstrapDir, usrDir, coversDir, tmpDir, logsDir, getInstancesRoot()]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
   }
-  const serversDir = path.join(bootstrapDir, 'servers');
-  if (!fs.existsSync(serversDir)) fs.mkdirSync(serversDir, { recursive: true });
 }
 
 // ---------------------------------------------------------------------------

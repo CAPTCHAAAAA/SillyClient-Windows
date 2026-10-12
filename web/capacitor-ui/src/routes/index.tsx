@@ -26,7 +26,7 @@ import { APP_VERSION } from "@/constants/app-version";
 import { fetchAppUpdate } from "@/lib/app-update";
 import OnboardingGuide from "@/components/onboarding/OnboardingGuide";
 import { WhatsNewModal } from "@/components/modals/WhatsNewModal";
-import { LegacyMigrationModal, type LegacyMigrationItem } from "@/components/modals/LegacyMigrationModal";
+import { LegacyMigrationModal, type LegacyMigrationItem, type LegacyMigrationResult } from "@/components/modals/LegacyMigrationModal";
 import { RelocateInstanceModal } from "@/components/modals/RelocateInstanceModal";
 import { LAYERS } from "@/constants/layers";
 import { useLayerStack } from "@/hooks/useLayerStack";
@@ -1254,10 +1254,13 @@ function SillyClientLauncher() {
     }));
     if (!info.path) throw new Error("原生未确认实例的实际安装目录，创建未完成");
     setLastLaunchParams({ ...instance, installPath: info.path, installPathMode: "exact", port: result.port });
+    // 安装源（zipballUrl/localZipPath）与预装项是一次性创建参数，绝不持久化到卡片：
+    // 后端以此区分创建与启动意图，卡片残留安装源会导致数据丢失时被静默重装顶替。
+    const { zipballUrl: _zipballUrl, localZipPath: _localZipPath, preinstall: _preinstall, companionPreset: _companionPreset, ...persistedInstance } = instance;
     setInstances(prev => prev.some(t => t.id === instance.id)
       ? prev
       : [...prev, {
-          ...instance,
+          ...persistedInstance,
           status: "running",
           port: result.port,
           version: info.version && info.version !== "unknown" ? normalizeStoredVersion(info.version) : instance.version,
@@ -1978,7 +1981,7 @@ function SillyClientLauncher() {
               }
             })
             .catch(() => {
-              localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+              // 检测异常不写版本标记：下次启动重新检测，避免一次抖动永久跳过迁移。
             });
         }
       }, 150);
@@ -1986,7 +1989,7 @@ function SillyClientLauncher() {
   }, [isWindows]);
 
   const dismissLegacyMigration = useCallback(() => {
-    localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+    // 「稍后处理」不写版本标记：只要旧版实例仍未迁完，下次启动会再次提醒。
     setIsLegacyMigrationClosing(true);
     setTimeout(() => {
       setShowLegacyMigration(false);
@@ -1994,31 +1997,29 @@ function SillyClientLauncher() {
     }, PANEL_EXIT_MS);
   }, []);
 
-  const handleLegacyMigrationComplete = useCallback(() => {
-    localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
-    if (TarvenEnv.scanInstances) {
-      TarvenEnv.scanInstances()
-        .then(({ instances: scanned }) => {
-          if (scanned && scanned.length > 0) {
-            setInstances((prev) => {
-              const updated = prev.map((inst) => {
-                const safeId = inst.installDir || inst.id;
-                const found = scanned.find((s) => s.instanceId === safeId);
-                if (found) {
-                  return {
-                    ...inst,
-                    installPath: found.path,
-                  };
-                }
-                return inst;
-              });
-              saveInstances(updated);
-              return updated;
-            });
-          }
-        })
-        .catch(() => {});
-    }
+  const handleLegacyMigrationComplete = useCallback((results: LegacyMigrationResult[], allDone: boolean) => {
+    // 全部迁完才写版本标记长期静默；部分成功时不写，剩余实例下次启动继续提醒。
+    if (allDone) localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+    if (!results.length) return;
+    // 依据迁移结果精确改卡：按实例 ID 或旧路径双键匹配，确保卡片指向迁移后的新位置。
+    const byId = new Map(results.map((r) => [r.instanceId, r]));
+    const normalizePathKey = (p: string) => p.trim().replace(/^["']|["']$/g, "").replace(/[\\/]+$/, "").toLowerCase();
+    const byOldPath = new Map(results.map((r) => [normalizePathKey(r.oldPath), r]));
+    setInstances((prev) => {
+      const updated = prev.map((inst) => {
+        const result = byId.get(inst.installDir || inst.id)
+          || byOldPath.get(normalizePathKey(inst.installPath || ""));
+        if (!result) return inst;
+        return {
+          ...inst,
+          installDir: result.instanceId,
+          installPath: result.newPath,
+          installPathMode: "exact" as const,
+        };
+      });
+      saveInstances(updated);
+      return updated;
+    });
   }, []);
 
   const dismissWhatsNew = useCallback(() => {
@@ -2042,7 +2043,7 @@ function SillyClientLauncher() {
               }
             })
             .catch(() => {
-              localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+              // 检测异常不写版本标记：下次启动重新检测，避免一次抖动永久跳过迁移。
             });
         }
       }
@@ -2147,7 +2148,7 @@ function SillyClientLauncher() {
             }
           })
           .catch(() => {
-            localStorage.setItem(LEGACY_MIGRATION_KEY, APP_VERSION);
+            // 检测异常不写版本标记：下次启动重新检测，避免一次抖动永久跳过迁移。
           });
       }
     }

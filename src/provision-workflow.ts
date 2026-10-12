@@ -172,6 +172,9 @@ export async function executeProvisionWorkflow(
   try {
     context.check();
     serverLaunchArguments(port, config);
+    // 携带安装源 = 创建意图。启动既有实例绝不携带安装源，后端据此拒绝
+    // 在数据丢失时静默下载全新实例顶替（旧版升级失联事故的核心防线）。
+    const hasInstallSource = Boolean(zipballUrl || localZipPath);
     targetServerDir = resolveInstanceDir(safeInstanceId, installPath, installPathMode);
     const existingOtherRecord = instanceStore.listInstanceRecords().find(
       (r) => r.instanceId !== safeInstanceId && path.resolve(r.path).toLowerCase() === path.resolve(targetServerDir).toLowerCase()
@@ -180,9 +183,16 @@ export async function executeProvisionWorkflow(
       throw new Error(`目标路径已由其他实例「${existingOtherRecord.instanceId}」登记使用`);
     }
     const record = instanceStore.getInstanceRecord(safeInstanceId);
+    // 创建意图防御：同名实例已登记在其他位置时，拒绝在新位置重复创建造成分身。
+    if (hasInstallSource && record && installPath?.trim()) {
+      const selected = paths.serverDirFor(safeInstanceId, installPath, installPathMode);
+      if (path.resolve(selected).toLowerCase() !== path.resolve(record.path).toLowerCase()) {
+        throw new Error(`实例「${safeInstanceId}」已安装在：${record.path}。如需更换位置，请先卸载原实例或使用「存储迁移」搬迁。`);
+      }
+    }
     const targetExisted = fs.existsSync(targetServerDir);
     if (record && !targetExisted) {
-      throw new Error('Registered installation directory is missing; its original path was preserved');
+      throw new Error(`实例「${safeInstanceId}」的原安装目录已不存在：${record.path}\n已自动搜索当前存储根与旧版隐藏目录，均未找到该实例。若数据被移动到了其他位置，请使用「数据迁移」原地接管该目录；若确认数据已丢失，请卸载此实例后重新创建。`);
     }
     if (targetExisted) {
       const stat = await assertPlainPath(targetServerDir);
@@ -195,6 +205,11 @@ export async function executeProvisionWorkflow(
       if (companionPreset) throw new Error('Theme presets cannot modify a takeover source');
       if (opts.preinstall?.extensionIds.length) throw new Error('Preinstalled extensions cannot modify a takeover source');
       if (needSource) throw new Error('Takeover source is incomplete; source files were preserved');
+    }
+    if (needSource && !hasInstallSource) {
+      throw new Error(targetExisted
+        ? `实例「${safeInstanceId}」缺少启动文件（server.js 或 package.json），目录可能已损坏：${targetServerDir}。请通过「数据迁移」重新接管完整目录，或卸载后重新创建实例。`
+        : `找不到实例「${safeInstanceId}」的安装目录，已搜索当前存储根与旧版隐藏目录均无结果。该卡片可能是旧版本残留，请卸载后重新创建，或通过「数据迁移」接管现存目录。`);
     }
     if (needSource && targetExisted && fs.readdirSync(targetServerDir).length) {
       throw new Error('Refusing to replace an incomplete nonempty instance directory');

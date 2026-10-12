@@ -25,6 +25,9 @@ function fixture(t) {
 
 function pathsFor(root) {
   const realPaths = loader()('src/runtime/paths.ts');
+  const activeRoot = path.join(root, 'instances');
+  const legacyServersDir = path.join(root, 'bootstrap', 'servers');
+  let configuredRoot = null;
   const paths = {
     tarvenHome: root,
     bootstrapDir: path.join(root, 'bootstrap'),
@@ -32,14 +35,36 @@ function pathsFor(root) {
     tmpDir: path.join(root, 'tmp'),
     logsDir: path.join(root, 'logs'),
     instanceRegistryPath: path.join(root, 'instances.json'),
-    legacyServersDir: path.join(root, 'bootstrap', 'servers'),
-    appInstancesDir: path.join(root, 'instances'),
+    legacyServersDir,
     getNodeExe: () => 'C:\\bundled\\node.exe',
     getNpmCli: () => 'C:\\bundled\\npm-cli.js',
     normalizeInstanceId: (id) => String(id).trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^[._-]+|[._-]+$/g, '').slice(0, 80) || 'default',
   };
+  paths.getInstancesRoot = () => configuredRoot || activeRoot;
+  paths.getDefaultInstancesRoot = () => activeRoot;
+  paths.setInstancesRoot = (options) => {
+    const requested = options?.path?.trim()?.replace(/^["']|["']$/g, '').trim();
+    if (!requested) {
+      configuredRoot = null;
+      return { instancesRoot: activeRoot, configured: false };
+    }
+    fs.mkdirSync(requested, { recursive: true });
+    configuredRoot = requested;
+    return { instancesRoot: requested, configured: true };
+  };
+  paths.candidateInstanceRoots = () => {
+    const seen = new Set();
+    const roots = [];
+    for (const candidate of [paths.getInstancesRoot(), activeRoot, legacyServersDir]) {
+      const key = path.resolve(candidate).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      roots.push(candidate);
+    }
+    return roots;
+  };
   paths.ensureDirs = () => {
-    for (const directory of [paths.bootstrapDir, paths.coversDir, paths.tmpDir, paths.logsDir, paths.legacyServersDir, paths.appInstancesDir]) {
+    for (const directory of [paths.bootstrapDir, paths.coversDir, paths.tmpDir, paths.logsDir, paths.getInstancesRoot()]) {
       fs.mkdirSync(directory, { recursive: true });
     }
   };
@@ -307,7 +332,6 @@ test('invalid custom path selection preserves an already running instance and it
     { installPath: 'relative-path', installPathMode: 'exact' },
     { installPath: file, installPathMode: 'exact' },
     { installPath: incomplete, installPathMode: 'exact' },
-    { instanceId: 'running', installPath: missing, installPathMode: 'exact' },
     { installPath: path.parse(harness.root).root, installPathMode: 'exact' },
   ]) {
     assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
@@ -321,6 +345,16 @@ test('invalid custom path selection preserves an already running instance and it
     assert.equal(fs.readFileSync(harness.paths.instanceRegistryPath, 'utf8'), before);
   }
   assert.equal(fs.readFileSync(file, 'utf8'), 'preserve this file');
+  assert.equal(fs.existsSync(missing), false);
+
+  // 已登记实例携带失效的卡片旧路径启动：注册表权威生效，自愈重启真实实例，
+  // 绝不因陈旧路径报错，也绝不在失效路径上创建任何东西。
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    instanceId: 'running', installPath: missing, installPathMode: 'exact', port: 8000,
+  }), { ready: true });
+  assert.equal(harness.running(), true);
+  assert.equal(harness.plugin.getCurrentInstanceId(), 'running');
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('running').path, runningDirectory);
   assert.equal(fs.existsSync(missing), false);
 });
 
@@ -433,21 +467,84 @@ test('a missing registered path heals onto an existing explicit card path from t
   assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('custom')?.path, moved);
 });
 
-test('registered instances reject conflicting explicit paths without replacing registration or deleting another directory', async (t) => {  const harness = pluginHarness(t);
+test('registered instances stay authoritative over stale card paths and never touch other directories', async (t) => {
+  const harness = pluginHarness(t);
   const registered = path.join(harness.root, 'registered');
   const other = path.join(harness.root, 'other');
   serverFiles(registered);
   serverFiles(other);
   harness.load('src/runtime/instances.ts').registerInstance('custom', registered);
-  const before = fs.readFileSync(harness.paths.instanceRegistryPath, 'utf8');
   const options = { instanceId: 'custom', installPath: other, installPathMode: 'exact', port: 8000 };
-  await assert.rejects(harness.plugin.handle('getInstanceInfo', options), /registered|registration/i);
-  await assert.rejects(harness.plugin.handle('uninstallInstance', options), /registered|registration/i);
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', options), { ready: false });
-  assert.equal(harness.starts(), 0);
-  assert.equal(fs.readFileSync(harness.paths.instanceRegistryPath, 'utf8'), before);
+  // 启动语义（无安装源）：注册表权威，卡片残留旧路径静默自愈，绝不报错阻断启动。
+  const info = await harness.plugin.handle('getInstanceInfo', options);
+  assert.equal(info.path, registered);
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', options), { ready: true });
+  assert.equal(harness.starts(), 1);
+  // 注册表未被改写，另一个目录分毫未动。
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('custom').path, registered);
   assert.equal(fs.existsSync(path.join(registered, 'server.js')), true);
   assert.equal(fs.existsSync(path.join(other, 'server.js')), true);
+  // 创建意图（携带安装源）且显式路径与注册表冲突：拒绝在新位置重复创建造成分身，运行中的实例不受打扰。
+  const archive = path.join(harness.root, 'source.zip');
+  fs.writeFileSync(archive, 'synthetic archive');
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { ...options, localZipPath: archive }), { ready: false });
+  assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /已安装在/);
+  assert.equal(harness.running(), true);
+});
+
+test('launch without install source adopts a legacy hidden-directory instance instead of reinstalling', async (t) => {
+  const starts = [];
+  const harness = pluginHarness(t, { onStart: (start) => starts.push(start) });
+  const legacyDir = path.join(harness.paths.legacyServersDir, 'ancient');
+  serverFiles(legacyDir);
+  // 无注册表记录、无安装源（旧版升级失联实例）：全位置探测命中旧版隐藏目录并接管补登记。
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'ancient', port: 8000 }), { ready: true });
+  assert.equal(starts.at(-1).cwd, legacyDir);
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('ancient').path, legacyDir);
+});
+
+test('launch of a missing instance without install source refuses a silent reinstall', async (t) => {
+  const harness = pluginHarness(t);
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'ghost', port: 8000 }), { ready: false });
+  assert.equal(harness.starts(), 0);
+  const error = harness.events.filter((event) => event.name === 'tarven:error').at(-1);
+  assert.match(error.data.message, /找不到实例/);
+  // 绝不创建任何新目录顶替，也不写入注册表。
+  assert.equal(fs.existsSync(path.join(harness.paths.getInstancesRoot(), 'ghost')), false);
+  assert.equal(fs.existsSync(path.join(harness.paths.legacyServersDir, 'ghost')), false);
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('ghost'), null);
+});
+
+test('launch of an incomplete instance without install source reports corruption instead of replacing data', async (t) => {
+  const harness = pluginHarness(t);
+  const broken = path.join(harness.paths.getInstancesRoot(), 'broken');
+  fs.mkdirSync(path.join(broken, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(broken, 'package.json'), JSON.stringify({ version: '1.19.0' }));
+  fs.writeFileSync(path.join(broken, 'data', 'user.json'), '{"keep":true}');
+  harness.load('src/runtime/instances.ts').registerInstance('broken', broken);
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'broken', port: 8000 }), { ready: false });
+  assert.equal(harness.starts(), 0);
+  const error = harness.events.filter((event) => event.name === 'tarven:error').at(-1);
+  assert.match(error.data.message, /缺少启动文件/);
+  // 用户数据分毫未动。
+  assert.equal(fs.readFileSync(path.join(broken, 'data', 'user.json'), 'utf8'), '{"keep":true}');
+});
+
+test('legacy migration targets the configured storage root and spares already-modern instances', async (t) => {
+  const harness = pluginHarness(t);
+  const legacyDir = path.join(harness.paths.legacyServersDir, 'old-one');
+  serverFiles(legacyDir);
+  const customRoot = path.join(harness.root, 'custom-root');
+  harness.paths.setInstancesRoot({ path: customRoot });
+  const modernDir = path.join(customRoot, 'modern');
+  serverFiles(modernDir);
+  harness.load('src/runtime/instances.ts').registerInstance('modern', modernDir);
+  const { instances } = await harness.plugin.handle('checkLegacyInstances');
+  const legacyItem = instances.find((item) => item.instanceId === 'old-one');
+  assert.ok(legacyItem);
+  assert.equal(legacyItem.currentPath, legacyDir);
+  assert.equal(legacyItem.targetPath, path.join(customRoot, 'old-one'));
+  assert.ok(!instances.some((item) => item.instanceId === 'modern'));
 });
 
 test('copy migration targets remain exact and malformed target paths cannot be swallowed into defaults', async (t) => {
@@ -523,7 +620,7 @@ test('provision rejects nonnumeric, noninteger and out-of-range heartbeat values
     assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /heartbeat/i);
   }
   assert.equal(harness.starts(), 0);
-  assert.deepEqual(fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')), []);
+  assert.deepEqual((fs.existsSync(path.join(harness.paths.bootstrapDir, 'servers')) ? fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')) : []), []);
   assert.ok(!fs.existsSync(harness.paths.instanceRegistryPath));
 });
 
@@ -543,7 +640,7 @@ test('provision validates runtime flags and ports through the same launch argume
     assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /Invalid server port/);
   }
   assert.equal(harness.starts(), 0);
-  assert.deepEqual(fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')), []);
+  assert.deepEqual((fs.existsSync(path.join(harness.paths.bootstrapDir, 'servers')) ? fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')) : []), []);
 });
 
 test('runtime configuration rejects malformed shapes and unknown keys before interrupting a running instance', async (t) => {
@@ -594,7 +691,7 @@ test('runtime flags reject wrong types and incompatible protocols without silent
   }
   assert.equal(harness.starts(), 0);
   assert.equal(fs.existsSync(harness.paths.instanceRegistryPath), false);
-  assert.deepEqual(fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')), []);
+  assert.deepEqual((fs.existsSync(path.join(harness.paths.bootstrapDir, 'servers')) ? fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')) : []), []);
 });
 
 test('all supported runtime settings reach actual server arguments and the correct new YAML keys', async (t) => {
@@ -815,7 +912,7 @@ test('stop during download aborts retries and removes only owned staging', async
   await stop;
   assert.equal(downloads, 1);
   assert.equal(harness.starts(), 0);
-  assert.deepEqual(fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')), ['valuable']);
+  assert.deepEqual((fs.existsSync(path.join(harness.paths.bootstrapDir, 'servers')) ? fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')) : []), ['valuable']);
   assert.equal(fs.readFileSync(path.join(untouched, 'chat.txt'), 'utf8'), 'preserve');
 });
 
@@ -1983,4 +2080,3 @@ test('getAppSettings and setInstancesRoot configure custom instances root and re
   assert.equal(afterReset.configuredInstancesRoot, undefined);
   assert.equal(afterReset.instancesRoot, initial.defaultInstancesRoot);
 });
-
