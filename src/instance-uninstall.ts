@@ -26,27 +26,31 @@ export async function uninstallInstanceInternal(
   const records = instanceStore.listInstanceRecords();
   const record = records.find((entry) => entry.instanceId === instanceId);
   const registeredPath = record?.path;
-  const defaultPath = paths.serverDirFor(instanceId);
-  const resolvedDir = path.resolve(dir).toLowerCase();
-  const isKnownPath = resolvedDir === path.resolve(defaultPath).toLowerCase()
-    || (registeredPath && resolvedDir === path.resolve(registeredPath).toLowerCase());
-  if (resolvedDir === path.parse(resolvedDir).root.toLowerCase()) {
+  const configuredRoot = paths.getInstancesRoot();
+  const resolvedDir = dir ? path.resolve(dir).toLowerCase() : null;
+  const isKnownPath = !!resolvedDir && (
+    (configuredRoot
+      && resolvedDir === path.resolve(path.join(configuredRoot, paths.normalizeInstanceId(instanceId))).toLowerCase())
+    || (registeredPath && resolvedDir === path.resolve(registeredPath).toLowerCase()));
+  if (resolvedDir && resolvedDir === path.parse(resolvedDir).root.toLowerCase()) {
     throw new Error('Cannot remove a filesystem root');
   }
-  if (fs.existsSync(dir) && !isKnownPath) {
+  if (dir && fs.existsSync(dir) && !isKnownPath) {
     throw new Error('拒绝删除未登记且无法识别的目录');
   }
 
-  const sharedDirectory = records.some((entry) => entry.instanceId !== instanceId
+  const sharedDirectory = !!resolvedDir && records.some((entry) => entry.instanceId !== instanceId
     && path.resolve(entry.path).toLowerCase() === resolvedDir);
 
-  await stopRunningServerIfMatching(dir);
-  if (!sharedDirectory) await proc.stopServerForDirectory(dir);
+  if (dir) {
+    await stopRunningServerIfMatching(dir);
+    if (!sharedDirectory) await proc.stopServerForDirectory(dir);
+  }
 
   const isTakeover = record?.isTakeover === true || sharedDirectory;
 
   let freedBytes = 0;
-  if (!isTakeover && fs.existsSync(dir)) {
+  if (!isTakeover && dir && fs.existsSync(dir)) {
     await assertPlainPath(dir, true);
     freedBytes = await directorySize(dir, { includeHeavy: true, fresh: true });
     await utils.removeDirWithRetries(dir);
@@ -91,7 +95,7 @@ export async function uninstallInstanceInternal(
     }
   }
 
-  if (!isTakeover && fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
+  if (!isTakeover && dir && fs.existsSync(dir)) throw new Error(`实例目录未能彻底删除：${dir}`);
   if (cleanupFailures.length) {
     throw new Error(`Instance data removed but auxiliary cleanup failed: ${cleanupFailures.join('; ')}`);
   }

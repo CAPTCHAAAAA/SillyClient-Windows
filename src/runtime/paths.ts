@@ -74,50 +74,28 @@ export function saveAppSettings(doc: AppSettingsDocument): void {
   }
 }
 
-export function getDefaultInstancesRoot(): string {
-  const dir = path.join(appRootDir, 'instances');
-  try {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return dir;
-  } catch {
-    const fallback = path.join(tarvenHome, 'instances');
-    if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
-    return fallback;
-  }
-}
-
-export function getInstancesRoot(): string {
+/**
+ * 当前生效实例存储根：仅来自用户在创建/迁移/搬迁流程中显式选择并登记的文件夹
+ * （app-settings.json → instancesRoot）。无默认路径铁律——未配置时返回 null，
+ * 绝不回落到安装目录或任何软件预设位置（安装目录是安装器更新/卸载的施工区）。
+ */
+export function getInstancesRoot(): string | null {
   const settings = loadAppSettings();
   const configured = settings.instancesRoot?.trim().replace(/^["']|["']$/g, '').trim();
-  if (configured && path.isAbsolute(configured)) {
-    try {
-      if (!fs.existsSync(configured)) fs.mkdirSync(configured, { recursive: true });
-      return configured;
-    } catch {
-      // If unwritable, fall back to default
-    }
-  }
-  return getDefaultInstancesRoot();
+  if (configured && path.isAbsolute(configured)) return configured;
+  return null;
 }
 
 export function getAppSettings(): {
-  instancesRoot: string;
-  defaultInstancesRoot: string;
   configuredInstancesRoot?: string;
 } {
-  const defaultRoot = getDefaultInstancesRoot();
   const settings = loadAppSettings();
   const configured = settings.instancesRoot?.trim().replace(/^["']|["']$/g, '').trim();
-  const activeRoot = getInstancesRoot();
-  return {
-    instancesRoot: activeRoot,
-    defaultInstancesRoot: defaultRoot,
-    ...(configured ? { configuredInstancesRoot: configured } : {}),
-  };
+  return configured ? { configuredInstancesRoot: configured } : {};
 }
 
 export function setInstancesRoot(options?: { path?: string }): {
-  instancesRoot: string;
+  instancesRoot: string | null;
   configured: boolean;
 } {
   const requested = options?.path?.trim()?.replace(/^["']|["']$/g, '').trim();
@@ -126,7 +104,7 @@ export function setInstancesRoot(options?: { path?: string }): {
     delete settings.instancesRoot;
     saveAppSettings(settings);
     return {
-      instancesRoot: getDefaultInstancesRoot(),
+      instancesRoot: null,
       configured: false,
     };
   }
@@ -170,6 +148,7 @@ export function candidateInstanceRoots(): string[] {
   const seen = new Set<string>();
   const roots: string[] = [];
   for (const candidate of candidates) {
+    if (!candidate) continue;
     const key = path.resolve(candidate).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -226,14 +205,26 @@ export function serverDirFor(instanceId: string, installPath?: string, installPa
     }
     return resolved;
   }
-  // 未指定路径时的默认路径：
-  // 严格保存在默认实例根目录（默认软件根目录下的 instances/，或用户在设置中自定义的存储根）
-  return path.join(getInstancesRoot(), safeId);
+  // 未指定路径时没有默认落点：仅当用户已显式登记存储根时才可推导，
+  // 否则必须拒绝——绝不让实例静默落入安装目录等施工区。
+  const configuredRoot = getInstancesRoot();
+  if (!configuredRoot) {
+    throw new Error('尚未配置实例存储位置，请先选择实例存放文件夹');
+  }
+  return path.join(configuredRoot, safeId);
 }
 
 export function ensureDirs(): void {
-  for (const d of [tarvenHome, bootstrapDir, usrDir, coversDir, tmpDir, logsDir, getInstancesRoot()]) {
+  for (const d of [tarvenHome, bootstrapDir, usrDir, coversDir, tmpDir, logsDir]) {
     if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  }
+  const configuredRoot = getInstancesRoot();
+  if (configuredRoot && !fs.existsSync(configuredRoot)) {
+    try {
+      fs.mkdirSync(configuredRoot, { recursive: true });
+    } catch {
+      // 配置根暂时不可写（如可移动磁盘未挂载）：登记保持不变，使用时再报错。
+    }
   }
 }
 

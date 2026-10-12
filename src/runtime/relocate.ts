@@ -107,7 +107,7 @@ export async function checkLegacyInstances(): Promise<{ instances: LegacyInstanc
     // 位于旧版隐藏 servers 目录，或位于 AppData 数据家目录下但不处于当前生效存储根
     // （生效根与之一致时说明该回退落点正是当前合法默认，不算遗留）。
     if (isUnderDir(legacyDir, record.path)
-      || (isUnderDir(paths.tarvenHome, record.path) && !isUnderDir(activeRoot, record.path))) {
+      || (isUnderDir(paths.tarvenHome, record.path) && (!activeRoot || !isUnderDir(activeRoot, record.path)))) {
       if (fs.existsSync(record.path) && fs.existsSync(path.join(record.path, 'package.json'))) {
         legacyCandidates.set(record.instanceId, record.path);
       }
@@ -129,8 +129,8 @@ export async function checkLegacyInstances(): Promise<{ instances: LegacyInstanc
 
   const items: LegacyInstanceItem[] = [];
   for (const [id, currentPath] of legacyCandidates) {
-    // 迁移目标：当前生效存储根（尊重用户在设置中自定义的实例存储位置）
-    const targetPath = path.join(activeRoot, id);
+    // 迁移目标建议：当前生效存储根；未配置时为空——前端必须让用户显式选择目标文件夹。
+    const targetPath = activeRoot ? path.join(activeRoot, id) : '';
     if (path.resolve(currentPath).toLowerCase() === path.resolve(targetPath).toLowerCase()) {
       continue;
     }
@@ -212,8 +212,12 @@ export async function relocateInstance(
       finalTarget = resolvedCustom;
     }
   } else {
-    // 默认迁移到当前生效存储根（尊重用户自定义的实例存储位置）
-    finalTarget = path.join(paths.getInstancesRoot(), safeId);
+    // 无默认目标：仅当用户已显式登记存储根时才可推导，否则必须显式选择。
+    const configuredRoot = paths.getInstancesRoot();
+    if (!configuredRoot) {
+      throw new Error('请先选择迁移目标存放位置（必选），不存在软件默认落点');
+    }
+    finalTarget = path.join(configuredRoot, safeId);
   }
 
   const resolvedFinalTarget = path.resolve(finalTarget);
@@ -258,25 +262,4 @@ export async function relocateInstance(
     oldPath: resolvedSource,
     newPath: resolvedFinalTarget,
   };
-}
-
-/**
- * 批量迁移旧版实例至软件默认实例目录
- */
-export async function migrateLegacyInstances(
-  options: { instanceIds?: string[] } = {},
-  activeRunningInstanceId?: string | null,
-): Promise<{ success: boolean; results: RelocateResult[] }> {
-  const legacy = await checkLegacyInstances();
-  const targetIds = options.instanceIds && options.instanceIds.length > 0
-    ? options.instanceIds.map(paths.normalizeInstanceId)
-    : legacy.instances.map((i) => i.instanceId);
-
-  const results: RelocateResult[] = [];
-  for (const id of targetIds) {
-    const res = await relocateInstance({ instanceId: id }, activeRunningInstanceId);
-    results.push(res);
-  }
-
-  return { success: true, results };
 }

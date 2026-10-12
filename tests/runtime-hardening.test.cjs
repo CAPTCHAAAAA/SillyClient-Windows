@@ -27,7 +27,8 @@ function pathsFor(root) {
   const realPaths = loader()('src/runtime/paths.ts');
   const activeRoot = path.join(root, 'instances');
   const legacyServersDir = path.join(root, 'bootstrap', 'servers');
-  let configuredRoot = null;
+  // 默认处于"已配置"状态，保持既有测试语义；setInstancesRoot({}) 可切换到无默认路径状态。
+  let configuredRoot = activeRoot;
   const paths = {
     tarvenHome: root,
     bootstrapDir: path.join(root, 'bootstrap'),
@@ -40,13 +41,12 @@ function pathsFor(root) {
     getNpmCli: () => 'C:\\bundled\\npm-cli.js',
     normalizeInstanceId: (id) => String(id).trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^[._-]+|[._-]+$/g, '').slice(0, 80) || 'default',
   };
-  paths.getInstancesRoot = () => configuredRoot || activeRoot;
-  paths.getDefaultInstancesRoot = () => activeRoot;
+  paths.getInstancesRoot = () => configuredRoot;
   paths.setInstancesRoot = (options) => {
     const requested = options?.path?.trim()?.replace(/^["']|["']$/g, '').trim();
     if (!requested) {
       configuredRoot = null;
-      return { instancesRoot: activeRoot, configured: false };
+      return { instancesRoot: null, configured: false };
     }
     fs.mkdirSync(requested, { recursive: true });
     configuredRoot = requested;
@@ -56,6 +56,7 @@ function pathsFor(root) {
     const seen = new Set();
     const roots = [];
     for (const candidate of [paths.getInstancesRoot(), activeRoot, legacyServersDir]) {
+      if (!candidate) continue;
       const key = path.resolve(candidate).toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -64,13 +65,17 @@ function pathsFor(root) {
     return roots;
   };
   paths.ensureDirs = () => {
-    for (const directory of [paths.bootstrapDir, paths.coversDir, paths.tmpDir, paths.logsDir, paths.getInstancesRoot()]) {
+    for (const directory of [paths.bootstrapDir, paths.coversDir, paths.tmpDir, paths.logsDir, paths.getInstancesRoot()].filter(Boolean)) {
       fs.mkdirSync(directory, { recursive: true });
     }
   };
   paths.serverDirFor = (id, supplied, mode) => {
-    const resolved = realPaths.serverDirFor(id, supplied, mode);
-    return supplied ? resolved : path.join(paths.bootstrapDir, 'servers', paths.normalizeInstanceId(id));
+    // 无参默认推导与真实模块同语义：未配置存储根时抛错；已配置时落到配置根下。
+    if (!supplied && mode === undefined) {
+      if (!configuredRoot) throw new Error('尚未配置实例存储位置，请先选择实例存放文件夹');
+      return path.join(configuredRoot, paths.normalizeInstanceId(id));
+    }
+    return realPaths.serverDirFor(id, supplied, mode);
   };
   paths.ensureDirs();
   return paths;
@@ -912,7 +917,8 @@ test('stop during download aborts retries and removes only owned staging', async
   await stop;
   assert.equal(downloads, 1);
   assert.equal(harness.starts(), 0);
-  assert.deepEqual((fs.existsSync(path.join(harness.paths.bootstrapDir, 'servers')) ? fs.readdirSync(path.join(harness.paths.bootstrapDir, 'servers')) : []), ['valuable']);
+  // 取消后暂存目录已清理：实例根下只剩预先存在的 valuable。
+  assert.deepEqual(fs.readdirSync(path.dirname(untouched)), ['valuable']);
   assert.equal(fs.readFileSync(path.join(untouched, 'chat.txt'), 'utf8'), 'preserve');
 });
 
@@ -1019,6 +1025,7 @@ test('copy migration forwards preinstall options within its transaction and take
   assert.ok(!fs.existsSync(harness.paths.instanceRegistryPath));
   const result = await harness.plugin.handle('migrateInstance', {
     sourcePath: source, instanceId: 'copied', mode: 'copy', preinstall: selection, operationId: 'copy-op',
+    targetPath: path.join(harness.root, 'copy-target'),
   });
   assert.equal(result.success, true);
   assert.equal(calls[0].directory, result.targetPath);
@@ -1142,6 +1149,7 @@ test('copy migration failure preserves ordinary user data written after publicat
   fs.writeFileSync(path.join(source, 'chat.txt'), 'original source');
   await assert.rejects(harness.plugin.handle('migrateInstance', {
     sourcePath: source, instanceId: 'copied', mode: 'copy', operationId: 'copy-op',
+    targetPath: path.join(harness.root, 'copy-target'),
     preinstall: { revision: 1, extensionIds: ['dice'] },
   }), /Migration target contents changed; files were preserved/);
   assert.equal(fs.readFileSync(path.join(published, 'new-user-data.json'), 'utf8'), '{"preserve":true}');
@@ -1159,7 +1167,7 @@ test('normal unregistered or data-only instances are never garbage', async (t) =
   fs.mkdirSync(paths.serverDirFor('empty'));
   const { CleanupService } = loader()('src/runtime/cleanup.ts');
   const cleanup = new CleanupService({
-    servers: path.join(paths.bootstrapDir, 'servers'), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
+    servers: paths.candidateInstanceRoots(), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
   }, () => ({ records: [], activeDirectories: [] }));
   const scan = await cleanup.scan({ activeInstanceIds: [] });
   assert.deepEqual(scan.items.map((item) => path.basename(item.path)), ['empty']);
@@ -1177,7 +1185,7 @@ test('covers are preserved without a complete reference list and registered stem
   for (const cover of [registeredCover, explicitCover, orphanCover]) fs.writeFileSync(cover, 'picture');
   const { CleanupService } = loader()('src/runtime/cleanup.ts');
   const cleanup = new CleanupService({
-    servers: path.join(paths.bootstrapDir, 'servers'), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
+    servers: paths.candidateInstanceRoots(), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
   }, () => ({ records: [{ instanceId: 'known', path: paths.serverDirFor('known') }], activeDirectories: [] }));
   assert.equal((await cleanup.scan()).items.length, 0);
   assert.equal((await cleanup.scan({ activeCoverPaths: ['app://localhost/unparsed.png'] })).items.length, 0);
@@ -1199,7 +1207,7 @@ test('garbage capabilities reject forged paths, traversal, changed files, replay
   const context = { records: [], activeDirectories: [], activeInstanceIds: [] };
   const { CleanupService } = loader()('src/runtime/cleanup.ts');
   const cleanup = new CleanupService({
-    servers: path.join(paths.bootstrapDir, 'servers'), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
+    servers: paths.candidateInstanceRoots(), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
   }, () => context);
   let scan = await cleanup.scan();
   const item = scan.items.find((item) => item.path === stale);
@@ -1229,7 +1237,7 @@ test('garbage scan and deletion refuse junctions including a root changed after 
   fs.symlinkSync(outside, linked, 'junction');
   const { CleanupService } = loader()('src/runtime/cleanup.ts');
   const cleanup = new CleanupService({
-    servers: path.join(paths.bootstrapDir, 'servers'), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
+    servers: paths.candidateInstanceRoots(), covers: paths.coversDir, temporary: paths.tmpDir, logs: paths.logsDir,
   }, () => ({ records: [], activeDirectories: [] }));
   const log = path.join(paths.logsDir, 'valuable.log');
   fs.writeFileSync(log, 'old log');
@@ -2056,8 +2064,6 @@ test('getAppSettings and setInstancesRoot configure custom instances root and re
   const root = fixture(t);
   const paths = loader({ electron: {} })('src/runtime/paths.ts');
   const initial = paths.getAppSettings();
-  assert.ok(initial.instancesRoot);
-  assert.ok(initial.defaultInstancesRoot);
 
   const customDir = path.join(root, 'custom-instances');
   const configured = paths.setInstancesRoot({ path: customDir });
@@ -2066,17 +2072,61 @@ test('getAppSettings and setInstancesRoot configure custom instances root and re
   assert.ok(fs.existsSync(customDir));
 
   const updated = paths.getAppSettings();
-  assert.equal(updated.instancesRoot, customDir);
   assert.equal(updated.configuredInstancesRoot, customDir);
+  assert.equal(paths.getInstancesRoot(), customDir);
 
   const targetDir = paths.serverDirFor('test-instance');
   assert.equal(targetDir, path.join(customDir, 'test-instance'));
 
   const reset = paths.setInstancesRoot({});
   assert.equal(reset.configured, false);
-  assert.equal(reset.instancesRoot, initial.defaultInstancesRoot);
+  assert.equal(reset.instancesRoot, null);
 
   const afterReset = paths.getAppSettings();
   assert.equal(afterReset.configuredInstancesRoot, undefined);
-  assert.equal(afterReset.instancesRoot, initial.defaultInstancesRoot);
+  // 无默认路径铁律：清除配置后不存在任何可推导的默认落点。
+  assert.equal(paths.getInstancesRoot(), null);
+  assert.throws(() => paths.serverDirFor('test-instance'), /尚未配置实例存储位置/);
+
+  // 恢复测试前的用户真实设置，不污染环境。
+  if (initial.configuredInstancesRoot) paths.setInstancesRoot({ path: initial.configuredInstancesRoot });
+});
+
+test('unconfigured storage root refuses implicit creation targets without fabricating a default directory', async (t) => {
+  const harness = pluginHarness(t);
+  harness.paths.setInstancesRoot({});
+  const archive = path.join(harness.root, 'source.zip');
+  fs.writeFileSync(archive, 'synthetic archive');
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    instanceId: 'no-root', port: 8000, localZipPath: archive,
+  }), { ready: false });
+  assert.equal(harness.starts(), 0);
+  assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /尚未选择实例安装目录/);
+  // 绝不创造任何默认目录顶替。
+  assert.equal(fs.existsSync(path.join(harness.root, 'instances', 'no-root')), false);
+  assert.equal(fs.existsSync(path.join(harness.paths.legacyServersDir, 'no-root')), false);
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('no-root'), null);
+});
+
+test('unconfigured storage root still discovers and launches legacy hidden-directory instances', async (t) => {
+  const harness = pluginHarness(t);
+  harness.paths.setInstancesRoot({});
+  const legacyDir = path.join(harness.paths.legacyServersDir, 'ancient-unconfigured');
+  serverFiles(legacyDir);
+  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'ancient-unconfigured', port: 8000 }), { ready: true });
+  assert.equal(harness.starts(), 1);
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('ancient-unconfigured').path, legacyDir);
+});
+
+test('relocate without an explicit target requires a configured root instead of a default location', async (t) => {
+  const harness = pluginHarness(t);
+  harness.paths.setInstancesRoot({});
+  const legacyDir = path.join(harness.paths.legacyServersDir, 'to-move');
+  serverFiles(legacyDir);
+  await assert.rejects(
+    harness.plugin.handle('relocateInstance', { instanceId: 'to-move' }),
+    /请先选择迁移目标存放位置/,
+  );
+  // 数据原样保留在旧目录。
+  assert.equal(fs.existsSync(path.join(legacyDir, 'server.js')), true);
 });

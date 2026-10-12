@@ -133,6 +133,7 @@ export interface LegacyInstanceLocation {
   instanceId: string;
   name: string;
   currentPath: string;
+  /** 建议的迁移目标（当前配置根下的同名目录）；未配置存储根时为空串——前端必须让用户显式选择目标文件夹。 */
   targetPath: string;
   version?: string;
 }
@@ -279,8 +280,6 @@ export interface FetchReleasesResult {
 }
 
 export interface GetAppSettingsResult {
-  instancesRoot: string;
-  defaultInstancesRoot: string;
   configuredInstancesRoot?: string;
 }
 
@@ -289,7 +288,8 @@ export interface SetInstancesRootParams {
 }
 
 export interface SetInstancesRootResult {
-  instancesRoot: string;
+  /** 当前生效存储根；未配置时为 null（无默认路径）。 */
+  instancesRoot: string | null;
   configured: boolean;
 }
 
@@ -419,15 +419,6 @@ export interface RelocateInstanceParams {
   instanceId: string;
   targetPath?: string;
   installPath?: string;
-}
-
-export interface MigrateLegacyInstancesParams {
-  instanceIds?: string[];
-}
-
-export interface MigrateLegacyInstancesResult {
-  success: boolean;
-  results: InstanceRelocationResult[];
 }
 
 export interface RenameInstanceParams {

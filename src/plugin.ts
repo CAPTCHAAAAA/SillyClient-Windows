@@ -22,7 +22,7 @@ import { OperationCoordinator } from './runtime/operations';
 import { CleanupService } from './runtime/cleanup';
 import { InstanceMaintenanceService } from './runtime/instance-maintenance';
 import { resolveInstanceDataRoot } from './runtime/instance-config';
-import { checkLegacyInstances, relocateInstance, migrateLegacyInstances } from './runtime/relocate';
+import { checkLegacyInstances, relocateInstance } from './runtime/relocate';
 import { renameInstance } from './runtime/rename';
 import { validatePreinstallSelection } from './runtime/preinstalled-extensions';
 import {
@@ -76,7 +76,8 @@ let cleanupCompleted = false;
 let cleanupPromise: Promise<void> | null = null;
 
 const garbage = new CleanupService({
-  servers: path.join(paths.bootstrapDir, 'servers'),
+  // 孤儿实例扫描覆盖全部历史与当前实例根，任何时代的落点都不会漏检。
+  servers: paths.candidateInstanceRoots(),
   covers: paths.coversDir,
   temporary: paths.tmpDir,
   logs: paths.logsDir,
@@ -291,7 +292,7 @@ async function doSendCommand(opts: any): Promise<void> {
     return;
   }
   const cwd = resolveInstanceDir(normalizedId);
-  if (!fs.existsSync(cwd)) {
+  if (!cwd || !fs.existsSync(cwd)) {
     notify('log', { message: `实例目录不存在：${normalizedId}`, level: 'error', ...commandContext });
     return;
   }
@@ -332,6 +333,9 @@ async function handleExportInstance(options: ExportInstanceParams): Promise<Expo
   let targetZipPath = options?.targetZipPath;
   if (!targetZipPath && mainWindow && !mainWindow.isDestroyed()) {
     const directory = resolveInstanceDir(options.instanceId, options.installPath);
+    if (!directory) {
+      throw new Error(`找不到实例「${options.instanceId}」的安装目录，无法导出。若数据仍存在，请先在「数据迁移」中接管该目录。`);
+    }
     const baseName = path.basename(directory);
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -432,8 +436,6 @@ export async function handle(method: string, options: any): Promise<any> {
       return checkLegacyInstances();
     case 'relocateInstance':
       return relocateInstance(options, currentInstanceId);
-    case 'migrateLegacyInstances':
-      return migrateLegacyInstances(options, currentInstanceId);
     case 'renameInstance':
       return renameInstance(options, currentInstanceId);
     case 'setInstancePassword':

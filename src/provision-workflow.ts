@@ -175,7 +175,13 @@ export async function executeProvisionWorkflow(
     // 携带安装源 = 创建意图。启动既有实例绝不携带安装源，后端据此拒绝
     // 在数据丢失时静默下载全新实例顶替（旧版升级失联事故的核心防线）。
     const hasInstallSource = Boolean(zipballUrl || localZipPath);
-    targetServerDir = resolveInstanceDir(safeInstanceId, installPath, installPathMode);
+    const resolvedDir = resolveInstanceDir(safeInstanceId, installPath, installPathMode);
+    if (!resolvedDir) {
+      throw new Error(hasInstallSource
+        ? '尚未选择实例安装目录。请先选择实例存放文件夹（必选），再创建实例。'
+        : `找不到实例「${safeInstanceId}」的安装目录，且当前未配置实例存储根。已搜索旧版隐藏目录与历史落点均无结果。若数据仍存在，请通过「数据迁移」原地接管；否则请重新创建实例。`);
+    }
+    targetServerDir = resolvedDir;
     const existingOtherRecord = instanceStore.listInstanceRecords().find(
       (r) => r.instanceId !== safeInstanceId && path.resolve(r.path).toLowerCase() === path.resolve(targetServerDir).toLowerCase()
     );

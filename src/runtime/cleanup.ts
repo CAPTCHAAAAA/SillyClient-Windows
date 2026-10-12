@@ -77,7 +77,7 @@ export class CleanupService {
 
   constructor(
     private readonly roots: {
-      servers: string; covers: string; temporary: string; logs: string;
+      servers: string[]; covers: string; temporary: string; logs: string;
     },
     private readonly currentContext: () => CleanupContext,
   ) {}
@@ -86,9 +86,8 @@ export class CleanupService {
     this.capabilities.clear();
   }
 
-  private scope(type: GarbageType): string {
+  private scope(type: Exclude<GarbageType, 'orphan_instance'>): string {
     return {
-      orphan_instance: this.roots.servers,
       orphan_cover: this.roots.covers,
       temp_file: this.roots.temporary,
       cache: this.roots.logs,
@@ -105,9 +104,18 @@ export class CleanupService {
   }
 
   private async eligible(item: Pick<GarbageItem, 'path' | 'type'>, context: CleanupContext): Promise<boolean> {
-    const root = path.resolve(this.scope(item.type));
     const target = path.resolve(item.path);
-    if (!contained(root, target) || path.dirname(target) !== root) return false;
+    // 孤儿实例可产生于任何历史/当前实例根下（旧版隐藏目录、安装目录默认根、配置根）。
+    if (item.type === 'orphan_instance') {
+      const inScope = this.roots.servers.some((entry) => {
+        const root = path.resolve(entry);
+        return contained(root, target) && path.dirname(target) === root;
+      });
+      if (!inScope) return false;
+    } else {
+      const root = path.resolve(this.scope(item.type));
+      if (!contained(root, target) || path.dirname(target) !== root) return false;
+    }
     const targetKey = canonical(target);
     const directoryProtection = [...context.records.map((record) => record.path), ...context.activeDirectories];
     if (directoryProtection.some((directory) => canonical(directory) === targetKey
@@ -154,7 +162,8 @@ export class CleanupService {
     const context = this.context(this.references);
     const items: GarbageItem[] = [];
     const scopes: [string, GarbageType][] = [
-      [this.roots.servers, 'orphan_instance'], [this.roots.covers, 'orphan_cover'],
+      ...this.roots.servers.map((root): [string, GarbageType] => [root, 'orphan_instance']),
+      [this.roots.covers, 'orphan_cover'],
       [this.roots.temporary, 'temp_file'], [this.roots.logs, 'cache'],
     ];
     for (const [root, type] of scopes) {

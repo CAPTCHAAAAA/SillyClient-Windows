@@ -44,7 +44,7 @@ export function resolveInstanceDir(
   instanceId: string,
   installPath?: string,
   installPathMode?: paths.InstallPathMode,
-): string {
+): string | null {
   const safeId = paths.normalizeInstanceId(instanceId);
   const selected = installPath !== undefined || installPathMode !== undefined
     ? paths.serverDirFor(safeId, installPath, installPathMode)
@@ -83,7 +83,13 @@ export function resolveInstanceDir(
     instanceStore.registerInstance(safeId, discovered);
     return discovered;
   }
-  return paths.serverDirFor(safeId);
+  try {
+    return paths.serverDirFor(safeId);
+  } catch {
+    // 未配置实例存储根时不存在可推导的位置——返回空，由调用方给出明确指引，
+    // 绝不回退到安装目录等会被安装器施工铲平的位置。
+    return null;
+  }
 }
 
 export function scanInstances(
@@ -145,11 +151,11 @@ export async function getInstanceInfo(
   const safeInstanceId = paths.normalizeInstanceId(instanceId);
   const dir = resolveInstanceDir(safeInstanceId, installPath, installPathMode);
 
-  if (!fs.existsSync(dir)) {
+  if (!dir || !fs.existsSync(dir)) {
     return {
       instanceId: safeInstanceId,
       version: 'unknown',
-      path: dir,
+      path: dir ?? instanceStore.getInstanceRecord(safeInstanceId)?.path ?? '',
       sizeBytes: 0,
       createdAt: '',
       lastUsedAt: '',

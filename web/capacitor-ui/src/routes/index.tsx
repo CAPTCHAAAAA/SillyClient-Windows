@@ -711,6 +711,20 @@ function SillyClientLauncher() {
     return () => { directoryPickerGeneration.current += 1; };
   }, [showNewInstancePanel, newInstanceMode]);
 
+  // 打开创建向导时预填已登记的实例存储根；未配置时保持为空，由用户必选。
+  useEffect(() => {
+    if (!showNewInstancePanel || newInstanceDir.trim()) return;
+    let cancelled = false;
+    TarvenEnv.getAppSettings()
+      .then((settings) => {
+        const configured = settings?.configuredInstancesRoot;
+        if (!cancelled && configured && !newInstanceDir.trim()) setNewInstanceDir(configured);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // 仅在向导打开瞬间预填一次；newInstanceDir 由守卫条件兜底，不列入依赖。
+  }, [showNewInstancePanel]);
+
   const handleSetNewInstanceDir = useCallback((value: string) => {
     const clean = value.replace(/^["']|["']$/g, "").trim();
     setNewInstanceDir(clean);
@@ -1313,6 +1327,11 @@ function SillyClientLauncher() {
       candidateId = `${safeCandidateId} (${counter++})`;
     }
     const instanceId = candidateId;
+    // 安装目录必选拦截：无默认路径设计下，空路径会在后端静默落入安装目录施工区。
+    if (newInstanceMode === "local" && !cleanInstallPath(newInstanceDir)) {
+      setNewInstanceError("请先点「浏览」选择实例安装目录（必选）");
+      return;
+    }
     const operation = operations.begin(instanceId, "create");
     setNewInstanceError(null);
     setIsCreatingInstance(true);
@@ -1460,6 +1479,10 @@ function SillyClientLauncher() {
       operationStarted = true;
 
       await provisionCreatedInstance(instance, operation);
+      // 登记存储根：之后创建/迁移/搬迁默认沿用用户这次选择的文件夹（无默认路径设计）。
+      if (newInstanceMode === "local" && customParentDir) {
+        void TarvenEnv.setInstancesRoot({ path: customParentDir }).catch(() => {});
+      }
       setNewInstanceName("");
       setNewInstanceDir("");
       setNewInstancePathMode("exact");

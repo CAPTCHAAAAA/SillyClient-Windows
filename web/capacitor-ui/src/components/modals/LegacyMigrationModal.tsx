@@ -4,6 +4,7 @@ import { cn, formatDisplayVersion } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { LayerBackdrop } from "../common/LayerBackdrop";
 import { TarvenEnv } from "../../capacitor-plugin";
+import { installationSelection } from "../../lib/install-location";
 
 export interface LegacyMigrationItem {
   instanceId: string;
@@ -52,11 +53,35 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
   const [completedIds, setCompletedIds] = useState<string[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isAllDone, setIsAllDone] = useState(false);
+  const [targetRoot, setTargetRoot] = useState("");
+
+  // 预填：后端建议目标（当前配置根）是所有条目共同的父目录时直接沿用；否则必须手动选择。
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const parents = Array.from(new Set(
+      legacyInstances
+        .map((item) => {
+          const trimmed = (item.targetPath || "").trim().replace(/[\\/]+$/, "");
+          const match = trimmed.match(/^(.*)[\\/][^\\/]+$/);
+          return match ? match[1] : "";
+        })
+        .filter(Boolean)
+    ));
+    if (parents.length === 1) setTargetRoot(parents[0]);
+  }, [isOpen, legacyInstances]);
+
+  const handlePickTargetRoot = async () => {
+    try {
+      const selected = installationSelection(await TarvenEnv.pickDirectory({ purpose: "installation" }));
+      setTargetRoot(selected.path);
+      setErrorMsg(null);
+    } catch { /* 用户取消选择 */ }
+  };
 
   if (!isOpen && !isClosing) return null;
 
   const handleStartMigration = async () => {
-    if (migrating || legacyInstances.length === 0) return;
+    if (migrating || legacyInstances.length === 0 || !targetRoot) return;
     setMigrating(true);
     setErrorMsg(null);
 
@@ -69,7 +94,7 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
       try {
         const res = await TarvenEnv.relocateInstance({
           instanceId: item.instanceId,
-          targetPath: item.targetPath,
+          targetPath: targetRoot,
         });
         if (res.success) {
           successful.push(item.instanceId);
@@ -81,6 +106,8 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
       }
     }
     if (results.length > 0) onMigrationComplete?.(results, failures.length === 0);
+    // 迁移目标登记为实例存储根：之后创建的实例默认沿用同一位置。
+    if (results.length > 0) TarvenEnv.setInstancesRoot({ path: targetRoot }).catch(() => {});
     if (failures.length === 0) {
       setIsAllDone(true);
     } else {
@@ -150,6 +177,44 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
 
         {/* 正文区域 */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-hidden text-xs">
+          {/* 迁移目标（必选，只读输入框，只能点「浏览」选择） */}
+          {legacyInstances.length > 0 && (
+            <div className="space-y-1.5">
+              <label className={cn("text-xs font-medium", isLight ? "text-[#1a1625]/70" : "text-white/70")}>
+                目标存放文件夹（必选）
+              </label>
+              <div className="flex items-center gap-2 w-full">
+                <input
+                  type="text"
+                  readOnly
+                  value={targetRoot}
+                  placeholder="点击「浏览」选择存放文件夹"
+                  className={cn(
+                    "flex-1 h-9 px-3 rounded-xl border text-sm focus:outline-none focus:ring-0 transition-colors cursor-default",
+                    isLight
+                      ? "bg-black/[0.04] border-black/[0.08] text-[#1a1625] placeholder:text-[#1a1625]/25"
+                      : "bg-white/[0.04] border-white/[0.08] text-white placeholder:text-white/25"
+                  )}
+                />
+                <button
+                  onClick={handlePickTargetRoot}
+                  disabled={migrating}
+                  className={cn(
+                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0 transition-colors disabled:opacity-40",
+                    isLight
+                      ? "border-black/[0.08] text-[#1a1625]/50 hover:text-[#1a1625]/85"
+                      : "border-white/[0.08] text-white/50 hover:text-white/85"
+                  )}
+                >
+                  浏览
+                </button>
+              </div>
+              <p className={cn("text-[11px] leading-relaxed", isLight ? "text-[#1a1625]/45" : "text-white/40")}>
+                每个实例会搬迁为该文件夹内的同名子目录；该文件夹同时登记为之后新建实例的默认存储位置。
+              </p>
+            </div>
+          )}
+
           {/* 实例列表或空状态 (完全平铺，无嵌套厚边框卡片) */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
@@ -172,6 +237,9 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
                 {legacyInstances.map((item) => {
                   const isCompleted = completedIds.includes(item.instanceId);
                   const isCurrent = currentMigratingId === item.instanceId;
+                  const displayTarget = targetRoot
+                    ? `${targetRoot}\\${item.instanceId}`
+                    : (item.targetPath || "待选择目标文件夹");
 
                   return (
                     <div
@@ -220,8 +288,8 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
                           {item.currentPath}
                         </span>
                         <span className="opacity-40">→</span>
-                        <span className="truncate max-w-[45%]" title={item.targetPath}>
-                          {item.targetPath}
+                        <span className="truncate max-w-[45%]" title={displayTarget}>
+                          {displayTarget}
                         </span>
                       </div>
                     </div>
@@ -243,7 +311,7 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
           <div className="flex items-start gap-2 pt-1 text-[11px] leading-relaxed opacity-55">
             <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
             <p>
-              旧版隐藏目录中的实例将无损搬迁至当前实例存储根（默认为客户端根目录下的 <code className="px-1 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[10.5px]">instances/</code> 文件夹，可在设置中自定义），消除 C 盘 AppData 空间碎片并支持便携备份。迁移过程中自动同步底层注册表与配置，完成后即可继续运行。
+              旧版隐藏目录中的实例将无损搬迁至你在上方选择的文件夹。本应用没有任何软件默认落点——实例只存在于你指定的位置，安装目录与系统缓存目录都不会存放你的数据，更新与重装都不会触碰。迁移过程中自动同步底层注册表与配置，完成后即可继续运行。
             </p>
           </div>
         </div>
@@ -285,7 +353,7 @@ export const LegacyMigrationModal: React.FC<LegacyMigrationModalProps> = ({
               )}
               <button
                 type="button"
-                disabled={migrating}
+                disabled={migrating || !targetRoot}
                 onClick={handleStartMigration}
                 className={cn(
                   "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-colors border disabled:opacity-40",

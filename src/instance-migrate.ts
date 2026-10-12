@@ -25,7 +25,6 @@ export async function migrateInstanceInternal(
   if (!cleanSourcePath) throw new Error('缺少来源路径');
 
   const safeInstanceId = context.instanceId;
-  const targetDir = paths.serverDirFor(safeInstanceId, targetPath, 'exact');
 
   context.check();
   if (instanceStore.getInstanceRecord(safeInstanceId)) throw new Error('Instance is already registered');
@@ -45,6 +44,11 @@ export async function migrateInstanceInternal(
     return { success: true, instanceId: safeInstanceId, targetPath: realTakeoverPath };
   }
   if (mode !== 'copy') throw new Error('Unknown migration mode');
+  // 复制迁移目标必选：无默认落点——目标留空兜底到用户看不见的位置，正是历史事故的根因。
+  if (typeof targetPath !== 'string' || !targetPath.trim()) {
+    throw new Error('迁移目标路径必选：请选择目标保存位置，不存在软件默认落点');
+  }
+  const targetDir = paths.serverDirFor(safeInstanceId, targetPath, 'exact');
   migrationEvent('progress', { percent: 30, stage: 'Copying and verifying data' });
   const transaction = await copyMigration(cleanSourcePath, targetDir,
     path.join(paths.bootstrapDir, 'servers', 'default'), { includeSecrets, signal: context.signal });

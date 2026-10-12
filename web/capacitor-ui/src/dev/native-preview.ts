@@ -137,13 +137,11 @@ export const nativePreview: TarvenEnvPlugin = {
   async fetchReleases() { return { releases: [{ tag: "1.19.0", zipballUrl: "https://example.test/synthetic.zip", prerelease: false }] }; },
   async getAppSettings() {
     record("getAppSettings", {});
-    const instancesRoot = syntheticRoot();
-    return { instancesRoot, defaultInstancesRoot: instancesRoot };
+    return { configuredInstancesRoot: syntheticRoot() };
   },
   async setInstancesRoot(options) {
     record("setInstancesRoot", options ?? {});
-    const instancesRoot = options?.path || syntheticRoot();
-    return { instancesRoot, configured: Boolean(options?.path) };
+    return { instancesRoot: options?.path || null, configured: Boolean(options?.path) };
   },
   async pickDirectory(options) {
     record("pickDirectory", options);
@@ -302,10 +300,6 @@ export const nativePreview: TarvenEnvPlugin = {
     record("relocateInstance", options);
     const newPath = options.targetPath || exactInstallTarget(syntheticRoot(), "root", options.instanceId)!;
     return { success: true, instanceId: options.instanceId, oldPath: "C:\\AppData\\Legacy", newPath };
-  },
-  async migrateLegacyInstances(options = {}) {
-    record("migrateLegacyInstances", options);
-    return { success: true, results: [] };
   },
   async renameInstance(options) {
     record("renameInstance", options);
