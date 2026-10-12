@@ -79,4 +79,4 @@ npm --prefix .worktrees/release-hardening-windows run pack
   3. `npm run pack` 生产构建成功。
 - **中央登记协议**:
   - **当且仅当向远端分支执行 `git push` 或打包输出正式 EXE 时**，才向 `Local/docs/CURRENT_STATE.md` 与 `.worktrees/README.md` 登记事实索引。
-| 2026-10-12 | Agent (abf46b6) | **v1.12.1 Windows 专项发布**：版本双 package.json 升 1.12.1，81/81 测试全绿，打包归档 `Local/artifacts/v1.12.1/`（SHA-256 `3b12de22…`），本机覆盖安装 1.12.1.0；GitHub Release `v1.12.1` 仅附 Windows 资产发布至主仓——分端提醒机制验证：更新判定 = 语义化版本更高 **且** Release 含调用端平台安装包资产（windows→exe / android→apk / ios→ipa），故 Android/iOS 1.12.0 用户不会收到本次提醒。该机制同时解释了线上 v1.12.0 的 Windows 包为 R2 问题版（并行会话 22:51 从本地归档取用）的反馈来源 | 已发布 |
+| 2026-10-12 | Agent (abf46b6→5802a5d) | **v1.12.1 Windows 专项发布（资产已替换）**：版本双 package.json 升 1.12.1，81/81 测试全绿，GitHub Release `v1.12.1` 仅附 Windows 资产发布至主仓——分端提醒机制验证：更新判定 = 语义化版本更高 **且** Release 含调用端平台安装包资产（windows→exe / android→apk / ios→ipa），故 Android/iOS 1.12.0 用户不会收到本次提醒；线上 v1.12.0 的 Windows 包为 R2 问题版（并行会话 22:51 从本地归档取用），本发布完成替换。**同日追加**：移植主仓 `3fbd81f` 透明封面增量（ManageInstanceCard 组件、cover-clear 三资产、styles.css 圆角收边），Release 资产替换为 SHA-256 `ce785ed3…`（118,653,665 字节）并覆盖重装 | 已发布 |
