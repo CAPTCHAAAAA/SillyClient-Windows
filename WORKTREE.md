@@ -75,6 +75,7 @@ npm --prefix .worktrees/release-hardening-windows run pack
 | 2026-10-13 | Agent (73d7ee5) | **同步通用前端 667b83a..f0be259**（动态封面紫酒红中段底板 coverTone.ts、管理卡遮罩对齐首页 manage-card-scrim、溶解统一 780ms、主题切换 shedAmbient 第二参数）：六份内容一致文件直接覆盖 + 三份平台接线文件三方合并零冲突（ManageInstanceModal/NewInstanceWizardModal/routes），合并后补 Windows 存储页签三处 `isPortrait` 传参；平台契约（存储迁移/导入导出/迁移门控/创建闭环）全数保留。前端 tsc+vite 全绿、后端 tsc 0 错误、88/88 测试全绿、锁文件刷新 | 已同步 |
 | 2026-10-13 | Agent | **v1.13.0 含新前端重打包并覆盖安装**：用户指令"构建为1.13.0并安装到本地"；后端 tsc 重建、NSIS 重打包（SHA-256 `45a9789d…`，118,659,540 字节，替换 `Local/artifacts/v1.13.0/` 归档），已 `/S` 覆盖安装至 `D:\Software\AI\Entertainment\SillyClient`（1.13.0.0）；asar 实证含新前端（`manage-card-scrim`）与后端新规约（`尚未配置实例存储位置`）。**等待用户实测** | 待实测 |
 | 2026-10-16 | Agent | **同步通用前端至 55edc3b（功能 ec678dc，遮罩同步淡出+设置项悬停）并重打包**：本树差量 `f0be259..55edc3b`——直接覆盖 19 份（含 CornerResizeCurve 新增），三方合并 5 份；冲突处置：向导拒绝 common 的"数据迁移模式"面板（Android 语义且 Windows routes 无接线）、搬迁弹窗否决"默认目录"档位（违背无默认路径铁律）但采纳三处 flat-capsule 按钮新规、routes 顶栏时钟按钮取新版悬停样式。前端 tsc+vite、后端 tsc、88/88 测试全绿；重打包 `/S` 覆盖安装本机（1.13.0.0，SHA-256 `bef42c73…`，118,660,488 字节），asar 实证含 `clear-20261014`/`flat-capsule`/`card-rim-depth1` 最新签名。**等待用户实测** | 待实测 |
+| 2026-10-16 | Agent (62e72f2→main) | **v1.13.0 发布准备就绪（待口令）**：Windows 仓 `main` 已快进合入 lts（`b82a074..62e72f2`）并推送；发布说明草稿 `Local/artifacts/v1.13.0/RELEASE-NOTES-draft.md`、致歉信草稿 `APOLOGY-LETTER-draft.md`、构建证据 `Local/evidence/v1.13.0/`、Runbook `Local/docs/RELEASE-PREP-v1.13.0.md` 全部就位。tag 与 GitHub Release 创建（仅主仓）等待用户明确口令；用户实测仍是发布前置条件 | 待口令 |
 
 ---
 
