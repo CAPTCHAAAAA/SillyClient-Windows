@@ -42,10 +42,10 @@ function AppSettingsRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="app-settings-row">
+    <div className="app-settings-row setting-row">
       <div className="app-settings-copy">
-        <div className="app-settings-label">{label}</div>
-        <div className="app-settings-desc">{desc}</div>
+        <div className="app-settings-label setting-label">{label}</div>
+        <div className="app-settings-desc setting-desc">{desc}</div>
       </div>
       <div className="app-settings-control">{children}</div>
     </div>
@@ -73,11 +73,11 @@ function AppSettingsLinkRow({
     <button
       type="button"
       onClick={onClick}
-      className="app-settings-row app-settings-link-row is-interactive motion-control"
+      className="app-settings-row app-settings-link-row setting-row is-interactive motion-control"
     >
       <div className="app-settings-copy">
-        <div className="app-settings-label">{label}</div>
-        <div className="app-settings-desc">{desc}</div>
+        <div className="app-settings-label setting-label">{label}</div>
+        <div className="app-settings-desc setting-desc">{desc}</div>
       </div>
       <div className="app-settings-control">
         <ChevronRight className="w-4 h-4 opacity-35" />
@@ -100,7 +100,7 @@ function AppSettingsAction({
       type="button"
       onClick={onClick}
       className={cn(
-        "app-settings-action motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0",
+        "app-settings-action flat-capsule motion-control h-9 px-3 rounded-full text-[11px] font-medium border-0 flex-shrink-0",
         tone !== "default" && `is-${tone}`
       )}
     >
@@ -180,7 +180,7 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
   return (
     <div
       className={cn(
-        "ios-task-surface app-settings-surface fixed rounded-2xl flex flex-col overflow-hidden backdrop-blur-[40px] saturate-180",
+        "ios-task-surface app-settings-surface reading-flat-surface fixed rounded-2xl flex flex-col overflow-hidden backdrop-blur-[40px] saturate-180",
         glassBg,
         isLight && "is-light",
         isClosing ? "animate-clone-panel-exit" : "animate-clone-panel"

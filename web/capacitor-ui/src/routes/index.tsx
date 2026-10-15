@@ -64,7 +64,7 @@ const LEGACY_MIGRATION_KEY = "sillyclient.legacy_migration.version";
 const CURRENT_VERSION = 2;
 const BACKGROUND_PANEL_EXIT_MS = 300;
 const PANEL_EXIT_MS = 300;
-const POPOVER_EXIT_MS = 200;
+const POPOVER_EXIT_MS = 300;
 const MANAGE_PANEL_OPEN_GAP_MS = 32;
 
 function hydrateInstance(t: StoredInstance): TavernInstance {
@@ -1818,7 +1818,9 @@ function SillyClientLauncher() {
 
     try {
       let freedBytes = 0;
-      if (pendingDelete.type === "local") {
+      if (isWeb) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1400));
+      } else if (pendingDelete.type === "local") {
         if (pendingDelete.status === "running") {
           operations.cancel(pendingDelete.installDir || pendingDelete.id);
           await TarvenEnv.closeTavern({ instanceId: pendingDelete.installDir || pendingDelete.id });
@@ -1849,7 +1851,7 @@ function SillyClientLauncher() {
     } finally {
       setIsDeletingInstance(false);
     }
-  }, [instances.length, isDeletingInstance, pendingDelete, operations, setTerminalLogs]);
+  }, [instances.length, isDeletingInstance, isWeb, pendingDelete, operations, setTerminalLogs]);
 
   /** 更新当前管理面板实例的 config 字段。 */
   const updateManagedConfig = (patch: Partial<InstanceConfig>) => {
@@ -2369,7 +2371,7 @@ function SillyClientLauncher() {
               }}
               className={cn(
                 "ios-glass-btn px-3 h-8 flex items-center justify-center text-xs font-medium transition-all",
-                isLight ? "text-[#1a1625]/70" : "text-white/70"
+                isLight ? "text-[#1a1625]/70 hover:text-[#1a1625]" : "text-white/70 hover:text-white"
               )}
             >
               <Terminal className="w-3.5 h-3.5" />
@@ -2377,11 +2379,11 @@ function SillyClientLauncher() {
           </div>
 
           <div className="flex-1 flex items-center justify-center">
-            <button onClick={toggleBgPanel} className={cn("flex items-center gap-2 px-4 py-1.5 rounded-full transition-all max-w-[200px] border", isLight ? "hover:bg-black/5 border-black/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.05),0_1px_2px_rgba(255,255,255,0.5)]" : "hover:bg-white/10 border-white/10 shadow-[inset_0_1px_2px_rgba(0,0,0,0.2),0_1px_2px_rgba(255,255,255,0.1)]")}>
-              <span className={cn("text-sm font-medium truncate", isLight ? "text-[#1a1625]" : "text-white")}>
+            <button onClick={toggleBgPanel} className={cn("group flex items-center gap-2 px-4 py-1.5 rounded-full transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] max-w-[200px] border", isLight ? "border-black/10 text-[#1a1625]/80 hover:text-[#1a1625] shadow-[inset_0_1px_2px_rgba(0,0,0,0.05),0_1px_2px_rgba(255,255,255,0.5)]" : "border-white/10 text-white/80 hover:text-white shadow-[inset_0_1px_2px_rgba(0,0,0,0.2),0_1px_2px_rgba(255,255,255,0.1)]")}>
+              <span className="text-sm font-medium truncate">
                 {new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
               </span>
-              <ChevronDown className={cn("w-4 h-4 flex-shrink-0 transition-transform", isLight ? "text-[#1a1625]/60" : "text-white/60", showBgPanel && "rotate-180")} />
+              <ChevronDown className={cn("w-4 h-4 flex-shrink-0 text-current transition-transform", showBgPanel && "rotate-180")} />
             </button>
           </div>
 
@@ -2399,7 +2401,7 @@ function SillyClientLauncher() {
             }}
             className={cn(
               "motion-control ios-glass-btn px-4 h-9 flex items-center justify-center text-xs font-medium flex-shrink-0",
-              isLight ? "text-[#1a1625]/70" : "text-white/70"
+              isLight ? "text-[#1a1625]/70 hover:text-[#1a1625]" : "text-white/70 hover:text-white"
             )}
           >
             <Menu className="w-4 h-4" />
@@ -2429,10 +2431,10 @@ function SillyClientLauncher() {
               setUpdatePromptDismissed(true);
             }}
             className={cn(
-              "motion-control h-7 px-3 rounded-full text-xs font-semibold transition-all border",
+              "flat-capsule motion-control h-7 px-3 rounded-full text-xs font-semibold border-0",
               isLight
-                ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625]/70 hover:text-[#1a1625]"
-                : "bg-white/20 border-white/15 text-white/70 hover:text-white"
+                ? "text-[#1a1625]/70 hover:text-[#1a1625]"
+                : "text-white/70 hover:text-white"
             )}
           >
             查看
@@ -2780,7 +2782,7 @@ function SillyClientLauncher() {
       {/* 解耦公共组件: 统一多层遮罩 */}
       <LayerBackdrop
         isOpen={showNewInstancePanel || isNewInstancePanelClosing || showLaunchPanel || isLaunchPanelClosing}
-        isClosing={!showNewInstancePanel && !showLaunchPanel && (isNewInstancePanelClosing || isLaunchPanelClosing)}
+        isClosing={(isNewInstancePanelClosing || isLaunchPanelClosing) && (!showNewInstancePanel || isNewInstancePanelClosing) && (!showLaunchPanel || isLaunchPanelClosing)}
         onClick={() => {
           if (showNewInstancePanel && !isCreatingInstance) {
             closeVersionDropdown();

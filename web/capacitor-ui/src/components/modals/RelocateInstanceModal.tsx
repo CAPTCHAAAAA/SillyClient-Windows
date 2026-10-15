@@ -365,10 +365,10 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
             <button
               onClick={onClose}
               className={cn(
-                "motion-control px-5 h-8 rounded-full text-xs font-medium transition-all border",
+                "flat-capsule motion-control px-5 h-8 rounded-full text-xs font-medium border-0",
                 isLight
-                  ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14]"
-                  : "bg-white/20 border-white/15 text-white hover:bg-white/30"
+                  ? "text-[#1a1625]/70 hover:text-[#1a1625]"
+                  : "text-white/70 hover:text-white"
               )}
             >
               完成
@@ -380,10 +380,10 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                 disabled={migrating}
                 onClick={onClose}
                 className={cn(
-                  "motion-control px-4 h-8 rounded-full text-xs font-medium transition-all border disabled:opacity-40",
+                  "flat-capsule motion-control px-4 h-8 rounded-full text-xs font-medium border-0 disabled:opacity-40",
                   isLight
-                    ? "bg-transparent border-black/[0.08] text-[#1a1625]/60 hover:bg-black/[0.04]"
-                    : "bg-transparent border-white/[0.08] text-white/60 hover:bg-white/[0.04]"
+                    ? "text-[#1a1625]/60 hover:text-[#1a1625]"
+                    : "text-white/60 hover:text-white"
                 )}
               >
                 取消
@@ -393,10 +393,10 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                 disabled={isRunning || migrating || !customPath.trim()}
                 onClick={handleExecuteRelocate}
                 className={cn(
-                  "motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 transition-all border disabled:opacity-40",
+                  "flat-capsule motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 border-0 disabled:opacity-40",
                   isLight
-                    ? "bg-black/[0.08] border-black/[0.10] text-[#1a1625] hover:bg-black/[0.14] active:bg-black/[0.18]"
-                    : "bg-white/20 border-white/15 text-white hover:bg-white/30 active:bg-white/35"
+                    ? "text-[#1a1625]/70 hover:text-[#1a1625]"
+                    : "text-white/70 hover:text-white"
                 )}
               >
                 {migrating ? (

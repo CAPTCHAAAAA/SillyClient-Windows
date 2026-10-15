@@ -342,7 +342,7 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
   return (
     <div
       className={cn(
-        "ios-task-surface fixed rounded-2xl flex flex-col overflow-hidden backdrop-blur-[40px] saturate-180",
+        "ios-task-surface reading-flat-surface fixed rounded-2xl flex flex-col overflow-hidden backdrop-blur-[40px] saturate-180",
         glassBg,
         isLight && "is-light",
         isClosing ? "animate-clone-panel-exit" : "animate-clone-panel"
@@ -468,10 +468,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                 <button
                   onClick={onPickInstallFolder}
                   className={cn(
-                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0 transition-colors",
+                    "flat-capsule motion-control h-9 px-3 rounded-full text-[11px] font-medium border-0 flex-shrink-0",
                     isLight
-                      ? "border-black/[0.08] text-[#1a1625]/50 hover:text-[#1a1625]/85"
-                      : "border-white/[0.08] text-white/50 hover:text-white/85"
+                      ? "text-[#1a1625]/60 hover:text-[#1a1625]"
+                      : "text-white/60 hover:text-white"
                   )}
                 >
                   浏览
@@ -548,10 +548,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                     }
                   }}
                   className={cn(
-                    "motion-control h-9 px-3 rounded-xl text-[11px] font-medium border flex-shrink-0 transition-colors",
+                    "flat-capsule motion-control h-9 px-3 rounded-full text-[11px] font-medium border-0 flex-shrink-0",
                     isLight
-                      ? "border-black/[0.08] text-[#1a1625]/50 hover:text-[#1a1625]/85"
-                      : "border-white/[0.08] text-white/50 hover:text-white/85"
+                      ? "text-[#1a1625]/60 hover:text-[#1a1625]"
+                      : "text-white/60 hover:text-white"
                   )}
                 >
                   {newInstanceLocalZip ? "更换" : "导入 ZIP"}
@@ -608,11 +608,11 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
                 isLight ? "border-black/[0.04]" : "border-white/[0.04]"
               )}
             >
-              <div className="flex items-center justify-between gap-4">
+              <div className="setting-row flex items-center justify-between gap-4">
                 <div>
                   <div
                     className={cn(
-                      "text-xs font-medium",
+                      "setting-label text-xs font-medium",
                       isLight ? "text-[#1a1625]/70" : "text-white/70"
                     )}
                   >
@@ -732,11 +732,11 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
               onClose();
             }}
             className={cn(
-              "motion-control px-4 h-8 rounded-full text-xs font-medium transition-colors border",
+              "flat-capsule motion-control px-4 h-8 rounded-full text-xs font-medium border-0",
               "disabled:pointer-events-none disabled:opacity-40",
               isLight
-                ? "bg-black/[0.04] border-black/[0.06] text-[#1a1625]/60 hover:text-[#1a1625]"
-                : "bg-white/[0.08] border-white/[0.06] text-white/60 hover:text-white"
+                ? "text-[#1a1625]/60 hover:text-[#1a1625]"
+                : "text-white/60 hover:text-white"
             )}
           >
             取消
@@ -745,10 +745,10 @@ export const NewInstanceWizardModal: React.FC<NewInstanceWizardModalProps> = ({
             onClick={createInstance}
             disabled={isCreatingInstance}
             className={cn(
-              "motion-control px-5 h-8 rounded-full text-xs font-semibold disabled:pointer-events-none disabled:opacity-50 flex items-center gap-1.5 transition-colors border",
+              "flat-capsule motion-control px-5 h-8 rounded-full text-xs font-semibold disabled:pointer-events-none disabled:opacity-50 flex items-center gap-1.5 border-0",
               isLight
-                ? "bg-black/[0.07] border-black/[0.08] text-[#1a1625]/70 hover:text-[#1a1625]"
-                : "bg-white/15 border-white/15 text-white/70 hover:text-white"
+                ? "text-[#1a1625]/70 hover:text-[#1a1625]"
+                : "text-white/70 hover:text-white"
             )}
           >
             {isCreatingInstance && (
