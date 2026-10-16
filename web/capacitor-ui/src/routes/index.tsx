@@ -189,6 +189,8 @@ function SillyClientLauncher() {
   const isShowcase = showcaseParams.get("showcase") === "1";
   const isNativePreview = import.meta.env.DEV && showcaseParams.get("nativePreview") === "1";
   const isDemoPreview = import.meta.env.DEV && isWeb && !isShowcase;
+  // Windows 桌面包没有本地预览站，按 host 判断会误判，因此固定为 false
+  const isLocalPreview = false;
   const showcaseSafeTop = isShowcase
     ? Math.max(0, Number(showcaseParams.get("safeTop")) || 52)
     : 0;
@@ -2344,7 +2346,7 @@ function SillyClientLauncher() {
             <button
               ref={terminalBtnRef}
               onClick={() => {
-                if (isWeb && !isWindows && !isShowcase) return;
+                if (isWeb && !isWindows && !isShowcase && !isLocalPreview) return;
                 if (showTerminal) {
                   setIsTerminalClosing(true);
                   setTimeout(() => { setShowTerminal(false); setIsTerminalClosing(false); }, PANEL_EXIT_MS);
@@ -2652,6 +2654,18 @@ function SillyClientLauncher() {
       />
 
       {/* 解耦业务组件: 终端面板 */}
+      <LayerBackdrop
+        isOpen={showTerminal || isTerminalClosing}
+        isClosing={isTerminalClosing}
+        onClick={() => {
+          setIsTerminalClosing(true);
+          setTimeout(() => {
+            setShowTerminal(false);
+            setIsTerminalClosing(false);
+          }, PANEL_EXIT_MS);
+        }}
+        zIndex={LAYERS.MODAL_BACKDROP}
+      />
       <TerminalModal
         isOpen={showTerminal}
         isClosing={isTerminalClosing}
