@@ -25,7 +25,7 @@
 ## 2. 核心架构契约 (Invariants & Constraints)
 
 1. **架构终态冻结**：详见 `SillyClient_Windows/docs/WINDOWS-BACKEND-ARCHITECTURE-FREEZE.md`；
-2. **测试网 100% 覆盖**：全量 **80/80 项测试全绿通过**（80 pass，0 fail）；
+2. **测试网 100% 覆盖**：全量 **88/88 项测试全绿通过**（88 pass，0 fail）；
 3. **导出实例（ZIP）自选路径**：必须通过 Electron `dialog.showSaveDialog` 弹出原生系统对话框由用户自主选择保存位置与文件名；取消操作优雅返回 `{ canceled: true }`，绝不静默写死下载路径；
 4. **前端残留清洗**：拔除无用空白旧迁移弹窗，仅在存在旧实例时弹窗；Windows 桌面端隐藏无用手势“下拉刷新”；设置抽屉底部保留“敬请期待”原型占位符。
 
@@ -43,7 +43,7 @@ New-Item -ItemType Junction -Path ".worktrees\release-hardening-windows\web\capa
 # 2. 编译后端 TypeScript
 npm --prefix .worktrees/release-hardening-windows run build
 
-# 3. 运行全量测试网（必须 80/80 全绿）
+# 3. 运行全量测试网（必须 88/88 全绿）
 npm --prefix .worktrees/release-hardening-windows test
 
 # 4. 前端构建与资源同步（若涉及前端修改）
@@ -76,13 +76,14 @@ npm --prefix .worktrees/release-hardening-windows run pack
 | 2026-10-13 | Agent | **v1.13.0 含新前端重打包并覆盖安装**：用户指令"构建为1.13.0并安装到本地"；后端 tsc 重建、NSIS 重打包（SHA-256 `45a9789d…`，118,659,540 字节，替换 `Local/artifacts/v1.13.0/` 归档），已 `/S` 覆盖安装至 `D:\Software\AI\Entertainment\SillyClient`（1.13.0.0）；asar 实证含新前端（`manage-card-scrim`）与后端新规约（`尚未配置实例存储位置`）。**等待用户实测** | 待实测 |
 | 2026-10-16 | Agent | **同步通用前端至 55edc3b（功能 ec678dc，遮罩同步淡出+设置项悬停）并重打包**：本树差量 `f0be259..55edc3b`——直接覆盖 19 份（含 CornerResizeCurve 新增），三方合并 5 份；冲突处置：向导拒绝 common 的"数据迁移模式"面板（Android 语义且 Windows routes 无接线）、搬迁弹窗否决"默认目录"档位（违背无默认路径铁律）但采纳三处 flat-capsule 按钮新规、routes 顶栏时钟按钮取新版悬停样式。前端 tsc+vite、后端 tsc、88/88 测试全绿；重打包 `/S` 覆盖安装本机（1.13.0.0，SHA-256 `bef42c73…`，118,660,488 字节），asar 实证含 `clear-20261014`/`flat-capsule`/`card-rim-depth1` 最新签名。**等待用户实测** | 待实测 |
 | 2026-10-16 | Agent (62e72f2→main) | **v1.13.0 发布准备就绪（待口令）**：Windows 仓 `main` 已快进合入 lts（`b82a074..62e72f2`）并推送；发布说明草稿 `Local/artifacts/v1.13.0/RELEASE-NOTES-draft.md`、致歉信草稿 `APOLOGY-LETTER-draft.md`、构建证据 `Local/evidence/v1.13.0/`、Runbook `Local/docs/RELEASE-PREP-v1.13.0.md` 全部就位。tag 与 GitHub Release 创建（仅主仓）等待用户明确口令；用户实测仍是发布前置条件 | 待口令 |
+| 2026-10-17 | Agent (d687c84) | **同步通用前端 `674a9a6` 并升版 1.13.1（纯前端）**：终端与管理菜单接入 `CornerResizeCurve` 缩放手柄；管理菜单改全屏居中层 + `animate-manage-panel` 弹窗动画；终端换毛玻璃砰体、下沉日志槽与遮罩；新手引导换图（`ONBOARDING_VERSION` 仍为 3）、动态壁纸拨杆收紧保留绿色自发光；补齐历史漏同步的 `cover-1/2/3.jpg`。合并方式：`ManageInstanceModal` / `routes` / `styles` 用对象对齐后的三方合并，`TerminalModal` 全取新版（Windows 旧实现被新版取代）。**Windows 接线全保留**：存储路径 / 迁移目录 / 导入数据（ZIP）/ 导出实例（ZIP）。**终端文案实证**：asar 内为 `Windows 控制台`、`C:\\>`、`输入 Windows 命令`，未被通用版的 Android shell 串味。后端 `src/` 与已构建 `dist/` 零改动，打包只跑 electron-builder。前端 tsc+vite 通过、后端 88/88 全绿、`/S` 覆盖安装本机 1.13.1.0。产物 `Local/artifacts/v1.13.1/SillyClient-Windows-v1.13.1.exe`（118,942,960 字节，SHA-256 `4e31041b…`） | 待发布 |
 
 ---
 
 ## 5. 交付与推送门禁 (Milestone & Delivery Gate)
 
 - **本地门禁**:
-  1. `npm test` 80 项测试 100% 通过；
+  1. `npm test` 88 项测试 100% 通过；
   2. `tsc --noEmit` 0 类型错误；
   3. `npm run pack` 生产构建成功。
 - **中央登记协议**:
