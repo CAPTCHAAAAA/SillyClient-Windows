@@ -8,13 +8,14 @@ const AdmZip = require('adm-zip');
 // 测试必须隔离到临时 LOCALAPPDATA：绝不能读写真实用户目录（Downloads / Desktop / Documents）。
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-test-root-'));
 process.env.LOCALAPPDATA = testRoot;
+process.env.SILLYCLIENT_EXPORTS_DIR = path.join(testRoot, 'SillyClient', 'exports');
 
 const {
   inspectImportArchive,
   importInstanceData,
   exportInstance,
 } = require('../dist/runtime/instance-import');
-const { exportsDir, sillyClientHome } = require('../dist/runtime/paths');
+const { exportsDir } = require('../dist/runtime/paths');
 
 test('instance-import unit tests', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-test-import-'));
@@ -100,8 +101,10 @@ test('instance-import unit tests', async (t) => {
     assert.equal(summary.skippedEntries, 1);
   });
 
-  await t.test('exportInstance falls back to the software export dir, never the user Downloads', async () => {
+  await t.test('exportInstance falls back to the install-dir exports folder, never user folders', async () => {
     const userDownloadsDir = path.join(os.homedir(), 'Downloads');
+    const userProfileDirs = ['Downloads', 'Desktop', 'Documents']
+      .map((name) => path.join(os.homedir(), name) + path.sep);
 
     const result = await exportInstance({
       instanceId: 'test-inst',
@@ -111,16 +114,17 @@ test('instance-import unit tests', async (t) => {
     assert.ok(result.path);
     assert.ok(result.bytes > 0);
     assert.equal(fs.existsSync(result.path), true);
-    // 兜底导出只能落在软件自己的数据目录，且必须与用户下载目录无关。
+    // 兜底导出只能落在软件安装目录的 exports 下，且必须与用户目录无关。
     assert.ok(
       result.path.startsWith(exportsDir + path.sep),
       `fallback export must stay inside ${exportsDir}, got ${result.path}`,
     );
-    assert.ok(
-      !result.path.startsWith(userDownloadsDir + path.sep),
-      `fallback export must never write to ${userDownloadsDir}, got ${result.path}`,
-    );
-    assert.ok(result.path.startsWith(sillyClientHome + path.sep));
+    for (const userDir of [userDownloadsDir + path.sep, ...userProfileDirs]) {
+      assert.ok(
+        !result.path.startsWith(userDir),
+        `fallback export must never write to ${userDir}, got ${result.path}`,
+      );
+    }
 
     // Read back exported zip
     const expZip = new AdmZip(result.path);

@@ -316,7 +316,7 @@ export async function exportInstance(options: {
 
   let zipFile = options.targetZipPath;
   if (!zipFile) {
-    // 没有用户选定的目标时，只能落到软件自己的数据目录。
+    // 没有用户选定的目标时，只能落到软件安装目录内的 exports。
     // 绝不静默写入用户的 Downloads / Desktop / Documents。
     const targetDir = paths.exportsDir;
     await fs.promises.mkdir(targetDir, { recursive: true });
