@@ -173,7 +173,8 @@ export const nativePreview: TarvenEnvPlugin = {
   },
   async exportInstance(options: { instanceId: string; installPath?: string }) {
     record("exportInstance", options);
-    return { path: `D:\\Downloads\\SillyClient-导出\\${options.instanceId}-synthetic.zip`, bytes: 1048576 };
+    // 兜底导出落在软件自己的数据目录，不占用用户下载目录
+    return { path: `%LOCALAPPDATA%\\SillyClient\\tarven\\exports\\${options.instanceId}-synthetic.zip`, bytes: 1048576 };
   },
   async saveTextFile(options) { record("saveTextFile", options); },
   async readTextFile() { return { content: '{"version":2,"instances":[]}', fileName: "synthetic.json" }; },

@@ -5,11 +5,16 @@ const path = require('node:path');
 const os = require('node:os');
 const AdmZip = require('adm-zip');
 
+// 测试必须隔离到临时 LOCALAPPDATA：绝不能读写真实用户目录（Downloads / Desktop / Documents）。
+const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-test-root-'));
+process.env.LOCALAPPDATA = testRoot;
+
 const {
   inspectImportArchive,
   importInstanceData,
   exportInstance,
 } = require('../dist/runtime/instance-import');
+const { exportsDir, sillyClientHome } = require('../dist/runtime/paths');
 
 test('instance-import unit tests', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-test-import-'));
@@ -17,6 +22,7 @@ test('instance-import unit tests', async (t) => {
   t.after(() => {
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(testRoot, { recursive: true, force: true });
     } catch {}
   });
 
@@ -94,7 +100,9 @@ test('instance-import unit tests', async (t) => {
     assert.equal(summary.skippedEntries, 1);
   });
 
-  await t.test('exportInstance creates a valid zip in downloads', async () => {
+  await t.test('exportInstance falls back to the software export dir, never the user Downloads', async () => {
+    const userDownloadsDir = path.join(os.homedir(), 'Downloads');
+
     const result = await exportInstance({
       instanceId: 'test-inst',
       installPath: instanceDir,
@@ -103,6 +111,16 @@ test('instance-import unit tests', async (t) => {
     assert.ok(result.path);
     assert.ok(result.bytes > 0);
     assert.equal(fs.existsSync(result.path), true);
+    // 兜底导出只能落在软件自己的数据目录，且必须与用户下载目录无关。
+    assert.ok(
+      result.path.startsWith(exportsDir + path.sep),
+      `fallback export must stay inside ${exportsDir}, got ${result.path}`,
+    );
+    assert.ok(
+      !result.path.startsWith(userDownloadsDir + path.sep),
+      `fallback export must never write to ${userDownloadsDir}, got ${result.path}`,
+    );
+    assert.ok(result.path.startsWith(sillyClientHome + path.sep));
 
     // Read back exported zip
     const expZip = new AdmZip(result.path);
@@ -132,4 +150,3 @@ test('instance-import unit tests', async (t) => {
     assert.ok(expEntries.some((e) => e.startsWith('data/')));
   });
 });
-

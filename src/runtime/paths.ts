@@ -23,6 +23,15 @@ export const usrDir = path.join(tarvenHome, 'usr');
 export const coversDir = path.join(tarvenHome, 'covers');
 export const tmpDir = path.join(tarvenHome, 'tmp');
 export const logsDir = path.join(tarvenHome, 'logs');
+/**
+ * 无用户选定目标时的导出落点。
+ *
+ * 铁律：自动/兜底导出只能写进软件自己的数据目录，绝不私自使用用户的
+ * Downloads、Desktop、Documents 等个人存储路径。放在 tarvenHome 下还有
+ * 一个额外好处：安装目录（INSTDIR）会被 NSIS 更新整目录清空，而这里不会，
+ * 备份才能真正起到「保证数据完整性」的作用。
+ */
+export const exportsDir = path.join(tarvenHome, 'exports');
 export const instanceRegistryPath = path.join(tarvenHome, 'instances.json');
 export const instancePasswordsPath = path.join(tarvenHome, 'instance-passwords.json');
 

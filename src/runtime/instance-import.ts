@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import AdmZip from 'adm-zip';
 import { assertPlainPath } from './cleanup';
@@ -317,8 +316,9 @@ export async function exportInstance(options: {
 
   let zipFile = options.targetZipPath;
   if (!zipFile) {
-    const downloadsDir = path.join(os.homedir(), 'Downloads');
-    const targetDir = path.join(downloadsDir, 'SillyClient-导出');
+    // 没有用户选定的目标时，只能落到软件自己的数据目录。
+    // 绝不静默写入用户的 Downloads / Desktop / Documents。
+    const targetDir = paths.exportsDir;
     await fs.promises.mkdir(targetDir, { recursive: true });
 
     const now = new Date();
