@@ -3,6 +3,7 @@ import { Play, MoreVertical, Edit2, Lock } from "lucide-react";
 import { cn, formatDisplayVersion } from "../../lib/utils";
 import type { TavernInstance } from "../../types";
 import { coverTone, coverWash } from "./coverTone";
+import { useFrozenCoverPlate } from "./useFrozenCoverPlate";
 
 export interface InstanceStoppedCardProps {
   instance: TavernInstance;
@@ -11,7 +12,6 @@ export interface InstanceStoppedCardProps {
   isDynamic?: boolean;
   glassBg?: string;
   isExpanded: boolean;
-  isMenuOpen: boolean;
   launchingId: string | null;
   onToggleExpand: () => void;
   onLaunch: (instance: TavernInstance) => void;
@@ -19,6 +19,7 @@ export interface InstanceStoppedCardProps {
   onRenameSave: (instanceId: string, newName: string) => void;
   isExternallyRenaming?: boolean;
   onClearExternalRenaming?: () => void;
+  isReordering?: boolean;
 }
 
 function getStatusText(status: TavernInstance["status"]) {
@@ -46,7 +47,6 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
   isLight,
   isDynamic = false,
   isExpanded,
-  isMenuOpen,
   launchingId,
   onToggleExpand,
   onLaunch,
@@ -54,10 +54,13 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
   onRenameSave,
   isExternallyRenaming = false,
   onClearExternalRenaming,
+  isReordering = false,
 }) => {
   const [isEditingInline, setIsEditingInline] = useState(false);
   const [editName, setEditName] = useState(instance.name);
   const inputRef = useRef<HTMLInputElement>(null);
+  const coverSrc = instance.cover || "./tavern-logo.png";
+  const { rootRef, plateRef, usePlate } = useFrozenCoverPlate(isLight, isDynamic, isReordering, coverSrc);
 
   useEffect(() => {
     if (isExternallyRenaming) {
@@ -89,12 +92,14 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
 
   return (
     <div
-      data-card-index={String(index + 1)}
+      ref={rootRef}
+      data-slot={String(index + 1)}
       className={cn(
         "motion-instance-card w-full h-full rounded-[26px] relative group cursor-pointer overflow-hidden",
         isLight && "is-light",
         isExpanded && "is-expanded"
       )}
+      data-frozen-plate={usePlate ? "" : undefined}
       onClick={(e) => {
         if ((e.target as HTMLElement).closest("button")) return;
         onToggleExpand();
@@ -102,6 +107,7 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
     >
       {/* 封面与遮罩：100% 饱满贴合圆角内壁，彻底消除边缘漏边 */}
       <div className="absolute inset-0">
+        {usePlate ? <div ref={plateRef} className="cover-frozen-plate" /> : null}
         <img
           src={instance.cover || "./tavern-logo.png"}
           alt=""
@@ -115,6 +121,8 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
           }}
         />
       </div>
+
+      <div className="card-volume-wash" aria-hidden="true" />
 
       <div
         className={cn(
@@ -137,10 +145,10 @@ export const InstanceStoppedCard: React.FC<InstanceStoppedCardProps> = ({
         <div className="self-start flex items-center gap-1.5 w-fit">
           <span
             className={cn(
-              "px-2 py-0.5 rounded-md text-[10px] font-semibold tracking-wide border",
+              "px-2 py-0.5 rounded-md text-[10px] font-medium tracking-wide border border-transparent",
               isLight
-                ? "bg-black/[0.06] text-[#1a1625]/55 border-black/[0.08]"
-                : "bg-white/[0.08] text-white/50 border-white/[0.08]"
+                ? "bg-black/[0.035] text-[#1a1625]/60"
+                : "bg-white/[0.07] text-white/70"
             )}
           >
             {formatDisplayVersion(instance.version)}

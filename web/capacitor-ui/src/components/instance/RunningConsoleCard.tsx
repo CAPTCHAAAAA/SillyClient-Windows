@@ -5,15 +5,18 @@ import { TarvenEnv } from "../../capacitor-plugin";
 import type { TavernInstance } from "../../types";
 import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 import { instanceLogs } from "../../lib/log-store";
+import { TerminalWell } from "../common/TerminalWell";
+import "./RunningConsoleCard.css";
 
 export interface RunningConsoleCardProps {
   instance: TavernInstance;
-  index: number;
   isLight: boolean;
   glassBg?: string;
   onReturnToTavern?: (instance: TavernInstance) => void;
   onStopInstance?: (instance: TavernInstance) => void;
   onOpenMenu: (instance: TavernInstance, rect: DOMRect) => void;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
   active: boolean;
   isWindows?: boolean;
 }
@@ -26,18 +29,21 @@ export { formatDisplayVersion };
  */
 const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
   instance,
-  index,
   isLight,
   glassBg,
   onReturnToTavern,
   onStopInstance,
   onOpenMenu,
+  isExpanded,
+  onToggleExpand,
   active,
   isWindows = false,
 }) => {
   const [terminalInput, setTerminalInput] = useState("");
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const terminalInputRef = useRef<HTMLInputElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const actionsId = React.useId();
   const logKey = instance.installDir || instance.id;
   const terminalLogs = useInstanceLogs(logKey, active);
 
@@ -53,6 +59,20 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
       logsContainerRef.current.scrollTop = logsContainerRef.current.scrollHeight;
     }
   }, [active, terminalLogs]);
+
+  useEffect(() => {
+    const output = logsContainerRef.current;
+    if (!active || !output) return;
+    let previousHeight = output.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const currentHeight = output.clientHeight;
+      const bottomGap = output.scrollHeight - Math.max(previousHeight, currentHeight) - output.scrollTop;
+      if (bottomGap <= 2) output.scrollTop = output.scrollHeight;
+      previousHeight = currentHeight;
+    });
+    observer.observe(output);
+    return () => observer.disconnect();
+  }, [active]);
 
   const handleTerminalKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== "Enter" || !terminalInput.trim()) return;
@@ -83,153 +103,164 @@ const RunningConsoleCardComponent: React.FC<RunningConsoleCardProps> = ({
           { msg: `Daemon active on background`, level: "info" },
         ];
 
+  const isDynamic = Boolean(glassBg?.includes("1c1420"));
+  const displayName = instance.subtitle || instance.name;
+  const displayVersion = formatDisplayVersion(instance.version);
+
   return (
     <div
       className={cn(
-        "ios-task-surface w-full h-full rounded-[26px] relative flex flex-col justify-between p-3.5 overflow-hidden backdrop-blur-[40px] saturate-180 cursor-default select-text",
-        glassBg
-          ? glassBg
-          : isLight
-            ? "bg-white/85"
-            : "bg-[#1a1625]/90",
+        "running-console-card ios-task-surface w-full h-full rounded-[26px] relative flex flex-col px-3 pt-2 pb-2.5 overflow-hidden backdrop-blur-[40px] saturate-180 cursor-pointer select-text",
+        glassBg,
         isLight && "is-light"
       )}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+        if (event.key === "Escape" && isExpanded) {
+          event.stopPropagation();
+          onToggleExpand();
+          toggleRef.current?.focus({ preventScroll: true });
+        }
+      }}
+      onClick={(event) => {
+        const target = event.target as Element;
+        if (event.defaultPrevented || target.closest("button, a")) return;
+        const isEditing = Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+        if (isExpanded && isEditing) return;
+        const selection = window.getSelection();
+        if (!isEditing && selection && !selection.isCollapsed && selection.anchorNode && event.currentTarget.contains(selection.anchorNode)) return;
+        onToggleExpand();
+      }}
     >
-      {/* 上方：实例名和版本标签（上下间距对称，严格左右对齐，无多余状态灯） */}
-      <div className="flex items-center justify-between mb-2.5 flex-shrink-0">
-        <span
-          className={cn(
-            "text-[13px] font-bold tracking-tight truncate",
-            isLight ? "text-[#1a1625]" : "text-white"
-          )}
-        >
-          {instance.subtitle || instance.name}
-        </span>
-        <span
-          className={cn(
-            "px-2 py-0.5 rounded-md text-[10px] font-semibold tracking-wide border flex-shrink-0",
-            isLight
-              ? "bg-black/[0.06] text-[#1a1625]/55 border-black/[0.08]"
-              : "bg-white/[0.08] text-white/50 border-white/[0.08]"
-          )}
-        >
-          {formatDisplayVersion(instance.version)}
-        </span>
-      </div>
-
-      {/* 控制台内部设计：深度下沉物理凹陷舱体，多层顶部下沉内阴影 + 底部发丝倒角高光反光线，空间深度感极其明显 */}
-      <div
-        onClick={() => terminalInputRef.current?.focus()}
-        className={cn(
-          "flex-1 min-h-0 mb-3 rounded-lg p-2.5 flex flex-col cursor-text select-text overflow-hidden font-mono text-[10.5px] leading-relaxed relative z-10 transition-colors border",
-          isLight
-            ? "bg-[#e5e0da] border-black/15 shadow-[inset_0_3px_8px_rgba(0,0,0,0.16),inset_0_1px_2px_rgba(0,0,0,0.12),inset_0_-1px_0.5px_rgba(255,255,255,0.9),0_1px_1px_rgba(255,255,255,0.8)]"
-            : "bg-[#09080e] border-black/50 shadow-[inset_0_4px_10px_-1px_rgba(0,0,0,0.85),inset_0_1.5px_3px_rgba(0,0,0,0.95),inset_0_-1px_0.5px_rgba(255,255,255,0.08),0_1px_1px_rgba(255,255,255,0.05)]"
-        )}
+      <button
+        ref={toggleRef}
+        type="button"
+        aria-label={isExpanded ? "收起实例操作" : "展开实例操作"}
+        aria-expanded={isExpanded}
+        aria-controls={actionsId}
+        onClick={onToggleExpand}
+        className="running-console-card__toolbar relative z-10 flex items-center gap-2 bg-transparent border-0 px-3 pt-0 pb-[3px] shrink-0 cursor-pointer text-left"
       >
-        {/* 日志流与命令行输入 */}
-        <div ref={logsContainerRef} data-native-log-list className="flex-1 overflow-y-auto space-y-1 scrollbar-subtle pr-1 font-mono text-[10px]">
+        <span className="running-console-card__identity min-w-0 flex-1 flex items-center gap-1.5">
+          <span
+            title={displayName}
+            className={cn(
+              "running-console-card__title min-w-0 flex-1 text-[13px] font-normal leading-4 truncate",
+              isLight ? "text-[#1a1625]/80" : "text-white/80"
+            )}
+          >
+            {displayName}
+          </span>
+          <span
+            title={displayVersion}
+            className={cn(
+              "running-console-card__version max-w-[40%] shrink-0 truncate text-[10px] font-normal leading-none tabular-nums",
+              isLight ? "text-[#1a1625]/65" : "text-white/50"
+            )}
+          >
+            {displayVersion}
+          </span>
+        </span>
+      </button>
+
+      <TerminalWell
+        isLight={isLight}
+        isDynamic={isDynamic}
+        compact
+        onClick={() => {
+          if (window.getSelection()?.isCollapsed !== false) terminalInputRef.current?.focus();
+        }}
+        className="flex-1 min-h-0 mt-1.5 p-3 flex flex-col gap-2 cursor-text select-text overflow-hidden relative z-10"
+      >
+        <div ref={logsContainerRef} data-native-log-list className="terminal-output min-h-0 flex-1 overflow-y-auto scrollbar-subtle">
           {displayLogs.map((log, logIdx) => (
             <div
               key={logIdx}
-              className={cn(
-                "whitespace-pre-wrap break-words leading-relaxed",
-                log.level === "error"
-                  ? "text-red-400/90"
-                  : log.level === "success"
-                  ? (isLight ? "text-emerald-700 font-semibold" : "text-white/80")
-                  : (isLight ? "text-[#1a1625]/60" : "text-white/60")
-              )}
+              className="terminal-log-line"
+              data-level={log.level}
             >
               {log.msg}
             </div>
           ))}
+        </div>
+        <div className="terminal-output terminal-command-row shrink-0">
+          <span
+            className="terminal-prompt"
+            title={terminalDisplayPrompt}
+          >
+            {terminalDisplayPrompt}
+          </span>
+          <input
+            ref={terminalInputRef}
+            type="text"
+            value={terminalInput}
+            onChange={(e) => setTerminalInput(e.target.value)}
+            onKeyDown={handleTerminalKeyDown}
+            placeholder={terminalPlaceholder}
+            className="terminal-command-input"
+            aria-label="实例终端命令"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        </div>
+      </TerminalWell>
 
-          {/* 命令行输入：紧随日志末尾，纯正终端风格，无分割线 */}
-          <div className="mt-1 flex items-center gap-1.5">
-            <span
+      <div
+        id={actionsId}
+        className={cn("running-console-card__action-drawer motion-accordion relative z-10 -mx-0.5 shrink-0", isExpanded && "is-open")}
+        aria-hidden={!isExpanded}
+        inert={!isExpanded}
+      >
+        <div className="motion-accordion-inner">
+          <div className="running-console-card__actions flex items-center gap-1.5 pt-1.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onReturnToTavern?.(instance);
+              }}
               className={cn(
-                "select-none font-semibold flex-shrink-0",
-                isLight ? "text-emerald-700" : "text-emerald-400"
+                "flat-capsule motion-control flex-auto px-3 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap border-0",
+                isLight
+                  ? "text-[#1a1625]/75 hover:text-[#1a1625]"
+                  : "text-white/75 hover:text-white"
               )}
             >
-              {terminalDisplayPrompt}
-            </span>
-            <input
-              ref={terminalInputRef}
-              type="text"
-              value={terminalInput}
-              onChange={(e) => setTerminalInput(e.target.value)}
-              onKeyDown={handleTerminalKeyDown}
-              placeholder={terminalPlaceholder}
+              <Play className="w-3 h-3 shrink-0 fill-current" />
+              返回酒馆
+            </button>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onStopInstance?.(instance);
+              }}
+              className="running-console-card__stop flat-capsule motion-control flex-auto px-3 h-8 flex items-center justify-center cursor-pointer rounded-full text-xs font-medium whitespace-nowrap border-0"
+            >
+              关闭
+            </button>
+
+            <button
+              type="button"
+              title="操作菜单"
+              aria-label="操作菜单"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenMenu(instance, event.currentTarget.getBoundingClientRect());
+              }}
               className={cn(
-                "min-w-0 flex-1 border-none bg-transparent outline-none font-mono text-[10px]",
+                "flat-capsule motion-control w-8 h-8 rounded-full flex items-center justify-center shrink-0 cursor-pointer border-0",
                 isLight
-                  ? "text-[#1a1625] placeholder:text-black/25"
-                  : "text-white/90 placeholder:text-white/25"
+                  ? "text-[#1a1625]/65 hover:text-[#1a1625]"
+                  : "text-white/50 hover:text-white"
               )}
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
+            >
+              <MoreVertical className="w-3.5 h-3.5 text-current transition-colors" />
+            </button>
           </div>
         </div>
-      </div>
-
-      {/* 底部按钮栏：向导风格实色按钮，与上方元素边框完全垂直对齐 */}
-      <div className="flex items-center justify-between gap-2 flex-shrink-0">
-        {/* 返回酒馆（主动作，低饱和沉稳胶囊，避免深色纯白刺眼光斑） */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onReturnToTavern?.(instance);
-          }}
-          className={cn(
-            "flat-capsule motion-control px-4 h-8 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 flex-1 border-0",
-            isLight
-              ? "text-[#1a1625]/70 hover:text-[#1a1625]"
-              : "text-white/70 hover:text-white"
-          )}
-        >
-          <Play className="w-3 h-3 fill-current" />
-          返回酒馆
-        </button>
-
-        {/* 关闭（次动作，统一低饱和规范红） */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onStopInstance?.(instance);
-          }}
-          className={cn(
-            "flat-capsule motion-control px-3.5 h-8 rounded-full text-xs font-medium border-0",
-            isLight
-              ? "text-red-900/55 hover:text-red-900/80"
-              : "text-red-300/70 hover:text-red-200"
-          )}
-        >
-          关闭
-        </button>
-
-        {/* 更多菜单（与向导一致的圆点按钮） */}
-        <button
-          type="button"
-          title="操作菜单"
-          aria-label="操作菜单"
-          onClick={(e) => {
-            e.stopPropagation();
-            const r = e.currentTarget.getBoundingClientRect();
-            onOpenMenu(instance, r);
-          }}
-          className={cn(
-            "flat-capsule motion-control w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 border-0",
-            isLight
-              ? "text-[#1a1625]/55 hover:text-[#1a1625]"
-              : "text-white/55 hover:text-white"
-          )}
-        >
-          <MoreVertical className="w-3.5 h-3.5 text-current transition-colors" />
-        </button>
       </div>
     </div>
   );

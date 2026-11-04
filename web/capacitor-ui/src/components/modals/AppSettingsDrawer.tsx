@@ -1,13 +1,16 @@
-import React, { useState, useRef, useLayoutEffect } from "react";
+import React, { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { X, ChevronRight } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
 import { TarvenEnv } from "../../capacitor-plugin";
-import type { ContentOpenMode, AppUpdateInfo } from "../../capacitor-plugin";
+import type { ContentOpenMode, AppUpdateInfo, RenderEngineSettings } from "../../capacitor-plugin";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { ToggleSwitch } from "../common/ToggleSwitch";
+import { SegmentedSwitch } from "../common/SegmentedSwitch";
 import type { TavernInstance } from "../../types";
+import { createInstanceBackup } from "../../lib/instance-persistence";
 import { openExternalUrl } from "../../lib/external-links";
-import { APP_VERSION } from "../../constants/app-version";
+
 
 export interface AppSettingsDrawerProps {
   isOpen: boolean;
@@ -16,20 +19,24 @@ export interface AppSettingsDrawerProps {
   isLight: boolean;
   glassBg: string;
   isWindows: boolean;
-  isWeb: boolean;
   pullToRefresh: boolean;
   setPullToRefresh: (v: boolean) => void;
+  renderSettings?: RenderEngineSettings | null;
+  onRenderSettingsChange?: (next: RenderEngineSettings) => void;
   contentOpenMode: ContentOpenMode;
   setContentOpenMode: (m: ContentOpenMode) => void;
   replayOnboarding: () => void;
-  instances?: TavernInstance[];
+  createCardPinned: boolean;
+  setCreateCardPinned: (pinned: boolean) => void;
+  instances: TavernInstance[];
   setInstances: React.Dispatch<React.SetStateAction<TavernInstance[]>>;
+  onImportBackup: (content: string) => void;
+  importInputRef: React.RefObject<HTMLInputElement | null>;
   appUpdateState: "idle" | "checking" | "current" | "available" | "error";
   appUpdateInfo: AppUpdateInfo | null;
   checkForAppUpdate: () => Promise<any>;
   openProjectPage: () => void;
   onOpenCleanGarbage: () => void;
-  onOpenWhatsNew?: () => void;
 }
 
 function AppSettingsRow({
@@ -111,7 +118,7 @@ function AppSettingsAction({
 
 /**
  * APP 全局设置抽屉面板 (AppSettingsDrawer)
- * 涵盖：通用设置、应用维护与更新。
+ * 涵盖：通用设置、数据备份导出、应用维护与更新。
  * 全域接入向导级同位驻留 DOM、微位移升降与高斯模糊虚化交叉溶变动效。
  */
 export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
@@ -121,25 +128,72 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
   isLight,
   glassBg,
   isWindows,
-  isWeb,
   pullToRefresh,
   setPullToRefresh,
+  renderSettings,
+  onRenderSettingsChange,
   contentOpenMode,
   setContentOpenMode,
   replayOnboarding,
+  createCardPinned,
+  setCreateCardPinned,
+  instances,
   setInstances,
+  onImportBackup,
+  importInputRef,
   appUpdateState,
   appUpdateInfo,
   checkForAppUpdate,
   openProjectPage,
   onOpenCleanGarbage,
-  onOpenWhatsNew,
 }) => {
   const [appSettingsTab, setAppSettingsTab] = useState<
-    "general" | "maintenance"
+    "general" | "data" | "maintenance"
   >("general");
 
+  // 默认实例存储路径：实例始终是该根的直接子目录；仅影响之后创建的实例。
+  const [instancesRoot, setInstancesRoot] = useState<string | null>(null);
+  const [configuredInstancesRoot, setConfiguredInstancesRoot] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isOpen || instancesRoot !== null) return;
+    TarvenEnv.getAppSettings()
+      .then(settings => {
+        setInstancesRoot(settings.instancesRoot ?? settings.configuredInstancesRoot ?? "");
+        setConfiguredInstancesRoot(settings.configuredInstancesRoot ?? null);
+      })
+      .catch(() => setInstancesRoot(""));
+  }, [isOpen, instancesRoot]);
+
+  const chooseInstancesRoot = async () => {
+    try {
+      const picked = await TarvenEnv.pickDirectory({ purpose: "installation" });
+      if (!picked?.path) return;
+      const result = await TarvenEnv.setInstancesRoot({ path: picked.path });
+      setInstancesRoot(result.instancesRoot ?? "");
+      setConfiguredInstancesRoot(result.configured ? result.instancesRoot : null);
+    } catch {
+      /* 用户取消或授权中断：保持现有路径不变 */
+    }
+  };
+
+  const resetInstancesRoot = async () => {
+    try {
+      const result = await TarvenEnv.setInstancesRoot({});
+      setInstancesRoot(result.instancesRoot ?? "");
+      setConfiguredInstancesRoot(null);
+    } catch {
+      /* 保持现有路径不变 */
+    }
+  };
+
+  const displayInstancesRoot = instancesRoot === null
+    ? "读取中…"
+    : instancesRoot === ""
+      ? "未设置（创建时按需选择）"
+      : instancesRoot;
+
   const generalRef = useRef<HTMLDivElement>(null);
+  const dataRef = useRef<HTMLDivElement>(null);
   const maintenanceRef = useRef<HTMLDivElement>(null);
   const [tabContentHeight, setTabContentHeight] = useState<number | null>(null);
 
@@ -149,6 +203,8 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
     const targetEl =
       appSettingsTab === "general"
         ? generalRef.current
+        : appSettingsTab === "data"
+        ? dataRef.current
         : maintenanceRef.current;
     if (!targetEl) return;
 
@@ -170,7 +226,9 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
     appSettingsTab,
     isOpen,
     pullToRefresh,
+    renderSettings,
     contentOpenMode,
+    instances.length,
     appUpdateState,
     appUpdateInfo,
   ]);
@@ -224,16 +282,17 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
         </div>
       </div>
 
-      <div className="app-settings-body flex-1 overflow-y-auto p-5 scrollbar-subtle">
+      <div className="px-5 pt-5 pb-3.5 flex-shrink-0">
         {/* 顶部胶囊切换栏 */}
         <div
-          className="app-settings-tabs ios-choice-track mb-4"
+          className="app-settings-tabs ios-choice-track mb-0"
           role="group"
           aria-label="设置分类"
         >
           {(
             [
               { id: "general", label: "通用" },
+              { id: "data", label: "数据" },
               { id: "maintenance", label: "维护" },
             ] as const
           ).map((tab) => (
@@ -248,7 +307,9 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
             </button>
           ))}
         </div>
+      </div>
 
+      <div className="app-settings-body flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-5 pb-5 scrollbar-hidden">
         {/* 模式切换容器（向导级平滑高度自适应 + 同位驻留高斯模糊交叉溶变） */}
         <div
           className="motion-panel-stack"
@@ -269,20 +330,86 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
             inert={appSettingsTab !== "general"}
           >
             <div className="app-settings-list space-y-1">
-              {!isWindows && (
-                <AppSettingsRow
-                  label="下拉刷新"
-                  desc="在酒馆界面顶部下拉即可刷新"
-                >
-                  <ToggleSwitch
-                    on={pullToRefresh}
-                    onChange={(v) => {
-                      setPullToRefresh(v);
-                      TarvenEnv.setPullToRefresh({ enabled: v }).catch(() => {});
-                    }}
-                    isLight={isLight}
-                  />
-                </AppSettingsRow>
+              <AppSettingsRow
+                label="下拉刷新"
+                desc="在酒馆界面顶部下拉即可刷新"
+              >
+                <ToggleSwitch
+                  on={pullToRefresh}
+                  onChange={(v) => {
+                    setPullToRefresh(v);
+                    TarvenEnv.setPullToRefresh({ enabled: v }).catch(() => {});
+                  }}
+                  isLight={isLight}
+                />
+              </AppSettingsRow>
+              {renderSettings && onRenderSettingsChange && (
+                <>
+                  <AppSettingsRow
+                    label="顶栏变色龙"
+                    desc="进入酒馆后顶栏自动融合页面主色调"
+                  >
+                    <ToggleSwitch
+                      on={renderSettings.immersiveColor}
+                      ariaLabel="顶栏变色龙"
+                      onChange={(enabled) => {
+                        onRenderSettingsChange({
+                          ...renderSettings,
+                          immersiveColor: enabled,
+                          clickEffect: enabled ? renderSettings.clickEffect : false,
+                        });
+                      }}
+                      isLight={isLight}
+                    />
+                  </AppSettingsRow>
+                  <AppSettingsRow
+                    label="取色频率"
+                    desc={
+                      renderSettings.colorExtractionMode === "once"
+                        ? "仅在进入酒馆时采样一次以降低功耗"
+                        : "随酒馆画面变化实时过渡顶栏色彩"
+                    }
+                  >
+                    <SegmentedSwitch
+                      value={renderSettings.colorExtractionMode}
+                      options={[
+                        { id: "realtime", label: "实时" },
+                        { id: "once", label: "单次" },
+                      ]}
+                      disabled={!renderSettings.immersiveColor}
+                      ariaLabel="取色频率"
+                      onChange={(mode) => {
+                        onRenderSettingsChange({
+                          ...renderSettings,
+                          colorExtractionMode: mode,
+                        });
+                      }}
+                      isLight={isLight}
+                    />
+                  </AppSettingsRow>
+                  <AppSettingsRow
+                    label="点击光效"
+                    desc={
+                      renderSettings.immersiveColor
+                        ? "轻触酒馆页面时在顶栏泛起柔光反馈"
+                        : "开启顶栏变色龙后可用"
+                    }
+                  >
+                    <ToggleSwitch
+                      on={renderSettings.immersiveColor && renderSettings.clickEffect}
+                      disabled={!renderSettings.immersiveColor}
+                      ariaLabel="点击光效"
+                      onChange={(enabled) => {
+                        if (!renderSettings.immersiveColor) return;
+                        onRenderSettingsChange({
+                          ...renderSettings,
+                          clickEffect: enabled,
+                        });
+                      }}
+                      isLight={isLight}
+                    />
+                  </AppSettingsRow>
+                </>
               )}
               {isWindows && (
                 <AppSettingsRow
@@ -310,6 +437,119 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                 desc="再次查看 SillyClient 的使用说明"
                 onClick={replayOnboarding}
               />
+              <AppSettingsRow
+                label="创建卡片置顶"
+                desc="关闭后创建实例卡片可与普通卡片一样拖动排序"
+              >
+                <ToggleSwitch
+                  on={createCardPinned}
+                  onChange={setCreateCardPinned}
+                  isLight={isLight}
+                />
+              </AppSettingsRow>
+            </div>
+          </div>
+
+          {/* 数据设置面板 */}
+          <div
+            ref={dataRef}
+            className={cn(
+              "motion-panel-face w-full",
+              appSettingsTab === "data"
+                ? "is-active relative pointer-events-auto"
+                : "absolute inset-x-0 top-0 pointer-events-none select-none"
+            )}
+            aria-hidden={appSettingsTab !== "data"}
+            inert={appSettingsTab !== "data"}
+          >
+            <div className="app-settings-list space-y-1">
+              <AppSettingsRow
+                label="默认实例存储路径"
+                desc={`${displayInstancesRoot} · 实例以此处一级子目录存放`}
+              >
+                <div className="app-settings-actions">
+                  <AppSettingsAction
+                    onClick={() => { void chooseInstancesRoot(); }}
+                  >
+                    更改
+                  </AppSettingsAction>
+                  {configuredInstancesRoot !== null && (
+                    <AppSettingsAction
+                      onClick={() => { void resetInstancesRoot(); }}
+                    >
+                      默认
+                    </AppSettingsAction>
+                  )}
+                </div>
+              </AppSettingsRow>
+              <AppSettingsRow
+                label="实例备份"
+                desc="迁移实例列表与应用设置"
+              >
+                <div className="app-settings-actions">
+                  <AppSettingsAction
+                    onClick={async () => {
+                      if (Capacitor.isNativePlatform()) {
+                        try {
+                          const res = await TarvenEnv.readTextFile({ mimeType: "application/json" });
+                          if (!res?.content) return;
+                          onImportBackup(res.content);
+                          onClose();
+                        } catch {
+                          /* 用户取消或读取失败 */
+                        }
+                      } else {
+                        importInputRef.current?.click();
+                      }
+                    }}
+                  >
+                    导入
+                  </AppSettingsAction>
+                  <AppSettingsAction
+                    onClick={async () => {
+                      const data = createInstanceBackup(instances);
+                      const fileName = `sillyclient-backup-${new Date()
+                        .toISOString()
+                        .slice(0, 10)}.json`;
+                      if (Capacitor.isNativePlatform()) {
+                        try {
+                          await TarvenEnv.saveTextFile({
+                            fileName,
+                            mimeType: "application/json",
+                            content: data,
+                          });
+                        } catch {
+                          /* 用户取消或原生保存失败 */
+                        }
+                        onClose();
+                        return;
+                      }
+                      const blob = new Blob([data], {
+                        type: "application/json",
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = fileName;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      onClose();
+                    }}
+                  >
+                    导出
+                  </AppSettingsAction>
+                </div>
+              </AppSettingsRow>
+              <AppSettingsRow
+                label="浏览数据"
+                desc="清除应用内网页缓存"
+              >
+                <AppSettingsAction
+                  onClick={() => TarvenEnv.clearWebViewData().catch(() => {})}
+                >
+                  清除
+                </AppSettingsAction>
+              </AppSettingsRow>
               <AppSettingsPlaceholder />
             </div>
           </div>
@@ -363,14 +603,6 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                     )}
                 </div>
               </AppSettingsRow>
-              <AppSettingsLinkRow
-                label={`${APP_VERSION} 主要更新`}
-                desc="查看本次版本新增功能与核心改进"
-                onClick={() => {
-                  onClose();
-                  onOpenWhatsNew?.();
-                }}
-              />
               <AppSettingsRow
                 label="临时文件"
                 desc="扫描可以安全移除的缓存"
@@ -383,16 +615,6 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                   }}
                 >
                   检查
-                </AppSettingsAction>
-              </AppSettingsRow>
-              <AppSettingsRow
-                label="浏览数据"
-                desc="清除应用内网页缓存"
-              >
-                <AppSettingsAction
-                  onClick={() => TarvenEnv.clearWebViewData().catch(() => {})}
-                >
-                  清除
                 </AppSettingsAction>
               </AppSettingsRow>
               <AppSettingsRow

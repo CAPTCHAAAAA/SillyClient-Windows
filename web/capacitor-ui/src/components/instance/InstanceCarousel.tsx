@@ -6,8 +6,16 @@ import { InstanceCard } from "./InstanceCard";
 import { setCarouselSnapLock } from "../../lib/carousel-snap";
 import { createPaginationMotion, paginationCenter, paginationDotOpacity, PAGINATION_REST_WIDTH } from "../../lib/pagination-motion";
 import { FlipCard } from "../common/FlipCard";
+import {
+  fillFrozenPlate,
+  syncFrozenPlatePosition,
+  measureFrozenPlateBase,
+  applyFrozenPlateTransformFromBase,
+  type FrozenPlateBaseMetrics,
+} from "./frozenCoverPlate";
+import { useFrozenCoverPlate } from "./useFrozenCoverPlate";
 
-const REORDER_CURVE = "cubic-bezier(0.22, 0.7, 0.3, 1)";
+const REORDER_CURVE = "cubic-bezier(0.4, 0, 0.2, 1)";
 const REORDER_SETTLE_MS = 380;
 const RELEASE_ALPHA = 0.84;
 type GestureSample = { x: number; t: number };
@@ -35,12 +43,89 @@ function gestureVelocity(samples: GestureSample[], now: number) {
 
 function releaseDuration(distance: number, velocity: number) {
   const span = Math.abs(distance);
-  if (span < 1) return 0;
-  const rest = Math.min(460, Math.max(210, 200 + span * 0.9));
+  if (span < 1) return 240;
+  const rest = Math.min(420, Math.max(260, 220 + span * 0.68));
   const toward = Math.sign(velocity) === Math.sign(distance) ? Math.abs(velocity) : 0;
   if (toward < 0.05) return Math.round(rest);
   const matched = (3 * span) / toward;
-  return Math.round(Math.min(480, Math.max(200, Math.min(rest, matched))));
+  return Math.round(Math.min(440, Math.max(240, Math.min(rest, matched))));
+}
+
+function settleLift(progress: number) {
+  const t = Math.max(0, Math.min(1, progress));
+  const s = 1 - t;
+  return s * s * s * (1 + 3 * t + 6 * t * t);
+}
+
+function riseLift(progress: number) {
+  const t = Math.max(0, Math.min(1, progress));
+  const s = 1 - t;
+  return 1 - s * s * s * (1 + 0.6 * t);
+}
+
+/** 拖拽卡片松手回弹位移曲线：起点柔和承接松手速度，终点一阶与二阶导数同时归零（C2 连续），彻底消除起止顿挫。 */
+function dropOffset(progress: number, distance: number, velocity: number, duration: number) {
+  const t = Math.max(0, Math.min(1, progress));
+  if (Math.abs(distance) < 0.5 || duration < 1) return distance * t;
+  const sameWay = velocity !== 0 && Math.sign(velocity) === Math.sign(distance);
+  const normV = sameWay ? (velocity * duration) / distance : 0;
+  const initialSlope = Math.max(1.45, Math.min(2.65, normV > 1.45 ? normV : 1.55));
+  const c1 = 3 - initialSlope;
+  const c2 = 1.15;
+  const s = 1 - t;
+  const remaining = s * s * s * (1 + c1 * t + c2 * t * t);
+  return distance * (1 - remaining);
+}
+
+function CreateCardFace({
+  isLight,
+  isDynamic,
+  isReordering,
+  label,
+  hint,
+}: {
+  isLight: boolean;
+  isDynamic: boolean;
+  isReordering: boolean;
+  label: string;
+  hint: string;
+}) {
+  const { rootRef, plateRef } = useFrozenCoverPlate(isLight, isDynamic, isReordering);
+
+  return (
+    <div
+      ref={rootRef}
+      data-create-card
+      data-frozen-plate=""
+      className={cn(
+        "motion-instance-card relative h-full w-full overflow-hidden rounded-[26px] text-left",
+        isLight && "is-light"
+      )}
+    >
+      <div className="absolute inset-0">
+        <div ref={plateRef} className="cover-frozen-plate" />
+      </div>
+      {isDynamic && <div className="card-volume-wash" aria-hidden="true" />}
+      <div className="relative z-[2] flex h-full flex-col justify-between p-3.5">
+        <div
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-lg",
+            isLight ? "bg-black/[0.06]" : "bg-white/[0.08]"
+          )}
+        >
+          <Play className={cn("h-3.5 w-3.5 fill-current transition-colors", isLight ? "text-[#1a1625]/40 group-hover:text-[#1a1625]/80" : "text-white/40 group-hover:text-white/80")} />
+        </div>
+        <div>
+          <div className={cn("mb-0.5 text-base font-semibold transition-colors", isLight ? "text-[#1a1625]" : "text-white")}>
+            {label}
+          </div>
+          <div className={cn("text-xs transition-colors", isLight ? "text-[#1a1625]/40 group-hover:text-[#1a1625]/75" : "text-white/40 group-hover:text-white/75")}>
+            {hint}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** 起点接上松手速度，终点速度为 0。静止翻页初速靠近临界值，整段持续减速，避免中段匀速平移。 */
@@ -125,7 +210,6 @@ export interface InstanceCarouselProps {
   glassBg?: string;
   hoveredCard: string | null;
   setHoveredCard: (id: string | null) => void;
-  activeCardMenu: string | null;
   launchingId: string | null;
   onLaunch: (instance: TavernInstance) => void;
   onReturnToTavern?: (instance: TavernInstance) => void;
@@ -143,6 +227,11 @@ export interface InstanceCarouselProps {
   onActiveSlideChange?: (index: number) => void;
   onLongPressCard?: (instance: TavernInstance) => void;
   onReorderInstances?: (newInstances: TavernInstance[]) => void;
+  /** 创建实例卡片永远排在最前。关闭后它与普通卡片一样可拖动排序。 */
+  createCardPinned?: boolean;
+  /** 创建实例卡片当前所在槽位，由父组件保存。 */
+  createCardSlot?: number;
+  onCreateCardSlotChange?: (slot: number) => void;
 }
 
 /**
@@ -159,7 +248,6 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   glassBg,
   hoveredCard,
   setHoveredCard,
-  activeCardMenu,
   launchingId,
   onLaunch,
   onReturnToTavern,
@@ -177,6 +265,9 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   onActiveSlideChange,
   onLongPressCard,
   onReorderInstances,
+  createCardPinned = true,
+  createCardSlot: createCardSlotProp = 0,
+  onCreateCardSlotChange,
 }, ref) => {
   const carouselRef = useRef<HTMLDivElement>(null);
   const [internalActiveSlide, setInternalActiveSlide] = useState(activeSlideProp ?? 0);
@@ -189,12 +280,23 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
   // 本地实例列表原子状态：确保拖拽落位在子组件内部同帧原子提交新顺序，杜绝跨组件 props 延迟导致的闪现
   const [localInstances, setLocalInstances] = useState(instances);
+  const [localCreateCardSlot, setLocalCreateCardSlot] = useState(createCardSlotProp);
+  // 创建实例卡片的槽位。置顶时固定在最前，否则跟随拖拽结果。
+  const createCardSlot = createCardPinned
+    ? 0
+    : Math.max(0, Math.min(localCreateCardSlot, localInstances.length));
 
   useEffect(() => {
     if (!reorderStateRef.current?.active) {
       setLocalInstances(instances);
     }
   }, [instances]);
+
+  useEffect(() => {
+    if (!reorderStateRef.current?.active) {
+      setLocalCreateCardSlot(createCardSlotProp);
+    }
+  }, [createCardSlotProp]);
 
   const totalSlides = localInstances.length + 1; // 0: 新建实例, 1..N: 实例卡片
 
@@ -314,7 +416,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     if (!el) return;
 
     const clampedIndex = Math.max(0, Math.min(totalSlides - 1, targetIndex));
-    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
     const target = cards[clampedIndex];
     if (!target) return;
 
@@ -345,12 +447,12 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       prevRunningIdRef.current = runningId;
       const runningIdx = instances.findIndex(i => i.id === runningId);
       if (runningIdx >= 0) {
-        goToSlide(runningIdx + 1);
+        goToSlide(runningIdx + (runningIdx >= createCardSlot ? 1 : 0));
       }
     } else if (!runningId) {
       prevRunningIdRef.current = null;
     }
-  }, [instances, goToSlide]);
+  }, [instances, goToSlide, createCardSlot]);
 
   // 键盘左右箭头原生翻页快捷支持
   useEffect(() => {
@@ -410,12 +512,17 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     if (!isReorderCommitting) return;
     const el = carouselRef.current;
     if (!el) return;
-    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
     cards.forEach(card => {
       card.style.transition = "none";
       card.style.transform = "none";
+      card.style.removeProperty("--reorder-lift");
     });
     void el.offsetHeight; // 强制刷新渲染管线，彻底杀灭任何进行中的插值动画
+    el.querySelectorAll<HTMLElement>(".motion-instance-card[data-frozen-plate]").forEach((cardEl) => {
+      const host = cardEl.querySelector<HTMLElement>(".cover-frozen-plate");
+      if (host) fillFrozenPlate(host, cardEl, true);
+    });
   }, [isReorderCommitting]);
 
   const reorderStateRef = useRef(reorderState);
@@ -427,12 +534,18 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
   const reorderSamplesRef = useRef<GestureSample[]>([]);
   const dropFrameRef = useRef(0);
   const dropTokenRef = useRef(0);
+  const reorderLiftRef = useRef(1);
+  const liftTokenRef = useRef(0);
+  const dragPlateBaseRef = useRef<FrozenPlateBaseMetrics | null>(null);
+  const slotCardsCacheRef = useRef<HTMLElement[] | null>(null);
+  const reorderStrideRef = useRef<number | null>(null);
+  const paintedTargetIndexRef = useRef<number | null>(null);
 
   // 动态测量卡片槽位物理步长 (240px card + 28px gap = 268px)
   const getCardStride = useCallback(() => {
     const el = carouselRef.current;
     if (!el) return 268;
-    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+    const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
     if (cards.length >= 3) {
       const diff = cards[2].offsetLeft - cards[1].offsetLeft;
       if (diff > 100) return diff;
@@ -440,25 +553,26 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     return 268;
   }, []);
 
-  // 卡片按下手势监听：按住 320ms 且无大幅滑动时触发手机桌面级长按拖拽重排
-  const handleCardPointerDown = useCallback((instanceIndex: number, e: React.PointerEvent) => {
+  // 卡片按下手势监听：按住 320ms 且无大幅滑动时触发手机桌面级长按拖拽重排。
+  // 槽位 0 是创建实例卡片，仅在允许拖动时参与排序。
+  const handleCardPointerDown = useCallback((slotIndex: number, e: React.PointerEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement | null;
-    if (target?.closest("button, input, textarea, select, [contenteditable='true'], .ios-task-surface, a")) {
+    if (target?.closest("button, input, textarea, select, [contenteditable='true'], .ios-task-surface, .flip-card[data-card-running='true'], a")) {
       return;
     }
 
     pointerStartRef.current = {
       x: e.clientX,
       y: e.clientY,
-      cardIndex: instanceIndex,
+      cardIndex: slotIndex,
       pointerId: e.pointerId,
     };
 
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
       const start = pointerStartRef.current;
-      if (!start || start.cardIndex !== instanceIndex) return;
+      if (!start || start.cardIndex !== slotIndex) return;
 
       try { navigator.vibrate?.([25]); } catch {}
 
@@ -466,21 +580,48 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       if (el) {
         setCarouselSnapLock(el, "drag", true);
         el.style.scrollBehavior = "auto";
+        const slotCards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
+        slotCardsCacheRef.current = slotCards;
+        reorderStrideRef.current = getCardStride();
+        paintedTargetIndexRef.current = null;
+        const draggedSlotEl = slotCards[slotIndex];
+        if (draggedSlotEl) {
+          const innerCard = draggedSlotEl.querySelector<HTMLElement>(".motion-instance-card[data-frozen-plate]");
+          const host = innerCard?.querySelector<HTMLElement>(".cover-frozen-plate");
+          if (innerCard && host) fillFrozenPlate(host, innerCard, true);
+          dragPlateBaseRef.current = measureFrozenPlateBase(draggedSlotEl);
+        } else {
+          dragPlateBaseRef.current = null;
+        }
       }
 
       dragState.current.isDown = false;
       justReorderedRef.current = true;
       reorderSamplesRef.current = [{ x: start.x, t: performance.now() }];
+      reorderLiftRef.current = 0;
 
       const initial = {
         active: true,
-        draggedIndex: instanceIndex,
-        targetIndex: instanceIndex,
+        draggedIndex: slotIndex,
+        targetIndex: slotIndex,
         dragOffset: 0,
         isDropping: false,
       };
       reorderStateRef.current = initial;
       setReorderState(initial);
+      const liftToken = liftTokenRef.current + 1;
+      liftTokenRef.current = liftToken;
+      const liftStarted = performance.now();
+      const rise = (now: number) => {
+        if (liftTokenRef.current !== liftToken) return;
+        if (reorderStateRef.current?.isDropping) return;
+        const progress = Math.min(1, (now - liftStarted) / 280);
+        reorderLiftRef.current = riseLift(progress);
+        const state = reorderStateRef.current;
+        if (state?.active) paintReorder(state.dragOffset);
+        if (progress < 1) requestAnimationFrame(rise);
+      };
+      requestAnimationFrame(rise);
     }, 320);
   }, []);
 
@@ -507,24 +648,29 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       e.preventDefault();
       const dx = e.clientX - start.x;
       pushGestureSample(reorderSamplesRef.current, e.clientX, performance.now());
-      const stride = getCardStride();
+      const stride = reorderStrideRef.current ?? (reorderStrideRef.current = getCardStride());
       const slotDelta = Math.round(dx / stride);
-      const newTarget = Math.max(0, Math.min(localInstances.length - 1, currentReorder.draggedIndex + slotDelta));
+      const pinned = reorderDepsRef.current.createCardPinned;
+      const lastSlot = localInstances.length;
+      const rawTarget = currentReorder.draggedIndex + slotDelta;
+      const newTarget = pinned
+        ? Math.max(1, Math.min(lastSlot, rawTarget))
+        : Math.max(0, Math.min(lastSlot, rawTarget));
 
       if (newTarget !== currentReorder.targetIndex) {
         try { navigator.vibrate?.([10]); } catch {}
       }
 
-      const nextState = {
+      reorderStateRef.current = {
         ...currentReorder,
         dragOffset: dx,
         targetIndex: newTarget,
       };
-      reorderStateRef.current = nextState;
-      setReorderState(nextState);
+      paintReorder(dx);
+      if (newTarget !== currentReorder.targetIndex) setReorderState(reorderStateRef.current);
     };
 
-    const onPointerUp = (e: PointerEvent) => {
+    const onPointerUp = () => {
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
@@ -537,20 +683,35 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       }
 
       pointerStartRef.current = null;
-      const stride = getCardStride();
+      liftTokenRef.current += 1;
+      const releaseLift = reorderLiftRef.current || 1;
+      const stride = reorderStrideRef.current ?? (reorderStrideRef.current = getCardStride());
       const fromIdx = currentReorder.draggedIndex;
       const toIdx = currentReorder.targetIndex;
       const fromOffset = currentReorder.dragOffset;
       const finalOffset = (currentReorder.targetIndex - currentReorder.draggedIndex) * stride;
       const distance = finalOffset - fromOffset;
       const pointerVelocity = gestureVelocity(reorderSamplesRef.current, performance.now());
-      const duration = reducedMotionRef.current ? 0 : releaseDuration(distance, pointerVelocity);
+      const travel = releaseDuration(distance, pointerVelocity);
+      const duration = reducedMotionRef.current ? 0 : travel;
 
       const finishReorder = () => {
+        dragPlateBaseRef.current = null;
+        slotCardsCacheRef.current = null;
+        reorderStrideRef.current = null;
+        paintedTargetIndexRef.current = null;
         if (fromIdx !== toIdx) {
-          const next = [...localInstances];
-          const [moved] = next.splice(fromIdx, 1);
-          next.splice(toIdx, 0, moved);
+          const { createCardPinned: pinned, createCardSlot: slot, onCreateCardSlotChange: reportSlot } = reorderDepsRef.current;
+          const slots: (TavernInstance | null)[] = [
+            ...localInstances.slice(0, slot), null, ...localInstances.slice(slot),
+          ];
+          const [moved] = slots.splice(fromIdx, 1);
+          slots.splice(toIdx, 0, moved);
+          const next = slots.filter((item): item is TavernInstance => item !== null);
+          const nextSlot = slots.findIndex((item) => item === null);
+          const effectiveNextSlot = pinned ? 0 : Math.max(0, nextSlot);
+          setLocalCreateCardSlot(effectiveNextSlot);
+          if (!pinned || nextSlot === 0) reportSlot?.(nextSlot);
 
           // 原子更新：在子组件同一个渲染周期中，将本地渲染数据更新为新顺序，彻底消灭跨组件 props 时差闪现
           setLocalInstances(next);
@@ -562,29 +723,34 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         setReorderState(null);
         reorderStateRef.current = null;
 
-        // 双 rAF 跨帧保护：等待 React 完成真实 DOM 节点调换并在首个合成帧绘制完成后，平稳释放冻结
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            const el = carouselRef.current;
-            if (el) {
-              const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
-              cards.forEach(card => {
-                card.style.transition = "";
-                card.style.transform = "";
-              });
-            }
-            setIsReorderCommitting(false);
+          const el = carouselRef.current;
+          if (el) {
+            const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
+            cards.forEach(card => {
+              card.style.transition = "";
+              card.style.transform = "";
+              card.style.zIndex = "";
+              card.style.removeProperty("--reorder-lift");
+            });
+          }
+          setIsReorderCommitting(false);
 
-            // 在 DOM 彻底稳定后平稳解除原生 Scroll-Snap 锁定，视口完全静止
-            if (el) {
-              setCarouselSnapLock(el, "drag", false);
-              el.style.scrollBehavior = "";
-            }
+          const root = carouselRef.current;
+          if (root) {
+            root.querySelectorAll<HTMLElement>(".motion-instance-card[data-frozen-plate]").forEach((cardEl) => {
+              syncFrozenPlatePosition(cardEl);
+            });
+          }
 
-            setTimeout(() => {
-              justReorderedRef.current = false;
-            }, 200);
-          });
+          if (el) {
+            setCarouselSnapLock(el, "drag", false);
+            el.style.scrollBehavior = "";
+          }
+
+          setTimeout(() => {
+            justReorderedRef.current = false;
+          }, 200);
         });
       };
 
@@ -595,39 +761,33 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
       const token = dropTokenRef.current + 1;
       dropTokenRef.current = token;
-      const dropping = {
+      reorderStateRef.current = {
         ...currentReorder,
         dragOffset: fromOffset,
         isDropping: true,
       };
-      reorderStateRef.current = dropping;
-      setReorderState(dropping);
+      setReorderState(reorderStateRef.current);
       const started = performance.now();
       const step = (now: number) => {
         if (dropTokenRef.current !== token) return;
         const progress = Math.min(1, (now - started) / duration);
         const offset = progress >= 1
           ? finalOffset
-          : fromOffset + releaseOffset(progress, distance, pointerVelocity, duration);
-        const next = { ...dropping, dragOffset: offset };
-        reorderStateRef.current = next;
-        setReorderState(next);
+          : fromOffset + dropOffset(progress, distance, pointerVelocity, duration);
+        reorderLiftRef.current = progress >= 1 ? 0 : releaseLift * settleLift(progress);
+        reorderStateRef.current = { ...reorderStateRef.current!, dragOffset: offset };
+        paintReorder(offset);
         if (progress < 1) {
           dropFrameRef.current = requestAnimationFrame(step);
           return;
         }
-        dropFrameRef.current = requestAnimationFrame(() => {
-          dropFrameRef.current = 0;
-          if (dropTokenRef.current !== token) return;
-          finishReorder();
-        });
+        dropFrameRef.current = 0;
+        finishReorder();
       };
       dropFrameRef.current = requestAnimationFrame(step);
     };
 
-    const onPointerCancel = (e: PointerEvent) => {
-      onPointerUp(e);
-    };
+    const onPointerCancel = () => onPointerUp();
 
     window.addEventListener("pointermove", onPointerMove, { passive: false });
     window.addEventListener("pointerup", onPointerUp);
@@ -639,6 +799,8 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
       if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     };
   }, [getCardStride, localInstances, onReorderInstances]);
+  const reorderDepsRef = useRef({ createCardPinned, createCardSlot, onCreateCardSlotChange });
+  reorderDepsRef.current = { createCardPinned, createCardSlot, onCreateCardSlotChange };
 
   useEffect(() => {
     const el = carouselRef.current;
@@ -693,7 +855,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
         return;
       }
 
-      const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+      const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
       if (cards.length === 0) {
         releaseSnap(el);
         return;
@@ -719,7 +881,7 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
     // 滚动时更新指示器：基于 offsetLeft 零重排零回流计算，采用 requestAnimationFrame 保证 120Hz 顺滑
     const updateIndicatorOnScroll = () => {
       if (isProgrammaticScrollingRef.current) return;
-      const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-card-index")) as HTMLElement[];
+      const cards = Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[];
       const closestIdx = closestCardIndex(el, cards);
       if (closestIdx !== activeSlideRef.current) {
         animatePaginationRef.current = true;
@@ -760,15 +922,112 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
 
   const createLabel = isWeb && !isShowcase && !isLocalPreview && !import.meta.env.DEV ? "下载 APK" : "新建实例";
   const createHint = isWeb && !isShowcase && !isLocalPreview && !import.meta.env.DEV ? "获取最新版本" : "设置新的酒馆环境";
+  const reorderTransition = reducedMotionRef.current
+    ? "none"
+    : `transform ${REORDER_SETTLE_MS}ms ${REORDER_CURVE}`;
+
+  // Drag offsets are written to the DOM. A React render per pointer frame restyles every glass card.
+  const paintReorder = (offset: number) => {
+    const el = carouselRef.current;
+    const state = reorderStateRef.current;
+    if (!el || !state?.active) return;
+    const cards =
+      slotCardsCacheRef.current && slotCardsCacheRef.current.length > 0
+        ? slotCardsCacheRef.current
+        : (Array.from(el.children).filter(c => (c as HTMLElement).hasAttribute("data-slot")) as HTMLElement[]);
+    const stride = reorderStrideRef.current ?? (reorderStrideRef.current = getCardStride());
+    const lift = reorderLiftRef.current;
+    const layoutChanged = paintedTargetIndexRef.current !== state.targetIndex;
+    const updateSlot = (slotIndex: number) => {
+      const card = cards[slotIndex];
+      if (!card) return;
+      let shift = 0;
+      if (slotIndex === state.draggedIndex) shift = offset;
+      else if (state.draggedIndex < state.targetIndex && slotIndex > state.draggedIndex && slotIndex <= state.targetIndex) shift = -stride;
+      else if (state.draggedIndex > state.targetIndex && slotIndex >= state.targetIndex && slotIndex < state.draggedIndex) shift = stride;
+      if (slotIndex === state.draggedIndex) {
+        card.style.transform = `translate3d(${shift}px, 0, 0)`;
+        card.style.transition = "none";
+        card.style.zIndex = "50";
+        card.style.setProperty("--reorder-lift", String(lift));
+      } else if (layoutChanged || isReorderCommitting) {
+        card.style.transform = `translate3d(${shift}px, 0, 0)`;
+        card.style.transition = isReorderCommitting ? "none" : reorderTransition;
+        card.style.zIndex = "";
+        card.style.removeProperty("--reorder-lift");
+      }
+    };
+
+    updateSlot(state.draggedIndex);
+    if (layoutChanged) {
+      const previousTarget = paintedTargetIndexRef.current ?? state.draggedIndex;
+      const firstAffected = Math.min(state.draggedIndex, previousTarget, state.targetIndex);
+      const lastAffected = Math.max(state.draggedIndex, previousTarget, state.targetIndex);
+      for (let slotIndex = firstAffected; slotIndex <= lastAffected; slotIndex += 1) {
+        if (slotIndex !== state.draggedIndex) updateSlot(slotIndex);
+      }
+    } else if (isReorderCommitting) {
+      cards.forEach((_, slotIndex) => {
+        if (slotIndex !== state.draggedIndex) updateSlot(slotIndex);
+      });
+    }
+
+    const draggedCard = cards[state.draggedIndex];
+    if (draggedCard) {
+      if (dragPlateBaseRef.current) {
+        applyFrozenPlateTransformFromBase(dragPlateBaseRef.current, offset, lift);
+      } else {
+        const innerCard = draggedCard.querySelector<HTMLElement>(".motion-instance-card[data-frozen-plate]");
+        if (innerCard) syncFrozenPlatePosition(innerCard);
+      }
+    }
+    paintedTargetIndexRef.current = state.targetIndex;
+  };
+
+  useLayoutEffect(() => {
+    const state = reorderStateRef.current;
+    if (!state?.active || isReorderCommitting) return;
+    paintReorder(state.dragOffset);
+  });
+
+  // 槽位位移：提交帧清掉位移，拖动卡跟随手指，邻卡侧移让位。
+  const slotStyle = (slotIndex: number): React.CSSProperties | undefined => {
+    const isBeingDragged = reorderState?.active && reorderState.draggedIndex === slotIndex;
+    if (isReorderCommitting) {
+      return { transform: "none", transition: "none" };
+    }
+    if (isBeingDragged) {
+      return {
+        zIndex: 50,
+        transition: "none",
+        pointerEvents: reorderState.isDropping ? "none" : "auto",
+      };
+    }
+    let shiftX = 0;
+    if (reorderState?.active) {
+      const { draggedIndex, targetIndex } = reorderState;
+      if (draggedIndex < targetIndex && slotIndex > draggedIndex && slotIndex <= targetIndex) {
+        shiftX = -getCardStride();
+      } else if (draggedIndex > targetIndex && slotIndex >= targetIndex && slotIndex < draggedIndex) {
+        shiftX = getCardStride();
+      }
+    }
+    if (shiftX !== 0) {
+      return { transform: `translate3d(${shiftX}px, 0, 0)`, transition: reorderTransition };
+    }
+    if (reorderState?.active) {
+      return { transform: "translate3d(0, 0, 0)", transition: reorderTransition };
+    }
+    return undefined;
+  };
 
   return (
     <div className="w-full max-w-6xl mx-auto px-6 md:px-8">
       <div className="relative">
-        {/* 轮播滑动轨道：垂直上下预留 36px+ 充足空间，杜绝全向 3D 体积光阴影被滚动容器边缘裁切分层 */}
         <div
           ref={carouselRef}
           data-carousel-committing={isReorderCommitting ? "true" : undefined}
-          className="carousel-scrollbar-hidden flex gap-7 overflow-x-auto snap-x snap-mandatory px-3 py-9 -mx-2 -my-4"
+          className="carousel-scrollbar-hidden carousel-shadow-viewport flex gap-7 overflow-x-auto snap-x snap-mandatory px-3 -mx-2"
           style={{
             scrollbarWidth: "none",
             msOverflowStyle: "none",
@@ -782,134 +1041,81 @@ const InstanceCarouselComponent = forwardRef<InstanceCarouselRef, InstanceCarous
           {/* 左侧视口居中弹性垫片 */}
           <div className="flex-shrink-0 w-[calc(50%-120px)]" aria-hidden />
 
-          {/* 新建实例卡片：倾斜/高光/按压跟实例卡，内部仍是原透明雾面 + 边缘内发光 */}
-          <FlipCard
-            data-card-index="0"
-            className="group flex-shrink-0 snap-center cursor-pointer"
-            width={240}
-            height={320}
-            radius={26}
-            flipped={false}
-            axis="y"
-            flipOnClick={false}
-            draggable={false}
-            tilt
-            tiltMax={3.8}
-            glare
-            glareOpacity={isLight ? 0.01 : 0.015}
-            behindGlow={false}
-            borderColor="transparent"
-            hoverScale={1}
-            perspective={1100}
-            stiffness={160}
-            damping={28}
-            background="transparent"
-            color={isLight ? "#1a1625" : "#f5f5f5"}
-            shadow
-            shadowColor="#000000"
-            shadowOpacity={isLight ? 0.05 : 0.18}
-            ariaLabel={createLabel}
-            onClick={onNewInstance}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              if (!event.repeat) onNewInstance();
-            }}
-            front={(
-              <div
-                data-card-index="0"
-                className="motion-instance-card relative h-full w-full overflow-hidden rounded-[26px] text-left"
-              >
-                <div className="relative z-[2] flex h-full flex-col justify-between p-3.5">
-                  <div
-                    className={cn(
-                      "flex h-8 w-8 items-center justify-center rounded-lg",
-                      isLight ? "bg-black/[0.06]" : "bg-white/[0.08]"
-                    )}
-                  >
-                    <Play className={cn("h-3.5 w-3.5 fill-current transition-colors", isLight ? "text-[#1a1625]/40 group-hover:text-[#1a1625]/80" : "text-white/40 group-hover:text-white/80")} />
-                  </div>
-                  <div>
-                    <div className={cn("mb-0.5 text-base font-semibold transition-colors", isLight ? "text-[#1a1625]" : "text-white")}>
-                      {createLabel}
-                    </div>
-                    <div className={cn("text-xs transition-colors", isLight ? "text-[#1a1625]/40 group-hover:text-[#1a1625]/75" : "text-white/40 group-hover:text-white/75")}>
-                      {createHint}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          />
-
-          {/* 解耦后的实例卡片列表 */}
-          {localInstances.map((instance, index) => {
-            const stride = getCardStride();
-            const isBeingDragged = reorderState?.active && reorderState.draggedIndex === index;
-            const isDropping = isBeingDragged && reorderState.isDropping;
-
-            let shiftX = 0;
-            if (reorderState?.active && !isBeingDragged) {
-              const { draggedIndex, targetIndex } = reorderState;
-              if (draggedIndex < targetIndex) {
-                if (index > draggedIndex && index <= targetIndex) {
-                  shiftX = -stride;
-                }
-              } else if (draggedIndex > targetIndex) {
-                if (index >= targetIndex && index < draggedIndex) {
-                  shiftX = stride;
-                }
-              }
+          {/* 创建实例卡片与实例卡片共用同一套槽位。置顶时创建卡固定在最前，关闭后随拖拽排序。 */}
+          {Array.from({ length: localInstances.length + 1 }, (_, slotIndex) => {
+            if (slotIndex === createCardSlot) {
+              return (
+                <FlipCard
+                  key="create-instance"
+                  data-slot={String(slotIndex)}
+                  className="group flex-shrink-0 snap-center cursor-pointer"
+                  style={slotStyle(slotIndex)}
+                  width={240}
+                  height={320}
+                  radius={26}
+                  flipped={false}
+                  axis="y"
+                  flipOnClick={false}
+                  draggable={false}
+                  tilt
+                  tiltMax={3.8}
+                  glare
+                  glareOpacity={isLight ? 0.01 : 0.015}
+                  behindGlow={false}
+                  borderColor="transparent"
+                  hoverScale={1}
+                  perspective={1100}
+                  stiffness={160}
+                  damping={28}
+                  background="transparent"
+                  color={isLight ? "#1a1625" : "#f5f5f5"}
+                  shadow
+                  shadowColor="#000000"
+                  shadowOpacity={isLight ? 0.05 : 0.18}
+                  ariaLabel={createLabel}
+                  data-reordering={reorderState?.active && reorderState.draggedIndex === slotIndex ? "true" : undefined}
+                  data-dropping={reorderState?.active && reorderState.draggedIndex === slotIndex && reorderState.isDropping ? "true" : undefined}
+                  data-reorder-committing={isReorderCommitting ? "true" : undefined}
+                  onClick={onNewInstance}
+                  onPointerDownCapture={createCardPinned ? undefined : (event) => handleCardPointerDown(slotIndex, event)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    if (!event.repeat) onNewInstance();
+                  }}
+                  front={(
+                    <CreateCardFace
+                      isLight={isLight}
+                      isDynamic={isDynamic}
+                      isReordering={Boolean(reorderState?.active && reorderState.draggedIndex === slotIndex)}
+                      label={createLabel}
+                      hint={createHint}
+                    />
+                  )}
+                />
+              );
             }
 
-            // 针对 DOM 重排瞬态的精密样式隔离：
-            // 1. 提交帧 (isReorderCommitting)：强制关闭一切 transition 并重置 transform，使新物理位置与 0 位移完美对齐，0 帧闪烁；
-            // 2. 拖拽与落位帧：拖动时无过渡跟随，松手后按减速曲线贴入槽位；
-            // 3. 邻卡让位帧：平滑侧移让位；
-            // 4. 常态：不施加多余 inline transform/transition，纯净原生排版。
-            const reorderTransition = reducedMotionRef.current
-              ? "none"
-              : `transform ${REORDER_SETTLE_MS}ms ${REORDER_CURVE}`;
-            const cardStyle: React.CSSProperties | undefined = isReorderCommitting
-              ? {
-                  transform: "none",
-                  transition: "none",
-                }
-              : isBeingDragged
-              ? {
-                  transform: `translate3d(${reorderState.dragOffset}px, 0, 0)`,
-                  zIndex: 50,
-                  transition: "none",
-                  pointerEvents: isDropping ? "none" : "auto",
-                }
-              : shiftX !== 0
-              ? {
-                  transform: `translate3d(${shiftX}px, 0, 0)`,
-                  transition: reorderTransition,
-                }
-              : reorderState?.active
-              ? {
-                  transform: "translate3d(0, 0, 0)",
-                  transition: reorderTransition,
-                }
-              : undefined;
+            const index = slotIndex < createCardSlot ? slotIndex : slotIndex - 1;
+            const instance = localInstances[index];
+            const cardStyle = slotStyle(slotIndex);
 
             return (
               <InstanceCard
                 key={instance.id}
                 instance={instance}
                 index={index}
+                slotIndex={slotIndex}
                 style={cardStyle}
-                isReordering={isBeingDragged}
-                isDropping={isDropping}
+                isReordering={Boolean(reorderState?.active && reorderState.draggedIndex === slotIndex)}
+                isDropping={Boolean(reorderState?.active && reorderState.draggedIndex === slotIndex && reorderState.isDropping)}
                 isReorderCommitting={isReorderCommitting}
-                onPointerDownCapture={(e) => handleCardPointerDown(index, e)}
+                onPointerDownCapture={(e) => handleCardPointerDown(slotIndex, e)}
                 isLight={isLight}
                 isDynamic={isDynamic}
                 glassBg={glassBg}
                 hoveredCard={hoveredCard}
                 setHoveredCard={setHoveredCard}
-                activeCardMenu={activeCardMenu}
                 launchingId={launchingId}
                 onLaunch={onLaunch}
                 onReturnToTavern={onReturnToTavern}

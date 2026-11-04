@@ -1,8 +1,8 @@
 import { Capacitor } from "@capacitor/core";
 import type { TarvenEnvPlugin, TarvenEvent, GarbageItem, MaintenanceItem, MaintenanceScan, MaintenanceRecovery } from "../capacitor-plugin";
+import { normalizeRenderEngineSettings } from "../lib/render-settings";
 import { exactInstallTarget } from "../lib/install-location";
 import { validateExternalUrl } from "../lib/external-url";
-import { APP_VERSION } from "../constants/app-version";
 
 type EventName = Parameters<TarvenEnvPlugin["addListener"]>[0];
 const listeners = new Map<EventName, Set<(event: TarvenEvent) => void>>();
@@ -16,6 +16,7 @@ let failMigration = false;
 let failCommands = false;
 let status: Awaited<ReturnType<TarvenEnvPlugin["getStatus"]>> = { serverReady: false, mode: "launcher" };
 let openMode: "webview" | "browser" = "webview";
+let renderEngineSettings = normalizeRenderEngineSettings(null);
 let migrated = new Map<string, string>();
 let scannedInstanceIds = ["preview-local", "preview-second"];
 type DirectorySelection = Awaited<ReturnType<TarvenEnvPlugin["pickDirectory"]>>;
@@ -137,11 +138,13 @@ export const nativePreview: TarvenEnvPlugin = {
   async fetchReleases() { return { releases: [{ tag: "1.19.0", zipballUrl: "https://example.test/synthetic.zip", prerelease: false }] }; },
   async getAppSettings() {
     record("getAppSettings", {});
-    return { configuredInstancesRoot: syntheticRoot() };
+    const instancesRoot = syntheticRoot();
+    return { instancesRoot, defaultInstancesRoot: instancesRoot };
   },
   async setInstancesRoot(options) {
     record("setInstancesRoot", options ?? {});
-    return { instancesRoot: options?.path || null, configured: Boolean(options?.path) };
+    const instancesRoot = options?.path || syntheticRoot();
+    return { instancesRoot, configured: Boolean(options?.path) };
   },
   async pickDirectory(options) {
     record("pickDirectory", options);
@@ -155,27 +158,6 @@ export const nativePreview: TarvenEnvPlugin = {
   },
   async pickImage() { return { path: "" }; },
   async pickZipFile() { return { path: "D:\\Synthetic\\backup.zip", sizeBytes: 1 }; },
-  async inspectImportArchive(options: { archivePath: string }) {
-    record("inspectImportArchive", options);
-    return {
-      importEntries: 12,
-      importBytes: 3_145_728,
-      skippedEntries: 240,
-      skippedBytes: 52_428_800,
-      hasSecrets: true,
-      hasConfig: true,
-      importable: true,
-    };
-  },
-  async importInstanceData(options: { instanceId: string; archivePath: string; includeOptional?: boolean }) {
-    record("importInstanceData", options);
-    return { imported: 12, bytes: 3_145_728, skipped: 240 };
-  },
-  async exportInstance(options: { instanceId: string; installPath?: string }) {
-    record("exportInstance", options);
-    // 兜底导出落在软件安装目录内，不占用用户下载目录
-    return { path: `D:\\SillyClient\\exports\\${options.instanceId}-synthetic.zip`, bytes: 1048576 };
-  },
   async saveTextFile(options) { record("saveTextFile", options); },
   async readTextFile() { return { content: '{"version":2,"instances":[]}', fileName: "synthetic.json" }; },
   async scanInstances() {
@@ -202,8 +184,22 @@ export const nativePreview: TarvenEnvPlugin = {
   },
   async reloadTavern() { record("reloadTavern"); },
   async clearWebViewData() { record("clearWebViewData"); },
+  async exportInstance(options: { instanceId: string; installPath?: string; targetZipPath?: string }) {
+    record("exportInstance", options);
+    return { path: options.targetZipPath || `C:\\exports\\${options.instanceId}.zip`, bytes: 1024 };
+  },
+  async inspectImportArchive(options: { archivePath: string }) {
+    record("inspectImportArchive", options);
+    return { importEntries: 10, importBytes: 2048, skippedEntries: 0, skippedBytes: 0, hasSecrets: false, hasConfig: true, importable: true };
+  },
+  async importInstanceData(options: { instanceId: string; archivePath: string }) {
+    record("importInstanceData", options);
+    return { imported: 10, bytes: 2048, skipped: 0 };
+  },
   async getSafeInsets() { return { top: 0, bottom: 0, left: 0, right: 0 }; },
   async setPullToRefresh() {},
+  async getRenderEngineSettings() { return { ...renderEngineSettings }; },
+  async setRenderEngineSettings(options) { renderEngineSettings = normalizeRenderEngineSettings(options); },
   async getContentOpenMode() { return { mode: openMode }; },
   async setContentOpenMode(options) { openMode = options.mode; return options; },
   async setRemoteBasicAuth(options) {
@@ -301,6 +297,10 @@ export const nativePreview: TarvenEnvPlugin = {
     record("relocateInstance", options);
     const newPath = options.targetPath || exactInstallTarget(syntheticRoot(), "root", options.instanceId)!;
     return { success: true, instanceId: options.instanceId, oldPath: "C:\\AppData\\Legacy", newPath };
+  },
+  async migrateLegacyInstances(options = {}) {
+    record("migrateLegacyInstances", options);
+    return { success: true, results: [] };
   },
   async renameInstance(options) {
     record("renameInstance", options);
@@ -415,7 +415,6 @@ export function installNativePreview() {
     listeners: () => Object.fromEntries(Array.from(listeners, ([name, group]) => [name, group.size])),
   };
   localStorage.setItem("sillyclient.onboarding.version", "3");
-  localStorage.setItem("sillyclient.whatsnew.version", APP_VERSION);
   localStorage.setItem("sillyclient.instances.version", "2");
   if (!localStorage.getItem("sillyclient.instances")) {
     localStorage.setItem("sillyclient.instances", JSON.stringify(["preview-local", "preview-second"].map((id, index) => ({

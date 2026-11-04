@@ -1,4 +1,7 @@
 import { registerPlugin, PluginListenerHandle } from '@capacitor/core'
+import { type RenderEngineSettings, normalizeRenderEngineSettings } from './lib/render-settings'
+
+export { type RenderEngineSettings, normalizeRenderEngineSettings }
 
 /**
  * TarvenEnv 插件 —— 由原生侧 com.sillyclient.plugin.TarvenEnvPlugin 实现。
@@ -145,23 +148,6 @@ export interface PreinstallSelection {
 
 export type InstallPathMode = "root" | "exact"
 
-export interface LegacyInstanceLocation {
-  instanceId: string
-  name: string
-  currentPath: string
-  targetPath: string
-  version?: string
-}
-
-export interface InstanceRelocationResult {
-  success: boolean
-  instanceId: string
-  oldPath: string
-  newPath: string
-  unchanged?: boolean
-  retainedSourcePath?: string
-}
-
 export interface TarvenEnvPlugin {
   provisionAndStart(options: {
     port: number
@@ -191,7 +177,7 @@ export interface TarvenEnvPlugin {
   getStatus(): Promise<{ serverReady: boolean; mode: string; url?: string; instanceId?: string; operationId?: string }>
 
   /** 拉取 GitHub SillyTavern releases 列表。 */
-  fetchReleases(): Promise<{ releases: GithubRelease[]; warning?: string }>
+  fetchReleases(): Promise<{ releases: GithubRelease[] }>
 
   /** Installation selectors return an executable root; source selectors may return document URIs. */
   pickDirectory(options?: { purpose?: "installation" | "source" }): Promise<{
@@ -200,11 +186,11 @@ export interface TarvenEnvPlugin {
     installPathMode?: InstallPathMode
   }>
 
-  /** 读取应用级设置；configuredInstancesRoot 为用户显式登记的实例存储根（无默认路径，未配置时缺省）。 */
-  getAppSettings(): Promise<{ configuredInstancesRoot?: string }>
+  /** 读取应用级设置；instancesRoot 为当前默认实例存储根（实例是其直接子目录）。 */
+  getAppSettings(): Promise<{ instancesRoot: string; defaultInstancesRoot: string; configuredInstancesRoot?: string }>
 
-  /** 登记实例存储根（来自用户显式选择的文件夹）；path 留空时清除配置。仅影响之后创建的实例。 */
-  setInstancesRoot(options?: { path?: string }): Promise<{ instancesRoot: string | null; configured: boolean }>
+  /** 设置默认实例存储根；path 留空恢复出厂默认。仅影响之后创建的实例。 */
+  setInstancesRoot(options?: { path?: string }): Promise<{ instancesRoot: string; configured: boolean }>
 
   /** 调用系统图片选择器,把图片复制到 covers/{instanceId},返回可加载的文件路径。 */
   pickImage(options: { instanceId: string }): Promise<{ path: string; url?: string }>
@@ -238,6 +224,10 @@ export interface TarvenEnvPlugin {
 
   /** 启用/禁用酒馆 WebView 下拉刷新。 */
   setPullToRefresh(options: { enabled: boolean }): Promise<void>
+
+  /** 获取和设置酒馆沉浸式页面渲染设置（取色开关、全时/单次取色模式、点击光效）。 */
+  getRenderEngineSettings(): Promise<RenderEngineSettings>
+  setRenderEngineSettings(options: RenderEngineSettings): Promise<void>
 
   /** Windows: 获取和保存酒馆内容的全局打开方式。 */
   getContentOpenMode(): Promise<{ mode: ContentOpenMode }>
@@ -306,15 +296,40 @@ export interface TarvenEnvPlugin {
 
   /** 检测保存在旧版路径（如 C 盘 AppData）的待迁移实例 */
   checkLegacyInstances(): Promise<{
-    instances: LegacyInstanceLocation[]
+    instances: Array<{
+      instanceId: string
+      name: string
+      currentPath: string
+      targetPath: string
+      version?: string
+    }>
   }>
 
   /** 单个实例无损迁移 / 路径重定位 */
   relocateInstance(options: {
     instanceId: string
     targetPath?: string
-    installPath?: string
-  }): Promise<InstanceRelocationResult>
+  }): Promise<{
+    success: boolean
+    instanceId: string
+    oldPath: string
+    newPath: string
+    unchanged?: boolean
+  }>
+
+  /** 一键批量无损迁移旧路径实例至当前客户端默认实例目录 */
+  migrateLegacyInstances(options?: {
+    instanceIds?: string[]
+  }): Promise<{
+    success: boolean
+    results: Array<{
+      success: boolean
+      instanceId: string
+      oldPath: string
+      newPath: string
+      unchanged?: boolean
+    }>
+  }>
 
   /** 重命名实例并同步修改底层物理存储文件夹与注册表 */
   renameInstance(options: {

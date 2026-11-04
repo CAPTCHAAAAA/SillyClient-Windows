@@ -371,6 +371,8 @@
             user-select: none;
             max-height: calc(100vh - 32px);
             overflow-y: auto;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
@@ -597,7 +599,8 @@
             max-height: 144px;
             margin-top: 5px;
             overflow-y: auto;
-            scrollbar-width: thin;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
           }
 
           .preview-tuning-history-empty {
@@ -752,17 +755,14 @@
           .preview-tuning-panel.preview-tuning-panel--draggable {
             max-height: calc(100vh - 48px);
             overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
           }
 
           .preview-tuning-panel.preview-tuning-panel--draggable::-webkit-scrollbar {
-            width: 4px;
-          }
-
-          .preview-tuning-panel.preview-tuning-panel--draggable::-webkit-scrollbar-thumb {
-            border-radius: 9999px;
-            background: rgba(255, 255, 255, 0.12);
+            display: none;
+            width: 0;
+            height: 0;
           }
 
           /* 磨砂强度：内凹轨道不动。进度溶进轨道，滑杆是细环，拖动无极跟手。 */
@@ -1246,7 +1246,7 @@
               transform var(--tilt-dur, 150ms) cubic-bezier(0.16, 1, 0.3, 1) !important;
           }
 
-          .carousel-scrollbar-hidden:not([data-carousel-committing]) > [data-card-motion-managed]:not(.motion-instance-card):not([data-reordering]):not([data-dropping]):not([data-reorder-committing]) {
+          .carousel-scrollbar-hidden:not([data-carousel-committing]) > [data-card-motion-managed]:not(.flip-card):not(.motion-instance-card):not([data-reordering]):not([data-dropping]):not([data-reorder-committing]) {
             transition: transform var(--tilt-dur, 150ms) cubic-bezier(0.16, 1, 0.3, 1) !important;
           }
 
@@ -1269,14 +1269,14 @@
           }
 
           /* 主题模式差异仅剩发光色；浓度/雾/遮罩统一由调试面板全局变量控制 */
-          body[data-preview-light] .motion-instance-card {
+          body[data-preview-light] .motion-instance-card:not(.flip-card__face *) {
             box-shadow:
               inset 0 0 var(--sf-glow1-spread, 18px) 0 rgba(var(--sf-glow1-rgb, 96 84 76) / var(--sf-glow1, 0.11)),
               inset 0 0 var(--sf-glow2-spread, 40px) 0 rgba(var(--sf-glow2-rgb, 110 96 86) / var(--sf-glow2, 0.01)),
               0 var(--sf-sh-y, 3px) var(--sf-sh-blur, 12px) rgba(var(--sf-sh-rgb, 120 100 80) / var(--sf-sh-a, 0.075)) !important;
           }
 
-          body[data-preview-light] .motion-instance-card:hover {
+          body[data-preview-light] .motion-instance-card:not(.flip-card__face *):hover {
             box-shadow:
               inset 0 0 var(--sf-glow1-spread, 18px) 0 rgba(var(--sf-glow1-rgb, 96 84 76) / var(--sf-glow1, 0.11)),
               inset 0 0 var(--sf-glow2-spread, 40px) 0 rgba(var(--sf-glow2-rgb, 110 96 86) / var(--sf-glow2, 0.01)),
@@ -1284,14 +1284,14 @@
           }
 
           /* 黑夜模式（indigo 系，与源码暗夜按钮 indigo-500 同族） */
-          body[data-preview-dark-mode] .motion-instance-card {
+          body[data-preview-dark-mode] .motion-instance-card:not(.flip-card__face *) {
             box-shadow:
               inset 0 0 var(--sf-glow1-spread, 18px) 0 rgba(var(--sf-glow1-rgb, 151 171 255) / var(--sf-glow1, 0.11)),
               inset 0 0 var(--sf-glow2-spread, 40px) 0 rgba(var(--sf-glow2-rgb, 120 140 230) / var(--sf-glow2, 0.01)),
               0 var(--sf-sh-y, 3px) var(--sf-sh-blur, 12px) rgba(var(--sf-sh-rgb, 7 5 10) / var(--sf-sh-a, 0.075)) !important;
           }
 
-          body[data-preview-dark-mode] .motion-instance-card:hover {
+          body[data-preview-dark-mode] .motion-instance-card:not(.flip-card__face *):hover {
             box-shadow:
               inset 0 0 var(--sf-glow1-spread, 18px) 0 rgba(var(--sf-glow1-rgb, 151 171 255) / var(--sf-glow1, 0.11)),
               inset 0 0 var(--sf-glow2-spread, 40px) 0 rgba(var(--sf-glow2-rgb, 120 140 230) / var(--sf-glow2, 0.01)),
@@ -1300,22 +1300,24 @@
 
           /* 已创建实例卡：去掉源码内联的灰/黑遮罩盖层与 blur 磨砂，
              遮罩统一由内容层的酒红渐变（下方规则）承担 */
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > div:first-child > div[style*="background"] {
+          .motion-instance-card:not([data-create-card]) > div:first-child > div[style*="background"],
+          .motion-instance-card:not([data-create-card]) > div.absolute.inset-0 > div[style*="background"] {
             background: transparent !important;
             -webkit-backdrop-filter: none !important;
             backdrop-filter: none !important;
           }
 
           /* 源码里 hover 前后的黑色渐变遮罩层（bg-gradient-to-t from-black/...）压成透明 */
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > div[class*="from-black"] {
+          .motion-instance-card:not([data-create-card]) > div[class*="from-black"],
+          .motion-instance-card:not([data-create-card]) > div[class*="from-white"] {
             background-image: none !important;
             background: transparent !important;
           }
 
           /* 收起/展开遮罩各自独立成固定合成层，只交叉淡入淡出；
              遮罩不再参与详情内容的弹性位移。 */
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col {
+          .motion-instance-card:not([data-create-card]) > .relative,
+          .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col {
             --card-reveal-ease: cubic-bezier(0.2, 0, 0, 1);
             --card-focus-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
             --card-fade-ease: cubic-bezier(0.4, 0, 0.2, 1);
@@ -1324,10 +1326,10 @@
             background: transparent !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::before,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::after,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col::before,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col::after {
+          .motion-instance-card:not([data-create-card]) > .relative::before,
+          .motion-instance-card:not([data-create-card]) > .relative::after,
+          .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col::before,
+          .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col::after {
             content: "";
             position: absolute;
             z-index: 0;
@@ -1338,8 +1340,8 @@
             will-change: opacity;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::before,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col::before {
+          .motion-instance-card:not([data-create-card]) > .relative::before,
+          .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col::before {
             opacity: 1;
             transition: opacity 460ms var(--card-fade-ease);
             background: linear-gradient(
@@ -1351,8 +1353,8 @@
             );
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::after,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col::after {
+          .motion-instance-card:not([data-create-card]) > .relative::after,
+          .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col::after {
             opacity: 0;
             transition: opacity 460ms var(--card-fade-ease);
             background: linear-gradient(
@@ -1364,25 +1366,25 @@
             );
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative > *,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col > * {
+          .motion-instance-card:not([data-create-card]) > .relative > *,
+          .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col > * {
             position: relative;
             z-index: 1;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded > .relative::before,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded .relative.h-full.flex-col::before {
+          .motion-instance-card:not([data-create-card]).is-expanded > .relative::before,
+          .motion-instance-card:not([data-create-card]).is-expanded .relative.h-full.flex-col::before {
             opacity: 0;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded > .relative::after,
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded .relative.h-full.flex-col::after {
+          .motion-instance-card:not([data-create-card]).is-expanded > .relative::after,
+          .motion-instance-card:not([data-create-card]).is-expanded .relative.h-full.flex-col::after {
             opacity: 1;
           }
 
           /* 浅色模式沿用独立浅色参数，只替换两张遮罩层的填充。 */
-          body[data-preview-light] .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::before,
-          body[data-preview-light] .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col::before {
+          body[data-preview-light] .motion-instance-card:not([data-create-card]) > .relative::before,
+          body[data-preview-light] .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col::before {
             background: linear-gradient(
               to top,
               rgba(var(--sf-lg-rgb, 244 240 237) / var(--sf-lg-bc, 0.92)) 0%,
@@ -1393,8 +1395,8 @@
             );
           }
 
-          body[data-preview-light] .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::after,
-          body[data-preview-light] .motion-instance-card[data-card-index]:not([data-card-index="0"]) .relative.h-full.flex-col::after {
+          body[data-preview-light] .motion-instance-card:not([data-create-card]) > .relative::after,
+          body[data-preview-light] .motion-instance-card:not([data-create-card]) .relative.h-full.flex-col::after {
             background: linear-gradient(
               to top,
               rgba(var(--sf-lg-rgb, 244 240 237) / var(--sf-lg-be, 0.96)) 0%,
@@ -1407,7 +1409,7 @@
 
           /* System focus transition：旧信息先退场，标题与详情沿同一条缓入曲线交接。
              不拆字、不弹跳，也不使用前段过快、看似瞬切的减速曲线。 */
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .preview-card-subtitle {
+          .motion-instance-card:not([data-create-card]) .preview-card-subtitle {
             align-self: flex-start;
             width: fit-content;
             max-width: 100%;
@@ -1423,7 +1425,7 @@
               filter 260ms var(--card-fade-ease) 90ms !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded .preview-card-subtitle {
+          .motion-instance-card:not([data-create-card]).is-expanded .preview-card-subtitle {
             opacity: 1;
             filter: brightness(1.06);
             transform: translate3d(0, var(--card-title-lift), 0) scale(1.07);
@@ -1433,7 +1435,7 @@
               filter 300ms var(--card-fade-ease) !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .preview-card-status {
+          .motion-instance-card:not([data-create-card]) .preview-card-status {
             opacity: 1;
             transform: translate3d(0, 0, 0);
             transform-origin: left center;
@@ -1443,7 +1445,7 @@
               transform 320ms var(--card-focus-ease) 90ms !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded .preview-card-status {
+          .motion-instance-card:not([data-create-card]).is-expanded .preview-card-status {
             opacity: 0;
             transform: translate3d(0, -8px, 0);
             transition:
@@ -1451,7 +1453,7 @@
               transform 260ms var(--card-focus-ease) !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .motion-accordion {
+          .motion-instance-card:not([data-create-card]) .motion-accordion {
             position: absolute !important;
             left: 14px;
             right: 14px;
@@ -1469,7 +1471,7 @@
               visibility 0s linear 300ms !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .motion-accordion.is-open {
+          .motion-instance-card:not([data-create-card]) .motion-accordion.is-open {
             opacity: 1;
             visibility: visible;
             pointer-events: auto;
@@ -1480,7 +1482,7 @@
               visibility 0s linear 0s !important;
           }
 
-          .motion-instance-card[data-card-index]:not([data-card-index="0"]) .motion-accordion-inner {
+          .motion-instance-card:not([data-create-card]) .motion-accordion-inner {
             min-height: 0;
             overflow: visible;
             opacity: 1 !important;
@@ -1492,20 +1494,20 @@
           }
 
           @media (prefers-reduced-motion: reduce) {
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::before,
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]) > .relative::after,
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]) .preview-card-subtitle,
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]) .preview-card-status,
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]) .motion-accordion,
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]) .motion-accordion-inner {
+            .motion-instance-card:not([data-create-card]) > .relative::before,
+            .motion-instance-card:not([data-create-card]) > .relative::after,
+            .motion-instance-card:not([data-create-card]) .preview-card-subtitle,
+            .motion-instance-card:not([data-create-card]) .preview-card-status,
+            .motion-instance-card:not([data-create-card]) .motion-accordion,
+            .motion-instance-card:not([data-create-card]) .motion-accordion-inner {
               transition: none !important;
             }
 
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded .preview-card-subtitle {
+            .motion-instance-card:not([data-create-card]).is-expanded .preview-card-subtitle {
               transform: translate3d(0, var(--card-title-lift), 0);
             }
 
-            .motion-instance-card[data-card-index]:not([data-card-index="0"]).is-expanded .preview-card-status {
+            .motion-instance-card:not([data-create-card]).is-expanded .preview-card-status {
               transform: none;
             }
           }
@@ -1709,7 +1711,7 @@
             return null;
           }
 
-          wallpaper.setAttribute("data-preview-wallpaper", "");
+          if (!wallpaper.hasAttribute("data-preview-wallpaper")) wallpaper.setAttribute("data-preview-wallpaper", "");
           if (wallpaper.style.getPropertyValue("--preview-wallpaper-image") !== wallpaper.style.backgroundImage) {
             wallpaper.style.setProperty("--preview-wallpaper-image", wallpaper.style.backgroundImage);
           }
@@ -1721,16 +1723,16 @@
           const panel = getBackgroundPanel(doc);
           if (!panel) return;
 
-          panel.setAttribute("data-preview-bg-panel", "");
+          if (!panel.hasAttribute("data-preview-bg-panel")) panel.setAttribute("data-preview-bg-panel", "");
 
           const importBtn = Array.from(panel.querySelectorAll("button")).find((node) => {
             const title = node.querySelector("div > div");
             return title && (title.textContent === "导入本地图片" || title.textContent === "已导入壁纸");
           });
           if (importBtn) {
-            importBtn.setAttribute("data-preview-wallpaper-import", "");
-            if (wallpaper) importBtn.setAttribute("data-preview-has-wallpaper", "");
-            else importBtn.removeAttribute("data-preview-has-wallpaper");
+            if (!importBtn.hasAttribute("data-preview-wallpaper-import")) importBtn.setAttribute("data-preview-wallpaper-import", "");
+            if (wallpaper && !importBtn.hasAttribute("data-preview-has-wallpaper")) importBtn.setAttribute("data-preview-has-wallpaper", "");
+            else if (!wallpaper && importBtn.hasAttribute("data-preview-has-wallpaper")) importBtn.removeAttribute("data-preview-has-wallpaper");
           }
 
           const existing = panel.querySelector(".preview-wallpaper-blur-control");
@@ -1847,6 +1849,7 @@
 
         let previewThemeToneDoc = null;
         let previewThemeTone = null;
+        const themeWashAnimations = new WeakMap();
         const playThemeWash = (doc, tone) => {
           const view = doc.defaultView;
           if (!doc.body || !view || view.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
@@ -1860,22 +1863,20 @@
             doc.body.appendChild(wash);
           }
 
-          if (typeof wash.getAnimations === "function") {
-            wash.getAnimations().forEach((animation) => animation.cancel());
-          }
+          themeWashAnimations.get(wash)?.cancel();
           if (typeof wash.animate !== "function") return;
-          wash.style.backgroundColor = tone === "light" ? "#f0ece8" : "#1a1625";
-          wash.animate(
+          wash.style.backgroundColor = tone === "light" ? "rgb(var(--app-light-surface-rgb, 240 236 232))" : "#1a1625";
+          themeWashAnimations.set(wash, wash.animate(
             [{ opacity: 0.12 }, { opacity: 0 }],
             {
               duration: 220,
               easing: "cubic-bezier(0.22, 1, 0.36, 1)",
             },
-          );
+          ));
         };
 
         const syncLightMode = (doc, root) => {
-          const isLight = root.classList.contains("bg-[#f0ece8]");
+          const isLight = root.dataset.themeTone === "light";
           const nextTone = isLight ? "light" : "dark";
           const toneChanged =
             previewThemeToneDoc === doc &&
@@ -1884,14 +1885,14 @@
           previewThemeToneDoc = doc;
           previewThemeTone = nextTone;
 
-          if (isLight) doc.body.dataset.previewLight = "true";
-          else delete doc.body.dataset.previewLight;
+          if (isLight && doc.body.dataset.previewLight !== "true") doc.body.dataset.previewLight = "true";
+          else if (!isLight && doc.body.hasAttribute("data-preview-light")) delete doc.body.dataset.previewLight;
 
           // 黑夜模式 = 深底且无动态光效容器（动态模式才有 ambient-glow-container）
           const isDynamic = !!doc.querySelector(".ambient-glow-container");
           const isDarkNight = !isLight && !isDynamic;
-          if (isDarkNight) doc.body.dataset.previewDarkMode = "true";
-          else delete doc.body.dataset.previewDarkMode;
+          if (isDarkNight && doc.body.dataset.previewDarkMode !== "true") doc.body.dataset.previewDarkMode = "true";
+          else if (!isDarkNight && doc.body.hasAttribute("data-preview-dark-mode")) delete doc.body.dataset.previewDarkMode;
 
           const control = doc.querySelector(".preview-wallpaper-blur-control");
           if (control) {
@@ -1941,6 +1942,8 @@
         const ensureEdgeBlurs = (doc) => {
           const carousel = doc.querySelector(".carousel-scrollbar-hidden");
           const rect = carousel ? carousel.getBoundingClientRect() : null;
+          const topPx = rect ? `${Math.round(rect.top)}px` : "";
+          const heightPx = rect ? `${Math.round(rect.height)}px` : "";
           for (const side of ["left", "right"]) {
             const id = `preview-edge-blur-${side}`;
             const strip = doc.getElementById(id);
@@ -1957,8 +1960,14 @@
               for (const div of buildEdgeBlurDivs(doc, side)) node.appendChild(div);
               doc.body.appendChild(node);
             }
-            node.style.top = `${Math.round(rect.top)}px`;
-            node.style.height = `${Math.round(rect.height)}px`;
+            if (node.__lastTop !== topPx) {
+              node.__lastTop = topPx;
+              node.style.top = topPx;
+            }
+            if (node.__lastHeight !== heightPx) {
+              node.__lastHeight = heightPx;
+              node.style.height = heightPx;
+            }
           }
         };
 
@@ -2065,8 +2074,9 @@
 
         const ensureCardRevealStructure = (doc) => {
           const cards = doc.querySelectorAll(
-            '.motion-instance-card[data-card-index]:not([data-card-index="0"])'
+            '.motion-instance-card:not([data-create-card])'
           );
+          const pendingWrites = [];
           cards.forEach((card) => {
             const content = Array.from(card.children).find((node) =>
               node.classList &&
@@ -2082,14 +2092,7 @@
             if (!accordion || accordionIndex < 2) return;
 
             const subtitle = contentChildren[accordionIndex - 2];
-            if (!subtitle.classList.contains('preview-card-subtitle')) {
-              subtitle.classList.add('preview-card-subtitle');
-            }
             const status = contentChildren[accordionIndex - 1];
-            if (!status.classList.contains('preview-card-status')) {
-              status.classList.add('preview-card-status');
-            }
-
             const detailList = accordion.querySelector('.motion-accordion-inner > div');
             if (!detailList) return;
 
@@ -2099,16 +2102,25 @@
             const rawTitleLift = detailTop - 8 - expandedTitleHeight - subtitle.offsetTop;
             const titleLift = Math.max(-96, Math.min(-60, Math.round(rawTitleLift)));
             const titleLiftValue = `${titleLift}px`;
+            pendingWrites.push({ content, accordion, subtitle, status, titleLiftValue });
+          });
+
+          for (const { content, accordion, subtitle, status, titleLiftValue } of pendingWrites) {
+            if (!subtitle.classList.contains('preview-card-subtitle')) {
+              subtitle.classList.add('preview-card-subtitle');
+            }
+            if (!status.classList.contains('preview-card-status')) {
+              status.classList.add('preview-card-status');
+            }
             if (content.style.getPropertyValue('--card-title-lift') !== titleLiftValue) {
               content.style.setProperty('--card-title-lift', titleLiftValue);
             }
-
             if (accordion.classList.contains('is-open') && accordion.hasAttribute('inert')) {
               accordion.removeAttribute('inert');
             } else if (!accordion.classList.contains('is-open') && !accordion.hasAttribute('inert')) {
               accordion.setAttribute('inert', '');
             }
-          });
+          }
         };
 
         // —— 卡片轻微 3D 倾斜跟随鼠标（隔离架构）：
@@ -2126,7 +2138,7 @@
         };
 
         const wireCardTilt = (doc) => {
-          doc.querySelectorAll(".carousel-scrollbar-hidden > [data-card-index]").forEach((card) => {
+          doc.querySelectorAll(".carousel-scrollbar-hidden > [data-slot]:not(.flip-card)").forEach((card) => {
             if (card.dataset.cardMotionManaged !== "true") card.dataset.cardMotionManaged = "true";
           });
           if (tiltWiredDoc === doc) return;
@@ -2165,7 +2177,7 @@
             while (curr && curr.parentElement !== track) {
               curr = curr.parentElement;
             }
-            if (!curr?.hasAttribute?.("data-card-index") || curr?.classList?.contains("flip-card")) {
+            if (!curr?.hasAttribute?.("data-slot") || curr?.classList?.contains("flip-card")) {
               return null;
             }
             return { track, card: curr };
@@ -2250,6 +2262,7 @@
           };
           const pressMoving = (state) => !!state.pressMoving;
           const render = (state) => {
+            if (state.card.closest(".flip-card[data-reordering], .flip-card[data-dropping], [data-carousel-committing]")) return;
             const rawDeg = parseFloat(doc.documentElement.style.getPropertyValue("--sf-tilt-max"));
             const deg = Number.isFinite(rawDeg) ? rawDeg : TILT_MAX_DEG;
             const depth = state.depth || 0;
@@ -2408,6 +2421,7 @@
           };
 
           listen(doc, "pointerdown", (event) => {
+            if (event.target?.closest?.(".flip-card[data-reordering], [data-carousel-committing]")) return;
             pointerIds.add(event.pointerId);
             if (!event.isPrimary || event.button !== 0 || pointerIds.size > 1) {
               if (held) interruptState(held.state);
@@ -2430,6 +2444,10 @@
             if (!reduced) targetPressure(state, position);
           });
           listen(doc, "pointermove", (event) => {
+            if (event.target?.closest?.(".flip-card[data-reordering], .flip-card[data-dropping], [data-carousel-committing]")) {
+              if (held?.id === event.pointerId) interruptState(held.state);
+              return;
+            }
             if (held?.id === event.pointerId) {
               const state = held.state;
               if (Math.hypot(event.clientX - held.x, event.clientY - held.y) > 4
@@ -2565,6 +2583,7 @@
               timer = 0;
               if (!button.isConnected || frame.contentDocument !== doc) return;
               tuningPanelConcealed = !tuningPanelConcealed;
+              if (!tuningPanelConcealed) ensureTuningPanel(doc);
               syncTuningPanelVisibility(doc);
               consumeClick = true;
               if (consumeTimer) view.clearTimeout(consumeTimer);
@@ -2600,11 +2619,11 @@
           const root = doc.querySelector("#root > div");
           if (!root || !doc.body) return;
 
-          root.setAttribute("data-preview-root", "");
+          if (!root.hasAttribute("data-preview-root")) root.setAttribute("data-preview-root", "");
           const main = root.querySelector(":scope > main");
           if (main) {
             const logo = main.querySelector(":scope > div.mb-4.text-center.select-none.cursor-pointer.group");
-            if (logo) logo.setAttribute("data-preview-logo", "");
+            if (logo && !logo.hasAttribute("data-preview-logo")) logo.setAttribute("data-preview-logo", "");
           }
 
           syncLightMode(doc, root);
@@ -2690,7 +2709,7 @@
         // 三种模式各自拥有独立工作区、手动保存槽和历史，任何修改只写入
         // 面板当前模式。旧版 dynamic 裸对象与三个旧槽会按模式一次性兼容读取。
         const SF_STORAGE_VERSION = 3;
-        const SF_BASELINE_REVISION = "20260904-card-reveal-v10";
+        const SF_BASELINE_REVISION = "20261103-light-neutral-v1";
         const SF_BASELINE_REVISION_KEY = "sillyclient.sfTuningPreset.baselineRevision";
         const SF_MODE_LABELS = {
           dynamic: "动态",
@@ -2802,7 +2821,17 @@
           for (const mode of SF_MODE_ORDER) {
             const rawDraft = readSfJson(SF_DRAFT_KEYS[mode]);
             const draftVersion = Number(rawDraft && rawDraft.version);
-            if (Number.isFinite(draftVersion) && draftVersion >= SF_STORAGE_VERSION) continue;
+            if (Number.isFinite(draftVersion) && draftVersion >= SF_STORAGE_VERSION) {
+              if (appliedRevision === "20261103-light-warm-v1" &&
+                  mode === "light" && draftVersion === SF_STORAGE_VERSION &&
+                  Array.isArray(rawDraft.values?.lgRgb) &&
+                  rawDraft.values.lgRgb.length === 3 &&
+                  rawDraft.values.lgRgb.every((channel, index) => channel === [252, 249, 241][index])) {
+                rawDraft.values.lgRgb = cloneSfValues(SF_MODE_DEFAULTS.light.lgRgb);
+                writeSfJson(SF_DRAFT_KEYS[mode], rawDraft);
+              }
+              continue;
+            }
             const slot = loadSfSlotRecord(mode);
             writeSfJson(SF_DRAFT_KEYS[mode], {
               version: SF_STORAGE_VERSION,
@@ -3129,7 +3158,7 @@
             sfThemeTick(doc);
             return;
           }
-          if (!doc.body) return;
+          if (!doc.body || tuningPanelConcealed) return;
 
           panel = doc.createElement("div");
           panel.className = "preview-tuning-panel preview-tuning-panel--draggable";
@@ -3796,9 +3825,6 @@
             const liveRoot = currentDoc.querySelector("#root > div");
             if (!liveRoot) return;
             if (liveRoot !== observedThemeRoot) installThemeRootObserver(currentDoc, liveRoot);
-            if (liveRoot.classList.contains("theme-smoothing")) {
-              liveRoot.classList.remove("theme-smoothing");
-            }
             syncLightMode(currentDoc, liveRoot);
             ensureTuningPanel(currentDoc);
           });

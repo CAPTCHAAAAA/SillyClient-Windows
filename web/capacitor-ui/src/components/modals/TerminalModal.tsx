@@ -6,6 +6,7 @@ import { LAYERS } from "../../constants/layers";
 import type { TavernInstance } from "../../types";
 import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 import { GLOBAL_LOG_KEY, instanceLogs } from "../../lib/log-store";
+import { TerminalWell } from "../common/TerminalWell";
 import { CornerResizeCurve } from "./CornerResizeCurve";
 
 export interface TerminalModalProps {
@@ -51,7 +52,6 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
   const dragCleanup = useRef<(() => void) | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
   const [terminalBox, setTerminalBox] = useState({ w: 640, h: 340 });
-  const resizeDrag = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const resizeCleanup = useRef<(() => void) | null>(null);
 
@@ -143,23 +143,12 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
   if (!isOpen && !isClosing) return null;
 
   const isDynamic = glassBg.includes("1c1420");
-  const shellBackground = isLight
-    ? "rgba(255,255,255,0.70)"
-    : isDynamic
-      ? "rgba(28,20,32,0.70)"
-      : "rgba(26,22,37,0.80)";
-  const terminalWellBackground = isLight
-    ? "rgba(22,18,28,0.90)"
-    : isDynamic
-      ? "oklch(0.18 0.014 350 / 0.84)"
-      : "oklch(0.17 0.008 260 / 0.84)";
-
   return (
     <div
       ref={modalRef}
       data-terminal-modal="true"
       className={cn(
-        "fixed flex flex-col",
+        "ios-task-surface reading-flat-surface fixed flex flex-col rounded-2xl backdrop-blur-[40px] saturate-180",
         glassBg,
         isLight && "is-light",
         isClosing ? "animate-terminal-exit" : "animate-terminal-enter",
@@ -167,11 +156,11 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
       )}
       style={{
         zIndex: LAYERS.MODAL,
-        top: dragPos ? dragPos.y : `calc(max(env(safe-area-inset-top), ${safeInsetTop}px) + 5.5rem)`,
-        left: dragPos ? dragPos.x : terminalPos.left,
+        top: `clamp(8px, ${dragPos ? `${dragPos.y}px` : `calc(max(env(safe-area-inset-top), ${safeInsetTop}px) + 5.5rem)`}, calc(100vh - min(${terminalBox.h}px, 100vh - 2rem) - 8px))`,
+        left: `clamp(8px, ${dragPos?.x ?? terminalPos.left}px, calc(100vw - min(${terminalBox.w}px, 100vw - 16px) - 8px))`,
         width: terminalBox.w,
         height: terminalBox.h,
-        minWidth: 320,
+        minWidth: "min(320px, calc(100vw - 16px))",
         minHeight: 200,
         maxWidth: "calc(100vw - 16px)",
         maxHeight: "calc(100vh - 2rem)",
@@ -179,36 +168,27 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
     >
       {/* 毛玻璃卡片本体，裁剪只作用在这里，不牵连外面的手柄 */}
       <div
-        className={cn(
-          "ios-task-surface reading-flat-surface absolute inset-0 flex flex-col overflow-hidden rounded-2xl backdrop-blur-[40px] saturate-180",
-          isLight && "is-light"
-        )}
-        style={{
-          background: shellBackground,
-          backdropFilter: "blur(40px) saturate(1.8)",
-          WebkitBackdropFilter: "blur(40px) saturate(1.8)",
-        }}
+        className="absolute inset-0 flex flex-col overflow-hidden rounded-[inherit]"
       >
       {/* 标题栏 (支持拖拽到其他位置) */}
       <div
         data-terminal-header="true"
         onPointerDown={handleDragStart}
         className={cn(
-          "flex items-center justify-between px-4 h-9 flex-shrink-0 border-b select-none touch-none",
-          isDragging ? "cursor-grabbing" : "cursor-grab",
-          isLight ? "border-black/[0.06]" : "border-white/[0.06]"
+          "flex items-center justify-between gap-3 px-6 py-[13px] flex-shrink-0 select-none touch-none",
+          isDragging ? "cursor-grabbing" : "cursor-grab"
         )}
       >
-        <div className="flex items-center gap-2 pointer-events-none">
+        <div className="flex min-w-0 flex-1 items-center gap-2 pointer-events-none">
           <Terminal
             className={cn(
-              "w-3.5 h-3.5",
+              "w-3.5 h-3.5 flex-shrink-0",
               isLight ? "text-[#1a1625]/40" : "text-white/40"
             )}
           />
           <span
             className={cn(
-              "text-xs font-medium",
+              "truncate text-xs font-medium leading-none",
               isLight ? "text-[#1a1625]/50" : "text-white/50"
             )}
           >
@@ -216,19 +196,19 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
           </span>
         </div>
         <div
-          className="flex items-center gap-2"
+          className="flex h-7 flex-shrink-0 items-center gap-1.5"
           onPointerDown={(e) => e.stopPropagation()}
         >
           {/* 字号调节 */}
           <div
             className={cn(
-              "flex items-center gap-1.5 px-2 py-1 rounded-lg",
+              "flex h-7 items-center gap-1.5 px-2 rounded-lg",
               isLight ? "bg-black/[0.04]" : "bg-white/[0.04]"
             )}
           >
             <span
               className={cn(
-                "text-[10px] tabular-nums w-6 text-right",
+                "text-[10px] tabular-nums w-4 text-center leading-none",
                 isLight ? "text-[#1a1625]/35" : "text-white/35"
               )}
             >
@@ -236,6 +216,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
             </span>
             <input
               type="range"
+              aria-label="终端字号"
               min={9}
               max={20}
               step={1}
@@ -248,7 +229,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
             />
             <span
               className={cn(
-                "text-[10px]",
+                "text-[10px] leading-none",
                 isLight ? "text-[#1a1625]/25" : "text-white/25"
               )}
             >
@@ -258,8 +239,9 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
           <button
             onClick={() => instanceLogs.update(logKey, [])}
             title="清空终端"
+            aria-label="清空终端"
             className={cn(
-              "p-1 rounded-md transition-colors",
+              "terminal-tool flex h-7 w-7 items-center justify-center rounded-full transition-colors",
               isLight
                 ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
                 : "text-white/40 hover:text-white/85"
@@ -269,8 +251,9 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
           </button>
           <button
             onClick={onClose}
+            aria-label="关闭终端"
             className={cn(
-              "p-1 rounded-md transition-colors",
+              "terminal-tool flex h-7 w-7 items-center justify-center rounded-full transition-colors",
               isLight
                 ? "text-[#1a1625]/40 hover:text-[#1a1625]/85"
                 : "text-white/40 hover:text-white/85"
@@ -282,35 +265,26 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
       </div>
 
       {/* 终端内容区 */}
-      <div className="flex min-h-0 flex-1 p-2.5">
-        <div
+      <div className="flex min-h-0 flex-1 px-2.5 pb-2.5">
+        <TerminalWell
+          isLight={isLight}
+          isDynamic={isDynamic}
           data-native-log-list
-          className="h-full min-h-0 w-full overflow-y-auto px-3.5 py-3 font-sans leading-relaxed text-white/78 scrollbar-subtle"
-          style={{
-            fontSize: `${terminalFontSize}px`,
-            borderRadius: "calc(var(--radius-2xl) - 10px)",
-            background: terminalWellBackground,
-            boxShadow: "inset 0 1px 1.5px rgba(0,0,0,0.35), inset 0 -0.5px 0 rgba(255,255,255,0.05)",
-          }}
+          className="terminal-output h-full min-h-0 w-full overflow-y-auto px-3.5 py-3 scrollbar-subtle"
+          style={{ fontSize: `${terminalFontSize}px` }}
         >
-          <div className="mb-1 opacity-50">{terminalDisplayBanner}</div>
-          {terminalLogs.map((log, i) => (
+          <div className="terminal-caption mb-1">{terminalDisplayBanner}</div>
+          {terminalLogs.map((log, index) => (
             <div
-              key={i}
-              className={cn(
-                "mb-0.5 whitespace-pre-wrap break-all",
-                log.level === "error"
-                  ? "text-red-300/90"
-                  : log.level === "success"
-                  ? "font-medium text-white/88"
-                  : "text-white/72"
-              )}
+              key={index}
+              className="terminal-log-line"
+              data-level={log.level}
             >
               {log.msg}
             </div>
           ))}
-          <div className="mt-1 flex gap-2">
-            <span className="select-none text-white/45">
+          <div className="terminal-command-row">
+            <span className="terminal-prompt" title={terminalDisplayPrompt}>
               {terminalDisplayPrompt}
             </span>
             <input
@@ -337,7 +311,8 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
                   setTerminalInput("");
                 }
               }}
-              className="flex-1 border-none bg-transparent text-white outline-none placeholder:text-white/28"
+              className="terminal-command-input"
+              aria-label="终端命令"
               placeholder={terminalDisplayPlaceholder}
               disabled={!terminalInstance || terminalInstance.type === "remote"}
               autoCapitalize="none"
@@ -345,7 +320,7 @@ export const TerminalModal: React.FC<TerminalModalProps> = ({
               spellCheck={false}
             />
           </div>
-        </div>
+        </TerminalWell>
       </div>
       </div>
 

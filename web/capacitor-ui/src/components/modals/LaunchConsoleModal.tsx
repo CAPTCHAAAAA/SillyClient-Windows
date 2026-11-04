@@ -1,6 +1,7 @@
 import React from "react";
 import { Play, LoaderCircle, X } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { TerminalWell } from "../common/TerminalWell";
 import { LAYERS } from "../../constants/layers";
 import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 
@@ -25,7 +26,7 @@ export interface LaunchConsoleModalProps {
  * 启动控制台模态窗口 (LaunchConsoleModal)
  * 1. 严格绝对居中 (top: 50%, left: 50%, transform: translate(-50%, -50%))；
  * 2. 扁平轻拟物风格，0 绿字，低调银白高光质感；
- * 3. 支持操作内联化：提供最小化至底部后台活动胶囊（ActivityCapsule）能力。
+ * 3. 支持操作内联化：提供可选的最小化回调，交由页面协调启动任务状态。
  */
 export const LaunchConsoleModal: React.FC<LaunchConsoleModalProps> = ({
   isOpen,
@@ -44,6 +45,7 @@ export const LaunchConsoleModal: React.FC<LaunchConsoleModalProps> = ({
   onEnterTavern,
 }) => {
   const launchLogs = useInstanceLogs(logKey, isOpen || isClosing);
+  const isDynamic = glassBg.includes("1c1420");
   if (!isOpen && !isClosing) return null;
 
   return (
@@ -146,37 +148,24 @@ export const LaunchConsoleModal: React.FC<LaunchConsoleModalProps> = ({
 
       {/* 日志区域 — 色差内凹效果 */}
       <div className="mx-6 mb-5">
-        <div
-          className={cn(
-            "rounded-2xl overflow-hidden max-h-[200px] overflow-y-auto",
-            "border shadow-[inset_0_2px_6px_rgba(0,0,0,0.3),inset_0_0.5px_0_rgba(0,0,0,0.2)]",
-            isLight
-              ? "bg-black/[0.04] border-black/[0.1]"
-              : "bg-black/[0.32] border-white/[0.03]"
-          )}
+        <TerminalWell
+          isLight={isLight}
+          isDynamic={isDynamic}
+          compact
+          className="overflow-hidden max-h-[200px] overflow-y-auto scrollbar-hidden"
         >
-          <div data-native-log-list className="px-4 py-3 text-[11px] leading-[1.7] space-y-1">
-            {launchLogs.map((log, i) => (
+          <div data-native-log-list className="terminal-output px-4 py-3">
+            {launchLogs.map((log, index) => (
               <div
-                key={i}
-                className={cn(
-                  "truncate",
-                  log.level === "error"
-                    ? "text-red-400/90"
-                    : log.level === "success"
-                    ? isLight
-                      ? "text-[#1a1625]/65"
-                      : "text-white/65"
-                    : isLight
-                    ? "text-[#1a1625]/50"
-                    : "text-white/50"
-                )}
+                key={index}
+                className="terminal-log-line"
+                data-level={log.level}
               >
                 {log.msg}
               </div>
             ))}
           </div>
-        </div>
+        </TerminalWell>
       </div>
 
       {/* 底部按钮 */}

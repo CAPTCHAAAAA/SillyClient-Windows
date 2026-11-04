@@ -11,13 +11,15 @@ import type { InstanceConfig } from "../../capacitor-plugin";
 import { cn, formatDisplayVersion } from "../../lib/utils";
 import { coverPlate, coverTone } from "../instance/coverTone";
 import { LAYERS } from "../../constants/layers";
-import type { TavernInstance, ManageTab, BgMode, ThemeStyle } from "../../types";
+import type { TavernInstance, ManageTab, BgMode } from "../../types";
 import { useInstanceLogs } from "../../hooks/useInstanceLogs";
 import { instanceLogs } from "../../lib/log-store";
+import { MENU_GLASS_FILTER, menuShellBackground } from "../../lib/menu-surface";
+import { TerminalWell } from "../common/TerminalWell";
 import { CornerResizeCurve } from "./CornerResizeCurve";
+import { MANAGE_VISUAL_SCALE, useManagePanelLayout } from "./useManagePanelLayout";
+import "./ManageInstanceModal.css";
 
-const MANAGE_IMAGE_W = 1254;
-const MANAGE_IMAGE_H = 687;
 /** Figma 里「启动端口」的字号。固定 20px，不跟菜单 em 走。 */
 const MANAGE_LABEL_PX = 20;
 /**
@@ -26,11 +28,6 @@ const MANAGE_LABEL_PX = 20;
  */
 const MANAGE_TYPE_SCALE = 78 / 71;
 const MANAGE_FONT_PX = 16 * MANAGE_TYPE_SCALE;
-/** 示意图宽 1254。顶栏不再留弹性空隙，设置行中间空白随帧宽一起收掉。 */
-const MANAGE_FRAME_W = 940;
-const MANAGE_FRAME_H = MANAGE_IMAGE_H;
-/** 相对当前 CSS 帧的整帧显示比例。字号、间距、圆角一起走，不除 devicePixelRatio。 */
-const MANAGE_VISUAL_SCALE = 0.67;
 /** 长于 --motion-dissolve（780ms），让切实例时的离场层走完溶解。 */
 const MANAGE_FACE_EXIT_MS = 860;
 /** 布局用。设计像素按 Figma 帧 1:1 落到 CSS 像素，不跟字号一起放大。 */
@@ -53,28 +50,24 @@ function copyManageFaceValues(source: HTMLElement, clone: HTMLElement) {
     target.checked = (node as HTMLInputElement).checked;
   });
   clone.querySelectorAll<HTMLElement>("[id]").forEach((node) => node.removeAttribute("id"));
+  const scrollSelector = ".overflow-y-auto, [data-native-log-list]";
+  const scrollSources = source.querySelectorAll<HTMLElement>(scrollSelector);
+  const scrollClones = clone.querySelectorAll<HTMLElement>(scrollSelector);
+  scrollSources.forEach((node, index) => {
+    const target = scrollClones[index];
+    if (target) {
+      target.scrollTop = node.scrollTop;
+      target.scrollLeft = node.scrollLeft;
+    }
+  });
 }
 
 function manageRecessedGlass(isLight: boolean): React.CSSProperties {
   return {
-    background: isLight ? "rgba(26,22,37,0.045)" : "rgba(255,255,255,0.05)",
+    background: "var(--manage-field-fill)",
     boxShadow: isLight
-      ? "inset 0 1px 1.5px rgba(28,18,24,0.08), inset 0 -0.5px 0 rgba(255,255,255,0.7)"
-      : "inset 0 1px 1.5px rgba(0,0,0,0.22), inset 0 -0.5px 0 rgba(255,255,255,0.08)",
-  };
-}
-
-/**
- * 外圈已经是创建实例同款毛玻璃。嵌套区只罩一层更淡的白，
- * 比大卡片浅一档，不另换色，也不把 blur 盖成实色底板。
- */
-function manageReadingWell(isLight: boolean, isDynamic: boolean): React.CSSProperties {
-  return {
-    background: isLight
-      ? "rgba(255,255,255,0.46)"
-      : isDynamic
-        ? "rgba(255,255,255,0.12)"
-        : "rgba(255,255,255,0.10)",
+      ? "inset 0 1px 1.5px rgba(28,18,24,0.06)"
+      : "inset 0 1px 1.5px rgba(0,0,0,0.16)",
   };
 }
 
@@ -132,33 +125,14 @@ const MANAGE_PANE_RADIUS = 30;
 const MANAGE_NEST_INSET = 14;
 
 const MANAGE_VIEW_GUTTER = 32;
-/**
- * 竖版不再把 687×843 画板 zoom 进手机，也不拉成整屏长条。
- * 最大约 440×580，上下留出背景。字号仍是 1 倍，多出来的设置在卡片里滚。
- */
-const PORTRAIT_GUTTER = 14;
 const PORTRAIT_CTRL = 44;
 const PORTRAIT_CARD_W = 148;
 const PORTRAIT_CARD_ACTIVE_W = 168;
-const PORTRAIT_CARD_H = 120;
 const PORTRAIT_CARD_GAP = 12;
-const PORTRAIT_MAX_W = 440;
-const PORTRAIT_MAX_H = 580;
 
-/**
- * 设计帧高仍是 Figma「Movie workspace」的 687，宽从 1254 收到 MANAGE_FRAME_W。
- * 「启动端口」在未缩放的帧里是 20px。整帧再用 CSS zoom = MANAGE_VISUAL_SCALE 显示，
- * 大约是上一档 CSS 尺寸的 67%。比例不变。禁止再除 devicePixelRatio，也不要锁回物理像素。
- * 屏幕不够时只裁切，不把帧再缩小。
- *
- * 浏览器页面无法限制操作系统窗口的最小尺寸。
- * 构建桌面或移动宿主时必须把窗口最小值适配到 manageMenuMinWindowCss()，
- * 即设计帧乘以 MANAGE_VISUAL_SCALE 后再加上四周 MANAGE_VIEW_GUTTER。浏览器预览小于该尺寸时只裁切，不缩小。
- */
-/** 宿主窗口最小尺寸，单位 CSS 像素。按缩放后的显示尺寸计算，不乘 1/devicePixelRatio。 */
 export const manageMenuMinWindowCss = () => ({
-  width: Math.ceil(MANAGE_FRAME_W * MANAGE_VISUAL_SCALE) + MANAGE_VIEW_GUTTER * 2,
-  height: Math.ceil(MANAGE_FRAME_H * MANAGE_VISUAL_SCALE) + MANAGE_VIEW_GUTTER * 2,
+  width: 580 + MANAGE_VIEW_GUTTER * 2,
+  height: 300 + MANAGE_VIEW_GUTTER * 2,
 });
 
 export interface ManageInstanceModalProps {
@@ -168,15 +142,11 @@ export interface ManageInstanceModalProps {
   onClose: () => void;
   isLight: boolean;
   bgMode?: BgMode;
-  themeStyle?: ThemeStyle;
-  glassBg: string;
   isWindows: boolean;
   allInstances: TavernInstance[];
   onSelectInstance: (instance: TavernInstance) => void;
   onLaunchInstance: (instance: TavernInstance) => void;
   launchingId: string | null;
-  onTriggerRename: (instance: TavernInstance) => void;
-  onTriggerDelete: (instance: TavernInstance) => void;
   onPickCover: (instance: TavernInstance) => void;
   onOpenMaintenance?: (instance: TavernInstance) => void;
   onOpenRelocate?: (instance: TavernInstance) => void;
@@ -216,15 +186,15 @@ function ManageItem({
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className="manage-item">
       <div
-        className="setting-row flex items-center justify-between gap-6"
+        className="setting-row flex items-center justify-between gap-3"
         style={{
           minHeight: isPortrait ? 64 : 88,
           marginInline: isPortrait ? 16 : 28,
         }}
       >
-      <div className="min-w-0 flex-1 pr-4">
+      <div className="min-w-0 flex-1">
         <div
           className={cn(
             "setting-label font-medium leading-tight",
@@ -292,10 +262,12 @@ function manageTextFieldClass(isLight: boolean) {
 }
 
 function ManageToggle({
+  label,
   on,
   onChange,
   isLight,
 }: {
+  label: string;
   on: boolean;
   onChange: (value: boolean) => void;
   isLight: boolean;
@@ -304,6 +276,7 @@ function ManageToggle({
     <button
       type="button"
       role="switch"
+      aria-label={label}
       aria-checked={on}
       onClick={() => onChange(!on)}
       className="relative flex-shrink-0 rounded-full transition-colors duration-200"
@@ -356,21 +329,22 @@ function manageCapsuleButtonClass(isLight: boolean) {
   );
 }
 
-function managePanelFaceClass(active: boolean, portrait = false) {
+function managePanelFaceClass(active: boolean) {
   return cn(
     "motion-panel-face w-full",
-    portrait ? "absolute inset-0" : "h-full",
+    "h-full",
     active
       ? "is-active pointer-events-auto"
       : "pointer-events-none select-none",
-    !portrait && (active ? "relative" : "absolute inset-0"),
+    active ? "relative" : "absolute inset-0",
   );
 }
 
 function manageFaceScrollClassName(portrait: boolean) {
   return cn(
     "min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
-    portrait ? "absolute inset-0 pb-3" : "h-full",
+    "h-full",
+    portrait && "pb-3",
   );
 }
 
@@ -394,7 +368,16 @@ function ManageInstanceCard({
   return (
     <div
       data-manage-card={item.id}
+      role="button"
+      tabIndex={0}
+      aria-label={item.subtitle || item.name}
+      aria-pressed={selected}
       onClick={() => onSelect(item)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onSelect(item);
+      }}
       className={cn(
         "motion-instance-card group relative cursor-pointer select-none flex-shrink-0",
         !isPortrait && "w-full",
@@ -402,7 +385,7 @@ function ManageInstanceCard({
       )}
       style={{
         width: isPortrait ? (selected ? PORTRAIT_CARD_ACTIVE_W : PORTRAIT_CARD_W) : undefined,
-        height: isPortrait ? PORTRAIT_CARD_H : selected ? manageEm(196) : manageEm(152),
+        height: isPortrait ? "var(--manage-card-height)" : selected ? manageEm(196) : manageEm(152),
         borderRadius: isPortrait ? 18 : manageEm(22),
       }}
     >
@@ -427,10 +410,10 @@ function ManageInstanceCard({
         <div className="pointer-events-none absolute left-0 top-0 z-[2] flex items-center gap-1.5" style={{ padding: manageEm(14) }}>
           <span
             className={cn(
-              "rounded-md px-2 py-0.5 text-[10px] font-semibold tracking-wide",
+              "rounded-md px-2 py-0.5 text-[10px] font-medium tracking-wide",
               isLight
-                ? "bg-black/[0.06] text-[#1a1625]/60"
-                : "bg-white/10 text-white/72"
+                ? "bg-black/[0.035] text-[#1a1625]/60"
+                : "bg-white/[0.07] text-white/70"
             )}
           >
             {formatDisplayVersion(item.version)}
@@ -489,15 +472,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   onClose,
   isLight,
   bgMode = "dynamic",
-  themeStyle = "dark",
-  glassBg,
-  isWindows = false,
   allInstances,
   onSelectInstance,
   onLaunchInstance,
   launchingId,
-  onTriggerRename,
-  onTriggerDelete,
   onPickCover,
   onOpenMaintenance,
   onOpenRelocate,
@@ -521,8 +499,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
 }) => {
   const [manageTab, setManageTab] = useState<ManageTab>("launch");
   const [manageSearchQuery, setManageSearchQuery] = useState("");
-  const [manageFilter, setManageFilter] = useState<"all" | "local" | "remote">("all");
   const cardListRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const [cardListFade, setCardListFade] = useState({ top: false, bottom: false });
   const rightPaneRef = useRef<HTMLElement>(null);
   const outgoingHostRef = useRef<HTMLDivElement>(null);
@@ -540,6 +518,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
     typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches
   ));
   const isPortraitRef = useRef(isPortrait);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   isPortraitRef.current = isPortrait;
   const portraitScrollMode = useRef<ScrollBehavior>("auto");
   useEffect(() => {
@@ -568,7 +547,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
     const observer = new ResizeObserver(() => syncCardListFade());
     observer.observe(node);
     return () => observer.disconnect();
-  }, [isOpen, instance?.id, allInstances.length, manageSearchQuery, manageFilter, isPortrait]);
+  }, [isOpen, instance?.id, allInstances.length, manageSearchQuery, isPortrait]);
   const syncRightFade = (event?: React.UIEvent<HTMLDivElement>) => {
     const node = event?.currentTarget ?? rightScrollRef.current;
     if (!node) return;
@@ -641,46 +620,16 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   const [terminalInput, setTerminalInput] = useState("");
   const [localAboutInfo, setLocalAboutInfo] = useState<{ path?: string; sizeBytes?: number; version?: string; status?: string; createdAt?: string } | null>(null);
 
-  // 缩放状态与终端浮窗保持一致：默认就是当前设计帧尺寸，拖动只改宽高
-  const [manageBox, setManageBox] = useState<{ w: number; h: number } | null>(null);
-  const [isResizingManage, setIsResizingManage] = useState(false);
-  const resizeCleanupRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => resizeCleanupRef.current?.(), []);
-
-  const onManageResizePointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0 && event.pointerType === "mouse") return;
-    event.preventDefault();
-    event.stopPropagation();
-    resizeCleanupRef.current?.();
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startW = manageBox?.w ?? MANAGE_FRAME_W * MANAGE_VISUAL_SCALE;
-    const startH = manageBox?.h ?? MANAGE_FRAME_H * MANAGE_VISUAL_SCALE;
-
-    setIsResizingManage(true);
-
-    const onMove = (moveEvent: PointerEvent) => {
-      const maxW = window.innerWidth - MANAGE_VIEW_GUTTER * 2;
-      const maxH = window.innerHeight - MANAGE_VIEW_GUTTER * 2;
-      setManageBox({
-        w: Math.round(Math.min(maxW, Math.max(MANAGE_FRAME_W * 0.5, startW + (moveEvent.clientX - startX)))),
-        h: Math.round(Math.min(maxH, Math.max(MANAGE_FRAME_H * 0.5, startH + (moveEvent.clientY - startY)))),
-      });
-    };
-    const onUp = () => {
-      setIsResizingManage(false);
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      resizeCleanupRef.current = null;
-    };
-
-    resizeCleanupRef.current = onUp;
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  };
+  const { windowRef, width: shellW, height: shellH, isResizing, onResizePointerDown } = useManagePanelLayout({
+    visible: Boolean(instance) && (isOpen || isClosing),
+    ready: settingsFaceReady,
+    isPortrait,
+    isLocal: instance?.type === "local",
+    tab: manageTab,
+    instanceId: instance?.id,
+    surfaceRef,
+    paneRef: rightPaneRef,
+  });
 
   // 访问密码保护状态
   const [hasPassword, setHasPassword] = useState(Boolean(instance?.hasPassword));
@@ -702,9 +651,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
     setPasswordError(null);
     setPasswordSuccess(null);
   }, [instance?.id, instance?.hasPassword]);
-
-  const [importStatus, setImportStatus] = useState<string | null>(null);
-  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalAboutInfo(null);
@@ -737,17 +683,14 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   const setTerminalLogs = (value: { msg: string; level?: string }[] | ((previous: { msg: string; level?: string }[]) => { msg: string; level?: string }[])) => {
     if (logKey) instanceLogs.update(logKey, value);
   };
-  const filteredManageInstances = allInstances.filter((inst) => {
-    if (manageFilter === "local" && inst.type !== "local") return false;
-    if (manageFilter === "remote" && inst.type !== "remote") return false;
-    if (!manageSearchQuery.trim()) return true;
-    const query = manageSearchQuery.trim().toLowerCase();
-    return (
-      inst.name.toLowerCase().includes(query) ||
-      (inst.subtitle || "").toLowerCase().includes(query) ||
-      (inst.url || "").toLowerCase().includes(query)
-    );
-  });
+  const manageQuery = manageSearchQuery.trim().toLowerCase();
+  const filteredManageInstances = manageQuery
+    ? allInstances.filter((inst) => (
+        inst.name.toLowerCase().includes(manageQuery) ||
+        (inst.subtitle || "").toLowerCase().includes(manageQuery) ||
+        (inst.url || "").toLowerCase().includes(manageQuery)
+      ))
+    : allInstances;
   filteredIdsRef.current = filteredManageInstances.map((inst) => inst.id);
   useLayoutEffect(() => {
     if (!isOpen || !isPortrait) return;
@@ -759,11 +702,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
   if (!instance || (!isOpen && !isClosing)) return null;
 
   const mp = instance;
-  const rawPath =
+  const effectiveInstancePath =
     mp.type === "local"
       ? (aboutInfo?.path || localAboutInfo?.path || mp.installPath || (mp.installDir && (mp.installDir.includes("/") || mp.installDir.includes("\\")) ? mp.installDir : null) || "—")
       : (mp.url || "—");
-  const effectiveInstancePath = !isWindows && rawPath !== "—" ? rawPath.replace(/^\/storage\/emulated\/0/, "内部存储") : rawPath;
 
   const selectManagedInstance = (item: TavernInstance) => {
     if (item.id === mp.id) return;
@@ -773,10 +715,12 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
     if (active && host) {
       host.replaceChildren();
       const clone = active.cloneNode(true) as HTMLElement;
-      copyManageFaceValues(active, clone);
       clone.classList.add("manage-settings-outgoing");
       clone.style.pointerEvents = "none";
+      clone.inert = true;
+      clone.setAttribute("aria-hidden", "true");
       host.appendChild(clone);
+      copyManageFaceValues(active, clone);
       pendingOutgoingRef.current = clone;
     }
     setSettingsFaceEpoch((value) => value + 1);
@@ -797,22 +741,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
       : `linear-gradient(to bottom, ${cardListFade.top ? "transparent" : "#000"} 0, #000 ${manageEm(36)}, #000 calc(100% - ${manageEm(36)}), ${cardListFade.bottom ? "transparent" : "#000"} 100%)`
     : undefined;
 
-  // 外层壳按显示后的 CSS 像素定尺寸，内层仍是设计帧尺寸，靠 zoom 缩到对应大小
-  const shellW = manageBox && !isPortrait
-    ? manageBox.w
-    : MANAGE_FRAME_W * MANAGE_VISUAL_SCALE;
-  const shellH = manageBox && !isPortrait
-    ? manageBox.h
-    : MANAGE_FRAME_H * MANAGE_VISUAL_SCALE;
-  const manageShellStyle: React.CSSProperties = isPortrait
-    ? {
-        width: `min(${PORTRAIT_MAX_W}px, calc(100vw - ${PORTRAIT_GUTTER * 2}px))`,
-        height: `min(${PORTRAIT_MAX_H}px, calc(100dvh - 88px))`,
-      }
-    : {
-        width: shellW,
-        height: shellH,
-      };
+  const manageShellStyle: React.CSSProperties = { width: shellW, height: shellH };
 
   return (
     <div
@@ -829,10 +758,12 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
       }}
     >
     <div
-      className="relative flex flex-shrink-0"
+      ref={windowRef}
+      className={cn("manage-window relative flex flex-shrink-0", isResizing && "is-resizing")}
       style={{ ...manageShellStyle, pointerEvents: "auto" }}
     >
     <div
+      ref={surfaceRef}
       className={cn(
         "ios-task-surface manage-panel-surface relative flex h-full w-full flex-col overflow-hidden",
         isLight && "is-light",
@@ -841,22 +772,17 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
       style={{
         fontSize: MANAGE_FONT_PX,
         zoom: isPortrait ? 1 : MANAGE_VISUAL_SCALE,
-        // 内层是未缩放的设计帧，尺寸按外壳除以 zoom 还原
         width: isPortrait ? "100%" : shellW / MANAGE_VISUAL_SCALE,
-        height: isPortrait ? "100%" : shellH / MANAGE_VISUAL_SCALE,
+        height: "100%",
         borderRadius: isPortrait ? 32 : manageEm(49),
         padding: isPortrait ? "14px 14px 12px" : `${manageEm(27)} ${manageEm(27)} ${manageEm(23)}`,
-        background: isLight
-          ? "rgba(255,255,255,0.70)"
-          : isDynamic
-            ? "rgba(28,20,32,0.70)"
-            : "rgba(26,22,37,0.80)",
-        backdropFilter: "blur(40px) saturate(1.8)",
-        WebkitBackdropFilter: "blur(40px) saturate(1.8)",
+        background: menuShellBackground(isLight, isDynamic),
+        backdropFilter: MENU_GLASS_FILTER,
+        WebkitBackdropFilter: MENU_GLASS_FILTER,
       }}
     >
       {/* 顶部统一控制栏 (Movie navigation: 1200px × 49px, 下间距 28px) */}
-      <div className="relative flex items-center w-full flex-shrink-0 select-none" style={{ height: isPortrait ? PORTRAIT_CTRL : manageEm(49), marginBottom: isPortrait ? 10 : manageEm(22), gap: isPortrait ? 10 : undefined }}>
+      <div className="manage-header relative flex items-center w-full flex-shrink-0 select-none" style={{ height: isPortrait ? PORTRAIT_CTRL : manageEm(49), marginBottom: isPortrait ? 10 : manageEm(22), gap: isPortrait ? 10 : undefined }}>
         {/* 左上角搜索栏。竖版跟关闭键并排，不再绝对定位盖住翻页键。 */}
         <div
           className={cn(
@@ -880,6 +806,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
           />
           <input
             type="search"
+            aria-label="搜索管理实例"
             value={manageSearchQuery}
             onChange={(e) => setManageSearchQuery(e.target.value)}
             placeholder="搜索实例..."
@@ -899,7 +826,9 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
               <div className="motion-slot-face">
                 <button
                   type="button"
-                                    onClick={() => setManageSearchQuery("")}
+                  aria-label="清空实例搜索"
+                  disabled={!manageSearchQuery}
+                  onClick={() => setManageSearchQuery("")}
                   className={cn(
                     "motion-control rounded-full p-1",
                     isLight ? "text-[#1a1625]/40 hover:text-[#1a1625]/85" : "text-white/40 hover:text-white/85"
@@ -943,23 +872,22 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
       </div>
 
       {/* 主体两列分屏 (Movie content: 1200px × 560px, 列间距 28px) */}
-      <div className={cn("flex w-full min-h-0 flex-1", isPortrait && "flex-col")} style={{ gap: isPortrait ? 10 : manageEm(18) }}>
+      <div className={cn("manage-body flex w-full min-h-0 flex-1", isPortrait && "flex-col")} style={{ gap: isPortrait ? 10 : manageEm(18) }}>
         {/* 左侧实例边栏。竖版改成横向卡片带，材质不变。 */}
         <aside
-          className={cn("relative flex-shrink-0 flex flex-col min-h-0 overflow-hidden", isPortrait && "w-full")}
+          className={cn("manage-well relative flex-shrink-0 flex flex-col min-h-0 overflow-hidden", isPortrait && "w-full")}
           style={{
             width: isPortrait ? "100%" : manageEm(280),
             height: isPortrait ? "auto" : "100%",
             borderRadius: isPortrait ? 22 : manageEm(30),
             padding: isPortrait ? "8px" : `${manageEm(22)} ${manageEm(22)}`,
-            ...manageReadingWell(isLight, isDynamic),
           }}
         >
           {/* 卡片容器：滚到边缘时渐隐，避免最后一张被栏体硬切 */}
           <div
             className={cn("min-h-0 min-w-0 overflow-hidden", isPortrait ? "w-full" : "flex-1")}
             style={{
-              height: isPortrait ? PORTRAIT_CARD_H : undefined,
+              height: isPortrait ? "var(--manage-card-height)" : undefined,
               WebkitMaskImage: cardListMask,
               maskImage: cardListMask,
             }}
@@ -1010,28 +938,26 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
         <section
           ref={rightPaneRef}
           className={cn(
-            "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+            "manage-well relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
             isLight ? "text-[#1a1625]" : "text-white/88"
           )}
           style={{
             height: isPortrait ? undefined : "100%",
             borderRadius: isPortrait ? 22 : manageEm(MANAGE_PANE_RADIUS),
-            ...manageReadingWell(isLight, isDynamic),
           }}
         >
             <div className="motion-panel-stack min-h-0 w-full flex-1 overflow-hidden">
               {/* 启动与配置 */}
               <div
-                className={cn(managePanelFaceClass(manageTab === "launch" && settingsFaceReady, isPortrait), "flex flex-col")}
-                aria-hidden={manageTab !== "launch"}
-                inert={manageTab !== "launch"}
+                className={cn(managePanelFaceClass(manageTab === "launch" && settingsFaceReady), "flex flex-col")}
+                aria-hidden={manageTab !== "launch" || !settingsFaceReady}
+                inert={manageTab !== "launch" || !settingsFaceReady}
               >
                 <div
                   ref={launchFaceRef}
                   onScroll={syncRightFade}
                   className={cn(
                     "min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden",
-                    isPortrait ? "absolute inset-x-0 top-0" : "h-full",
                   )}
                   style={{
                     WebkitMaskImage: rightFaceMask,
@@ -1039,14 +965,13 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     flex: "1 1 auto",
                     height: "auto",
                     minHeight: 0,
-                    bottom: isPortrait ? 68 : undefined,
                     display: "flex",
                     flexDirection: "column",
                     justifyContent: "safe center",
                     paddingBlock: isPortrait ? 8 : manageEm(8),
                   }}
                 >
-                <>
+                <div className="manage-content">
                   {mp.type === "local" ? (
                     <>
                       <ManageItem
@@ -1058,6 +983,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                           type="text"
                           inputMode="numeric"
                           pattern="[0-9]*"
+                          aria-label="启动端口"
                           value={draftPort}
                           onChange={(e) => {
                             setDraftPort(parseInt(e.target.value) || 8000);
@@ -1068,10 +994,11 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       </ManageItem>
                       <ManageItem
                         label="允许外部监听"
-                        desc="Android 宿主默认建议关闭，只在明确需要局域网访问时开启"
+                        desc="仅在需要局域网访问时开启"
                         isLight={isLight} isPortrait={isPortrait}
                       >
                         <ManageToggle
+                          label="允许外部监听"
                           on={draftConfig.listen}
                           onChange={(v) =>
                             setDraftConfig((prev) => ({ ...prev, listen: v }))
@@ -1085,6 +1012,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         isLight={isLight} isPortrait={isPortrait}
                       >
                         <ManageToggle
+                          label="启用 IPv4"
                           on={draftConfig.ipv4}
                           onChange={(v) =>
                             setDraftConfig((prev) => ({ ...prev, ipv4: v }))
@@ -1098,6 +1026,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         isLight={isLight} isPortrait={isPortrait}
                       >
                         <ManageToggle
+                          label="启用 IPv6"
                           on={draftConfig.ipv6}
                           onChange={(v) =>
                             setDraftConfig((prev) => ({ ...prev, ipv6: v }))
@@ -1111,6 +1040,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         isLight={isLight} isPortrait={isPortrait}
                       >
                         <ManageToggle
+                          label="优先使用 IPv6 DNS"
                           on={draftConfig.dnsIpv6}
                           onChange={(v) =>
                             setDraftConfig((prev) => ({ ...prev, dnsIpv6: v }))
@@ -1127,6 +1057,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                           type="text"
                           inputMode="numeric"
                           pattern="[0-9]*"
+                          aria-label="心跳写入间隔"
                           value={draftConfig.heartbeat}
                           onChange={(e) => {
                             const heartbeat = parseInt(e.target.value) || 0;
@@ -1142,6 +1073,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         isLight={isLight} isPortrait={isPortrait}
                       >
                         <ManageToggle
+                          label="启用 HTTP Keep-Alive"
                           on={draftConfig.keepAlive}
                           onChange={(v) =>
                             setDraftConfig((prev) => ({ ...prev, keepAlive: v }))
@@ -1158,6 +1090,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         isLight={isLight} isPortrait={isPortrait}
                       >
                         <ManageToggle
+                          label="Basic Auth"
                           on={draftRemoteAuthEnabled}
                           onChange={setDraftRemoteAuthEnabled}
                           isLight={isLight}
@@ -1245,6 +1178,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                         </button>
                       )}
                       <ManageToggle
+                        label="访问密码保护"
                         on={hasPassword || isConfiguringPassword}
                         onChange={(checked) => {
                           if (checked) {
@@ -1426,8 +1360,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                                   ? "manage-flat text-red-900/70 hover:text-red-900"
                                   : "manage-flat text-red-200/80 hover:text-red-100"
                                 : isLight
-                                  ? "bg-black text-white/80 hover:text-white"
-                                  : "bg-white text-[#1a1625]/80 hover:text-[#1a1625]"
+                                  ? "manage-flat text-[#1a1625]/75 hover:text-[#1a1625]"
+                                  : "manage-flat text-white/80 hover:text-white"
                             )}
                           >
                             {passwordSaving
@@ -1442,7 +1376,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       </div>
                     </div>
                   </div>
-                </>
                 {manageSaveError && (
                   <p
                     className={cn(
@@ -1455,10 +1388,10 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   </p>
                 )}
                 </div>
+                </div>
                 <div
                   className={cn(
-                    "z-[1] flex flex-shrink-0 items-center justify-end",
-                    isPortrait && "absolute inset-x-0 bottom-0",
+                    "manage-actions z-[1] flex flex-shrink-0 items-center justify-end",
                   )}
                   style={{
                     gap: isPortrait ? 12 : manageEm(14),
@@ -1489,8 +1422,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       onLaunchInstance(mp);
                     }}
                     className={cn(
-                      "motion-control flex flex-shrink-0 items-center justify-center rounded-full border-0 font-semibold whitespace-nowrap disabled:pointer-events-none disabled:opacity-50",
-                      isLight ? "bg-black/[0.07] text-[#1a1625]/60 hover:text-[#1a1625]" : "bg-white/15 text-white/60 hover:text-white"
+                      "manage-flat motion-control flex flex-shrink-0 items-center justify-center rounded-full border-0 font-semibold whitespace-nowrap disabled:pointer-events-none disabled:opacity-50",
+                      isLight ? "text-[#1a1625]/70 hover:text-[#1a1625]" : "text-white/75 hover:text-white"
                     )}
                     style={{
                       height: isPortrait ? 44 : manageEm(49),
@@ -1507,9 +1440,9 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
 
               {/* 存储 */}
               <div
-                className={managePanelFaceClass(manageTab === "storage" && settingsFaceReady, isPortrait)}
-                aria-hidden={manageTab !== "storage"}
-                inert={manageTab !== "storage"}
+                className={managePanelFaceClass(manageTab === "storage" && settingsFaceReady)}
+                aria-hidden={manageTab !== "storage" || !settingsFaceReady}
+                inert={manageTab !== "storage" || !settingsFaceReady}
               >
                 <div
                   ref={storageFaceRef}
@@ -1520,6 +1453,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     maskImage: rightFaceMask,
                   }}
                 >
+                <div className="manage-content">
                 <ManageItem
                   label={mp.type === "local" ? "实例位置" : "连接地址"}
                   isLight={isLight} isPortrait={isPortrait}
@@ -1566,46 +1500,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       </button>
                     </ManageItem>
                   )}
-                  {mp.type === "local" && (
-                    <ManageItem
-                      label="导入数据（ZIP）"
-                      desc={importStatus || "从旧酒馆备份导入聊天、角色与扩展（不导入依赖与程序文件，不含 secrets.json）"}
-                      isLight={isLight} isPortrait={isPortrait}
-                    >
-                      <button
-                        type="button"
-                        disabled={importStatus === "正在导入…"}
-                        onClick={async () => {
-                          try {
-                            setImportStatus(null);
-                            const picked = await TarvenEnv.pickZipFile();
-                            if (!picked?.path) return;
-                            const summary = await TarvenEnv.inspectImportArchive({ archivePath: picked.path });
-                            if (!summary.importable) {
-                              setImportStatus("该压缩包里没有可导入的实例数据（需要 data/ 或第三方扩展）");
-                              return;
-                            }
-                            setImportStatus(
-                              `正在导入…（${summary.importEntries} 项 / ${(summary.importBytes / 1048576).toFixed(1)} MB，忽略 ${summary.skippedEntries} 项依赖与程序文件）`
-                            );
-                            const res = await TarvenEnv.importInstanceData({
-                              instanceId: mp.installDir || mp.id,
-                              installPath: mp.installPath,
-                              archivePath: picked.path,
-                              includeOptional: false,
-                            });
-                            setImportStatus(`已导入 ${res.imported} 项（忽略 ${res.skipped} 项依赖与程序文件）`);
-                          } catch (error) {
-                            setImportStatus(error instanceof Error ? error.message : "导入失败，请重试");
-                          }
-                        }}
-                        className={manageCapsuleButtonClass(isLight)}
-                        style={{ fontSize: 16 }}
-                      >
-                        导入数据
-                      </button>
-                    </ManageItem>
-                  )}
                   {mp.type === "local" && onOpenMaintenance && (
                     <ManageItem label="实例维护" isLight={isLight} isPortrait={isPortrait}>
                       <button
@@ -1618,23 +1512,6 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       </button>
                     </ManageItem>
                   )}
-                  <ManageItem
-                    label="实例重命名"
-                    desc="修改实例的显示名称"
-                    isLight={isLight} isPortrait={isPortrait}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onClose();
-                        onTriggerRename(mp);
-                      }}
-                      className={manageCapsuleButtonClass(isLight)}
-                      style={{ fontSize: 16 }}
-                    >
-                      重命名
-                    </button>
-                  </ManageItem>
                   {mp.type === "local" && (
                     <ManageItem
                       label="导出实例（ZIP）"
@@ -1669,34 +1546,28 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     </ManageItem>
                   )}
                 </div>
+                </div>
               </div>
 
               {/* 终端 */}
               <div
                 ref={terminalFaceRef}
-                className={managePanelFaceClass(manageTab === "terminal" && settingsFaceReady, isPortrait)}
+                className={managePanelFaceClass(manageTab === "terminal" && settingsFaceReady)}
                 style={{
                   boxSizing: "border-box",
                   padding: manageEm(MANAGE_NEST_INSET),
                 }}
-                aria-hidden={manageTab !== "terminal"}
-                inert={manageTab !== "terminal"}
+                aria-hidden={manageTab !== "terminal" || !settingsFaceReady}
+                inert={manageTab !== "terminal" || !settingsFaceReady}
               >
-                <div
-                  className="flex h-full min-h-0 flex-col overflow-hidden text-white/78"
-                  style={{
-                    borderRadius: manageEm(MANAGE_PANE_RADIUS - MANAGE_NEST_INSET),
-                    background: isLight
-                      ? "rgba(22,18,28,0.90)"
-                      : isDynamic
-                        ? "oklch(0.18 0.014 350 / 0.84)"
-                        : "oklch(0.17 0.008 260 / 0.84)",
-                    boxShadow: "inset 0 1px 1.5px rgba(0,0,0,0.35), inset 0 -0.5px 0 rgba(255,255,255,0.05)",
-                  }}
+                <TerminalWell
+                  isLight={isLight}
+                  isDynamic={isDynamic}
+                  className="flex h-full min-h-0 flex-col overflow-hidden"
                 >
                   {mp.type === "remote" ? (
                     <div
-                      className="flex flex-1 items-center justify-center px-6 text-center text-white/55"
+                      className="flex flex-1 items-center justify-center px-6 text-center text-[var(--terminal-text-label)]"
                       style={{ fontSize: manageFont(14) }}
                     >
                       远程实例不支持本地终端
@@ -1708,7 +1579,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       style={{ height: manageEm(44), paddingInline: manageEm(18) }}
                     >
                       <span
-                        className="font-medium text-white/55"
+                        className="min-w-0 truncate font-medium text-[var(--terminal-text-label)]"
                         style={{ fontSize: manageFont(13) }}
                       >
                         {mp.subtitle || mp.name} · 实例终端
@@ -1716,8 +1587,9 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setTerminalLogs([])}
-                        className="motion-control p-1.5 text-white/40 hover:text-white/85"
+                        className="terminal-tool motion-control ml-2 flex-shrink-0 rounded-full p-1.5 text-[var(--terminal-tool-color)] hover:text-[var(--terminal-tool-hover-color)]"
                         title="清空终端"
+                        aria-label="清空实例终端"
                       >
                         <Eraser className="h-3.5 w-3.5" />
                       </button>
@@ -1733,26 +1605,20 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                       ref={terminalLogRef}
                       onScroll={syncRightFade}
                       data-native-log-list
-                      className="h-full overflow-y-auto leading-relaxed [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
-                      style={{ padding: `${manageEm(4)} ${manageEm(18)} ${manageEm(16)}`, fontSize: manageFont(13) }}
+                      className="terminal-output h-full overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+                      style={{ padding: `${manageEm(4)} ${manageEm(18)} ${manageEm(16)}`, fontSize: isPortrait ? 12 : manageFont(15) }}
                     >
                       {terminalLogs.map((log, index) => (
                         <div
                           key={index}
-                          className={cn(
-                            "mb-0.5 whitespace-pre-wrap break-all",
-                            log.level === "error"
-                              ? "text-red-300/90"
-                              : log.level === "success"
-                              ? "text-white/88"
-                              : "text-white/72"
-                          )}
+                          className="terminal-log-line"
+                          data-level={log.level}
                         >
                           {log.msg}
                         </div>
                       ))}
-                      <div className="mt-1 flex gap-2">
-                        <span className="select-none text-white/45">
+                      <div className="terminal-command-row">
+                        <span className="terminal-prompt" title={terminalDisplayPrompt}>
                           {terminalDisplayPrompt}
                         </span>
                         <input
@@ -1787,10 +1653,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                             });
                             setTerminalInput("");
                           }}
-                          className={cn(
-                            "min-w-0 flex-1 border-none bg-transparent outline-none",
-                            "text-white/82 placeholder:text-white/28"
-                          )}
+                          className="terminal-command-input"
+                          aria-label="实例终端命令"
                           placeholder={terminalPlaceholder}
                           autoCapitalize="none"
                           autoCorrect="off"
@@ -1801,14 +1665,14 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     </div>
                     </>
                   )}
-                </div>
+                </TerminalWell>
               </div>
 
               {/* 关于 */}
               <div
-                className={managePanelFaceClass(manageTab === "about" && settingsFaceReady, isPortrait)}
-                aria-hidden={manageTab !== "about"}
-                inert={manageTab !== "about"}
+                className={managePanelFaceClass(manageTab === "about" && settingsFaceReady)}
+                aria-hidden={manageTab !== "about" || !settingsFaceReady}
+                inert={manageTab !== "about" || !settingsFaceReady}
               >
                 <div
                   ref={aboutFaceRef}
@@ -1819,6 +1683,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                     maskImage: rightFaceMask,
                   }}
                 >
+                <div className="manage-content">
                 <ManageItem label="实例名称" isLight={isLight} isPortrait={isPortrait}>
                   <ManageSettingValue isLight={isLight}>{mp.subtitle || mp.name}</ManageSettingValue>
                 </ManageItem>
@@ -1859,6 +1724,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                   </ManageItem>
                 )}
                 </div>
+                </div>
               </div>
             <div ref={outgoingHostRef} className="pointer-events-none absolute inset-0 z-[2]" />
             </div>
@@ -1870,8 +1736,8 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
         <CornerResizeCurve
           isLight={isLight}
           label="拖动缩放管理菜单"
-          active={isResizingManage}
-          onPointerDown={onManageResizePointerDown}
+          active={isResizing}
+          onPointerDown={onResizePointerDown}
         />
       )}
     </div>

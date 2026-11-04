@@ -1,6 +1,6 @@
 {
   "name": "sillyclient-windows",
-  "version": "1.13.2",
+  "version": "1.14.0",
   "description": "SillyClient for Windows",
   "main": "dist/main.js",
   "scripts": {
