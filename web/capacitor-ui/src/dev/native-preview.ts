@@ -192,7 +192,7 @@ export const nativePreview: TarvenEnvPlugin = {
     record("inspectImportArchive", options);
     return { importEntries: 10, importBytes: 2048, skippedEntries: 0, skippedBytes: 0, hasSecrets: false, hasConfig: true, importable: true };
   },
-  async importInstanceData(options: { instanceId: string; archivePath: string }) {
+  async importInstanceData(options: { instanceId: string; installPath?: string; archivePath: string; includeOptional?: boolean; operationId?: string }) {
     record("importInstanceData", options);
     return { imported: 10, bytes: 2048, skipped: 0 };
   },

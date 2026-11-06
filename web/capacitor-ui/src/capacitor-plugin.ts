@@ -32,8 +32,10 @@ export const DEFAULT_CONFIG: InstanceConfig = {
 /** GitHub release 条目(来自 SillyTavern/SillyTavern releases)。 */
 export interface GithubRelease {
   tag: string
+  name?: string
   zipballUrl: string
   prerelease: boolean
+  isBranch?: boolean
 }
 
 /** SillyClient 应用自身的更新检查结果。 */
@@ -152,8 +154,15 @@ export interface TarvenEnvPlugin {
   provisionAndStart(options: {
     port: number
     instanceId: string
+    /** 初始目录显示名；既有实例标识与路径保持不变。 */
+    instanceName?: string
     operationId?: string
     version: string
+    /**
+     * 创建意图仅创建向导声明为 true，且安装源只允许在创建时携带。
+     * 启动既有实例绝不携带——后端据此在实例目录丢失/损坏时拒绝静默全新安装顶替用户数据。
+     */
+    createIntent?: boolean
     zipballUrl?: string
     localZipPath?: string
     /** Complete native installation path; unsupported locations fail without fallback. */
@@ -232,6 +241,28 @@ export interface TarvenEnvPlugin {
   /** Windows: 获取和保存酒馆内容的全局打开方式。 */
   getContentOpenMode(): Promise<{ mode: ContentOpenMode }>
   setContentOpenMode(options: { mode: ContentOpenMode }): Promise<{ mode: ContentOpenMode }>
+
+  /** 只读预检：压缩包里有多少用户数据会被导入、多少依赖/程序文件会被忽略。 */
+  inspectImportArchive(options: { archivePath: string }): Promise<{
+    importEntries: number
+    importBytes: number
+    skippedEntries: number
+    skippedBytes: number
+    hasSecrets: boolean
+    hasConfig: boolean
+    importable: boolean
+  }>
+
+  /** 把压缩包里的用户数据无损导入到已有实例：只覆盖用户数据，依赖与程序文件永不写入。 */
+  importInstanceData(options: {
+    installPath?: string
+    archivePath: string
+    includeOptional?: boolean
+    operationId?: string
+  }): Promise<{ imported: number; bytes: number; skipped: number }>
+
+  /** 导出实例为 ZIP（支持弹窗选择保存位置），返回保存路径与字节数。若用户取消则 cancelled: true。 */
+  exportInstance(options: { instanceId: string; installPath?: string; targetZipPath?: string }): Promise<{ path: string; bytes: number; cancelled?: boolean }>
 
   /** 将远程实例的 Basic Auth 凭据写入平台安全存储。password 省略时保留现有密码。 */
   setRemoteBasicAuth(options: {
@@ -343,29 +374,6 @@ export interface TarvenEnvPlugin {
     oldPath: string
     newPath: string
   }>
-
-  /** 只读预检：压缩包里有多少用户数据会被导入、多少依赖/程序文件会被忽略。 */
-  inspectImportArchive(options: { archivePath: string }): Promise<{
-    importEntries: number
-    importBytes: number
-    skippedEntries: number
-    skippedBytes: number
-    hasSecrets: boolean
-    hasConfig: boolean
-    importable: boolean
-  }>
-
-  /** 把压缩包里的用户数据无损导入到已有实例：只覆盖用户数据，依赖与程序文件永不写入。 */
-  importInstanceData(options: {
-    instanceId: string
-    installPath?: string
-    archivePath: string
-    includeOptional?: boolean
-    operationId?: string
-  }): Promise<{ imported: number; bytes: number; skipped: number }>
-
-  /** 导出实例为 ZIP（支持弹窗选择保存位置），返回保存路径与字节数。若用户取消则 canceled 为 true。 */
-  exportInstance(options: { instanceId: string; installPath?: string; targetZipPath?: string }): Promise<{ path: string; bytes: number; canceled?: boolean }>
 
   /** 设置或更新实例访问密码（本地安全开关） */
   setInstancePassword(options: {

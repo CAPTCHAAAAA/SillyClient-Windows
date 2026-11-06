@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import {
   Menu,
   ChevronDown,
@@ -14,13 +14,14 @@ import { Capacitor } from "@capacitor/core";
 import { TarvenEnv, DEFAULT_CONFIG, normalizeRenderEngineSettings } from "@/capacitor-plugin";
 import { openExternalUrl } from "@/lib/external-links";
 import type { AppUpdateInfo, CompanionPresetSelection, ContentOpenMode, InstanceConfig, InstallPathMode, GithubRelease, GarbageItem, TarvenEvent, PreinstalledExtensionId, RenderEngineSettings } from "@/capacitor-plugin";
-import { buildInstanceSubfolder, cleanInstallPath, installationSelection, sanitizeFolderName } from "@/lib/install-location";
+import { buildInstanceSubfolder, cleanInstallPath, installationSelection, instanceParentPath, sanitizeFolderName } from "@/lib/install-location";
+import { humanizeNativeError } from "@/lib/native-errors";
+import { selectTavernRelease } from "@/lib/tavern-release";
 import { normalizeStoredInstances, serializeInstanceRecords, parseInstanceBackup, type StoredInstance } from "@/lib/instance-persistence";
 import { GLOBAL_LOG_KEY, instanceLogs, type LogLine } from "@/lib/log-store";
 import { OperationCoordinator, OperationCancelledError, type OperationContext } from "@/lib/operation-coordinator";
 import { APP_VERSION } from "@/constants/app-version";
 import { fetchAppUpdate } from "@/lib/app-update";
-import OnboardingGuide from "@/components/onboarding/OnboardingGuide";
 import { LegacyMigrationModal, type LegacyMigrationItem } from "@/components/modals/LegacyMigrationModal";
 import { RelocateInstanceModal } from "@/components/modals/RelocateInstanceModal";
 import { LAYERS } from "@/constants/layers";
@@ -28,6 +29,7 @@ import { useLayerStack } from "@/hooks/useLayerStack";
 import { useBackgroundMode } from "@/hooks/useBackgroundMode";
 import { LayerBackdrop } from "@/components/common/LayerBackdrop";
 import { InstanceCarousel, type InstanceCarouselRef } from "@/components/instance/InstanceCarousel";
+import type { InstanceRenameState } from "@/components/instance/InstanceRenameField";
 import { NewInstanceWizardModal } from "@/components/modals/NewInstanceWizardModal";
 import { ManageInstanceModal } from "@/components/modals/ManageInstanceModal";
 import { InstanceMaintenancePanel } from "@/components/modals/InstanceMaintenancePanel";
@@ -36,12 +38,13 @@ import { AppSettingsDrawer } from "@/components/modals/AppSettingsDrawer";
 import { TerminalModal } from "@/components/modals/TerminalModal";
 import { CleanGarbageModal } from "@/components/modals/CleanGarbageModal";
 import { DeleteConfirmDialog } from "@/components/modals/DeleteConfirmDialog";
-import { RenameModal } from "@/components/modals/RenameModal";
 import { VersionDropdownMenu } from "@/components/modals/VersionDropdownMenu";
 import { CardActionMenu } from "@/components/modals/CardActionMenu";
 import { LaunchConsoleModal } from "@/components/modals/LaunchConsoleModal";
 import { UnlockInstanceModal } from "@/components/modals/UnlockInstanceModal";
 import type { TavernInstance, OperationPurpose } from "@/types";
+
+const OnboardingGuide = lazy(() => import("@/components/onboarding/OnboardingGuide"));
 
 export const Route = createFileRoute("/")({
   component: SillyClientLauncher,
@@ -55,11 +58,25 @@ const INSTANCES_VERSION_KEY = "sillyclient.instances.version";
 const ONBOARDING_KEY = "sillyclient.onboarding.version";
 const ONBOARDING_VERSION = "3";
 const LEGACY_MIGRATION_KEY = "sillyclient.legacy_migration.version";
+const CREATE_CARD_SLOT_KEY = "sillyclient.createCardSlot";
 const CURRENT_VERSION = 2;
 const BACKGROUND_PANEL_EXIT_MS = 300;
 const PANEL_EXIT_MS = 300;
 const POPOVER_EXIT_MS = 300;
 const MANAGE_PANEL_OPEN_GAP_MS = 32;
+
+function loadCreateCardSlot(maxSlot: number) {
+  try {
+    if (localStorage.getItem("sillyclient.createCardPinned") !== "false") return 0;
+    const raw = localStorage.getItem(CREATE_CARD_SLOT_KEY);
+    if (raw === null) return 0;
+    const slot = Number(raw);
+    if (!Number.isSafeInteger(slot) || slot < 0) return 0;
+    return Math.min(slot, maxSlot);
+  } catch {
+    return 0;
+  }
+}
 
 function hydrateInstance(t: StoredInstance): TavernInstance {
   return {
@@ -78,6 +95,11 @@ function mergeInstanceBackup(existing: TavernInstance[], incoming: StoredInstanc
   return Array.from(map.values());
 }
 
+function stripOneShotCreationParams(instance: TavernInstance): TavernInstance {
+  const { zipballUrl: _zipballUrl, localZipPath: _localZipPath, preinstall: _preinstall, companionPreset: _companionPreset, ...rest } = instance;
+  return rest as TavernInstance;
+}
+
 /** 从 localStorage 读取已持久化的实例列表;版本不匹配时清空旧数据。 */
 function loadInstances(): TavernInstance[] {
   // 版本不匹配说明是旧版残留数据,清空
@@ -90,7 +112,9 @@ function loadInstances(): TavernInstance[] {
   try {
     const raw = localStorage.getItem(INSTANCES_KEY);
     if (raw) {
-      return normalizeStoredInstances(JSON.parse(raw), { resetStatus: true }).map(hydrateInstance);
+      return normalizeStoredInstances(JSON.parse(raw), { resetStatus: true })
+        .map(hydrateInstance)
+        .map(stripOneShotCreationParams);
     }
   } catch {
     /* ignore */
@@ -144,6 +168,24 @@ const DEMO_RUNNING_INSTANCES: TavernInstance[] = [
   { ...DEMO_INSTANCE, id: "demo-running-second", name: "SillyTavern", subtitle: "测试酒馆 · 运行中", version: "1.19.0", port: 8001 },
   { ...DEMO_INSTANCE, id: "demo-running-third", name: "SillyTavern", subtitle: "备用酒馆 · 运行中", version: "stable", port: 8002 },
 ];
+
+const DEBUG_LAUNCH_LOG_KEY = "__sillyclient_debug_launch_console__";
+const DEBUG_OPEN_INSTANCE: TavernInstance = {
+  ...DEMO_INSTANCE,
+  id: "debug-open-instance",
+  name: "演示打开实例",
+  subtitle: "打开实例 · 调试预览",
+  version: "1.14.0",
+  port: 8003,
+};
+const DEBUG_CREATE_INSTANCE: TavernInstance = {
+  ...DEMO_INSTANCE,
+  id: "debug-create-instance",
+  name: "演示创建实例",
+  subtitle: "创建实例 · 调试预览",
+  version: "1.14.0",
+  port: 8004,
+};
 
 
 const SC_BORDEAUX_PRESET: CompanionPresetSelection = {
@@ -218,12 +260,14 @@ function SillyClientLauncher() {
   const isMobile = isAndroid || isIOS;
   const isDemoPreview = isWeb && !isWindows && !isShowcase && !isNativePreview
     && (import.meta.env.DEV || (isLocalPreview && window.location.port === "8768"));
-  const terminalTitle = isWindows ? "Windows 控制台" : "Android 终端";
-  const terminalPrompt = isWindows ? "C:\\>" : "~ $";
+  const terminalTitle = isWindows ? "Windows 控制台" : isIOS ? "iOS 控制台" : "Android 终端";
+  const terminalPrompt = isWindows ? "C:\\>" : isIOS ? "ios >" : "~ $";
   const terminalBanner = isWindows
     ? `SillyClient ${APP_VERSION} · Windows · cmd.exe`
+    : isIOS
+    ? `SillyClient ${APP_VERSION} · iOS · NodeMobile`
     : `SillyClient ${APP_VERSION} · Android shell`;
-  const terminalPlaceholder = isWindows ? "输入 Windows 命令" : "输入 Android shell 命令";
+  const terminalPlaceholder = isWindows ? "输入 Windows 命令" : isIOS ? "iOS 进程内环境（可查看服务运行日志）" : "输入 Android shell 命令";
   const [showOnboarding, setShowOnboarding] = useState(
     () => (!isWeb || isWindows) && !isShowcase && localStorage.getItem(ONBOARDING_KEY) !== ONBOARDING_VERSION,
   );
@@ -288,7 +332,16 @@ function SillyClientLauncher() {
   const [isAppMenuClosing, setIsAppMenuClosing] = useState(false);
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
   const [activeSlide, setActiveSlide] = useState(0);
-  const [createCardSlot, setCreateCardSlot] = useState(0);
+  const [createCardSlot, setCreateCardSlotState] = useState(() => loadCreateCardSlot(instances.length));
+  const setCreateCardSlot = useCallback((slot: number) => {
+    const normalizedSlot = Math.max(0, Math.min(instances.length, Math.trunc(slot)));
+    setCreateCardSlotState(normalizedSlot);
+    if (!isShowcase) {
+      try {
+        localStorage.setItem(CREATE_CARD_SLOT_KEY, String(normalizedSlot));
+      } catch {}
+    }
+  }, [instances.length, isShowcase]);
   const [showNewInstancePanel, setShowNewInstancePanel] = useState(false);
   const [isNewInstancePanelClosing, setIsNewInstancePanelClosing] = useState(false);
   const [newInstanceMode, setNewInstanceMode] = useState<"local" | "remote" | "import">("local");
@@ -358,7 +411,20 @@ function SillyClientLauncher() {
     try {
       localStorage.setItem("sillyclient.createCardPinned", pinned ? "true" : "false");
     } catch {}
-  }, []);
+  }, [setCreateCardSlot]);
+
+  useEffect(() => {
+    const normalizedSlot = createCardPinned
+      ? 0
+      : Math.max(0, Math.min(instances.length, createCardSlot));
+    if (normalizedSlot !== createCardSlot) {
+      setCreateCardSlot(normalizedSlot);
+    } else if (!isShowcase) {
+      try {
+        localStorage.setItem(CREATE_CARD_SLOT_KEY, String(normalizedSlot));
+      } catch {}
+    }
+  }, [createCardPinned, createCardSlot, instances.length, isShowcase, setCreateCardSlot]);
 
   useEffect(() => {
     TarvenEnv.setPullToRefresh({ enabled: pullToRefresh }).catch(() => {});
@@ -412,14 +478,19 @@ function SillyClientLauncher() {
   const [verDropdownPos, setVerDropdownPos] = useState({ bottom: 0, left: 0, width: 0, maxHeight: 360 });
   const carouselRef = useRef<InstanceCarouselRef>(null);
   const terminalBtnRef = useRef<HTMLButtonElement>(null);
+  const terminalDebugPressTimerRef = useRef<number | null>(null);
+  const terminalDebugPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const terminalDebugLongPressRef = useRef(false);
+  const middleDebugPressTimerRef = useRef<number | null>(null);
+  const middleDebugPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const middleDebugLongPressRef = useRef(false);
   const settingsBtnRef = useRef<HTMLButtonElement>(null);
   const cardMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const managePanelOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const managePanelCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const renameCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renameSavingRef = useRef(false);
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
   const [terminalPos, setTerminalPos] = useState({ left: 16, right: 16 });
-  const [externallyRenamingId, setExternallyRenamingId] = useState<string | null>(null);
 
   // 下拉刷新启动页
   const [pullDistance, setPullDistance] = useState(0);
@@ -477,7 +548,7 @@ function SillyClientLauncher() {
     ? `${terminalInstance.subtitle || terminalInstance.name} · 实例终端`
     : terminalTitle;
   const terminalDisplayPrompt = terminalInstance
-    ? (isWindows ? `${terminalInstance.installDir || terminalInstance.id}>` : "~ $")
+    ? (isWindows ? `${terminalInstance.installDir || terminalInstance.id}>` : (isIOS ? "ios >" : "~ $"))
     : terminalPrompt;
   const terminalDisplayBanner = terminalInstance
     ? `${terminalInstance.subtitle || terminalInstance.name} · ${terminalInstance.type === "local" ? "本地实例" : "远程实例"}`
@@ -492,7 +563,8 @@ function SillyClientLauncher() {
     if (cardMenuCloseTimerRef.current) clearTimeout(cardMenuCloseTimerRef.current);
     if (managePanelOpenTimerRef.current) clearTimeout(managePanelOpenTimerRef.current);
     if (managePanelCloseTimerRef.current) clearTimeout(managePanelCloseTimerRef.current);
-    if (renameCloseTimerRef.current) clearTimeout(renameCloseTimerRef.current);
+    if (terminalDebugPressTimerRef.current) clearTimeout(terminalDebugPressTimerRef.current);
+    if (middleDebugPressTimerRef.current) clearTimeout(middleDebugPressTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -727,12 +799,43 @@ function SillyClientLauncher() {
     return () => { directoryPickerGeneration.current += 1; };
   }, [showNewInstancePanel, newInstanceMode, migrationAccessMode]);
 
+  useEffect(() => {
+    if (!showNewInstancePanel) return;
+    let cancelled = false;
+    TarvenEnv.getAppSettings()
+      .then(settings => {
+        if (cancelled) return;
+        const saved = settings.configuredInstancesRoot?.trim();
+        if (!saved) return;
+        setNewInstanceDir(current => (current.trim() ? current : saved));
+        setNewInstancePathMode(current => (current === "exact" ? "root" : current));
+      })
+      .catch(() => { /* 读取失败时保持必选流程 */ });
+    return () => { cancelled = true; };
+  }, [showNewInstancePanel]);
+
   const handleSetNewInstanceDir = useCallback((value: string) => {
     const clean = value.replace(/^["']|["']$/g, "").trim();
     setNewInstanceDir(clean);
-    setNewInstancePathMode("exact");
+    setNewInstancePathMode("root");
     setNewInstanceError(null);
     directoryPickerGeneration.current += 1;
+  }, []);
+
+  // 向导中的存放位置一律是"实例存放文件夹"（父目录）：先落成实例根；
+  // 再取它的一级子目录作为实例目录。根更新失败时抛中文原因，绝不静默继续。
+  const resolveInstanceParent = useCallback(async (
+    rawValue: string, emptyMessage: string, instanceName: string,
+  ): Promise<string> => {
+    const parent = instanceParentPath(rawValue);
+    if (!parent) throw new Error(emptyMessage);
+    try {
+      await TarvenEnv.setInstancesRoot({ path: parent });
+    } catch (error) {
+      const reason = humanizeNativeError(error instanceof Error ? error.message : String(error));
+      throw new Error(`该文件夹不能作为实例存放位置：${reason}`);
+    }
+    return buildInstanceSubfolder(parent, instanceName);
   }, []);
 
   const handlePickInstallFolder = useCallback(async () => {
@@ -743,12 +846,21 @@ function SillyClientLauncher() {
       setNewInstanceDir(selection.path);
       setNewInstancePathMode(selection.mode);
       setNewInstanceError(null);
+      if (isAndroid) {
+        try {
+          await TarvenEnv.setInstancesRoot({ path: selection.path });
+        } catch (error) {
+          const reason = humanizeNativeError(error instanceof Error ? error.message : String(error));
+          setNewInstanceDir("");
+          setNewInstanceError(`该文件夹不能作为实例存放位置：${reason}`);
+        }
+      }
     } catch (error) {
       if (generation !== directoryPickerGeneration.current) return;
       const message = error instanceof Error ? error.message : String(error);
       if (!/cancel/i.test(message)) setNewInstanceError(message);
     }
-  }, []);
+  }, [isAndroid]);
 
   const handlePickTargetFolder = useCallback(async () => {
     const generation = ++directoryPickerGeneration.current;
@@ -1051,18 +1163,27 @@ function SillyClientLauncher() {
 
   useEffect(() => () => { operations.cancel(); }, [operations]);
 
-  // 配置并启动本地实例。创建流程只在确认服务可访问后写入卡片。
-  const doLaunch = useCallback(async (instance: TavernInstance, operation: OperationContext, enterWhenReady = true) => {
+  // 配置并启动本地实例。创建流程只在确认服务可访问后写入卡片；
+  // createIntent 仅创建向导为 true：安装源与预装项只随创建下发，启动既有实例绝不携带，
+  // 后端据此在目录丢失/损坏时拒绝静默重装顶替用户数据。
+  const lastLaunchCreateIntentRef = useRef(false);
+  const doLaunch = useCallback(async (
+    instance: TavernInstance,
+    operation: OperationContext,
+    enterWhenReady = true,
+    createIntent = false
+  ) => {
     operation.assertCurrent();
+    lastLaunchCreateIntentRef.current = createIntent;
     const port = instance.port ?? 8000;
     const instanceId = instance.installDir || instance.id;
     const version = instance.version || "stable";
     const config = instance.config ?? DEFAULT_CONFIG;
-    const zipballUrl = instance.zipballUrl;
-    const localZipPath = instance.localZipPath;
+    const zipballUrl = createIntent ? instance.zipballUrl : undefined;
+    const localZipPath = createIntent ? instance.localZipPath : undefined;
     const installPath = instance.installPath;
-    const companionPreset = instance.companionPreset;
-    const preinstall = instance.preinstall;
+    const companionPreset = createIntent ? instance.companionPreset : undefined;
+    const preinstall = createIntent ? instance.preinstall : undefined;
 
     setLaunchProgress({ pct: 0, text: "初始化" });
     setLaunchError(null);
@@ -1112,8 +1233,19 @@ function SillyClientLauncher() {
 
       // 调用原生 provision
       const provisionResult = await operation.wait(TarvenEnv.provisionAndStart({
-        port, instanceId, operationId: operation.id, version, zipballUrl, localZipPath,
-        installPath, installPathMode: instance.installPathMode, companionPreset, preinstall, config,
+        port,
+        instanceId,
+        instanceName: instance.subtitle || instance.name,
+        operationId: operation.id,
+        version,
+        createIntent,
+        zipballUrl,
+        localZipPath,
+        installPath,
+        installPathMode: instance.installPathMode,
+        companionPreset,
+        preinstall,
+        config,
       }));
       if (provisionResult?.ready === false) {
         throw new Error(errorMsg || "实例未能启动，请检查安装日志");
@@ -1324,18 +1456,21 @@ function SillyClientLauncher() {
       return;
     }
 
-    const result = await doLaunch(instance, operation, false);
+    const result = await doLaunch(instance, operation, false, true);
     const info = await operation.wait(TarvenEnv.getInstanceInfo({
       instanceId: instance.installDir || instance.id,
       installPath: instance.installPathMode === "root" ? undefined : instance.installPath,
       port: result.port,
     }));
     if (!info.path) throw new Error("原生未确认实例的实际安装目录，创建未完成");
-    setLastLaunchParams({ ...instance, installPath: info.path, installPathMode: "exact", port: result.port });
+    // 安装源（zipballUrl/localZipPath）与预装项是一次性创建参数，绝不持久化到卡片。
+    // 后端以 createIntent 区分创建与启动意图，卡片残留安装源会导致数据丢失时被静默重装顶替。
+    const { zipballUrl: _zipballUrl, localZipPath: _localZipPath, preinstall: _preinstall, companionPreset: _companionPreset, ...persistedInstance } = instance;
+    setLastLaunchParams({ ...persistedInstance, installPath: info.path, installPathMode: "exact", port: result.port });
     setInstances(prev => prev.some(t => t.id === instance.id)
       ? prev
       : [...prev, {
-          ...instance,
+          ...persistedInstance,
           status: "running",
           port: result.port,
           version: info.version && info.version !== "unknown" ? normalizeStoredVersion(info.version) : instance.version,
@@ -1372,7 +1507,14 @@ function SillyClientLauncher() {
   }, [setLaunchLogs]);
 
   const createInstance = useCallback(async () => {
-    if (operations.busy) return;
+    if (operations.busy) {
+      setNewInstanceError("请先等待当前任务完成，再创建新实例");
+      return;
+    }
+    if (isAndroid && newInstanceMode === "local" && !newInstanceDir.trim()) {
+      setNewInstanceError("请先选择实例存放文件夹（必选）：点击「浏览」选择后，实例会创建在该文件夹下");
+      return;
+    }
     const rawGivenName = newInstanceName.trim();
     let instanceDisplayName: string;
     let safeCandidateId: string;
@@ -1423,11 +1565,9 @@ function SillyClientLauncher() {
       const installDir = instanceId;
       pendingInstanceId = instanceId;
       const customParentDir = cleanInstallPath(newInstanceDir);
-      let resolvedCustomPath: string | undefined = undefined;
-      if (customParentDir) {
-        // 统一在指定父目录下生成以实例名命名的子文件夹
-        resolvedCustomPath = buildInstanceSubfolder(customParentDir, instanceDisplayName);
-      }
+      const resolvedCustomPath = (newInstanceMode === "local" && isAndroid)
+        ? await resolveInstanceParent(newInstanceDir, "请先选择实例存放文件夹（必选）：点击「浏览」选择后，实例会创建在该文件夹下", instanceDisplayName)
+        : (customParentDir ? buildInstanceSubfolder(customParentDir, instanceDisplayName) : undefined);
       let selectedVersion = newInstanceVersion;
       let selectedZipballUrl: string | undefined;
 
@@ -1440,16 +1580,12 @@ function SillyClientLauncher() {
             setReleases(availableReleases);
           } catch (error) {
             if (error instanceof OperationCancelledError) throw error;
-            availableReleases = [{ tag: "1.12.0", prerelease: false, zipballUrl: "" }];
-            setReleases(availableReleases);
+            throw new Error("无法获取 SillyTavern 版本，请重新获取列表或导入本地 ZIP");
           }
         }
-        const selectedRelease = selectedVersion === "stable"
-          ? availableReleases.find(release => !release.prerelease) || availableReleases[0]
-          : availableReleases.find(release => release.tag === selectedVersion) || availableReleases[0];
-        if (!selectedRelease && !isWeb) throw new Error("无法获取当前 SillyTavern 版本，请检查网络后重试");
-        selectedVersion = selectedRelease?.tag || "1.12.0";
-        selectedZipballUrl = selectedRelease?.zipballUrl;
+        const selectedRelease = selectTavernRelease(availableReleases, selectedVersion);
+        selectedVersion = selectedRelease.tag;
+        selectedZipballUrl = selectedRelease.zipballUrl;
       }
 
       let port = 8000;
@@ -1661,6 +1797,7 @@ function SillyClientLauncher() {
     migrationIncludeSecrets,
     provisionCreatedInstance,
     migrateCreatedInstance,
+    resolveInstanceParent,
     setLaunchLogs,
     releases,
   ]);
@@ -1688,7 +1825,7 @@ function SillyClientLauncher() {
         setInstances(prev => prev.map(t => t.id === lastLaunchParams.id ? { ...t, status: "online" } : t));
         operation.schedule(() => { setShowLaunchPanel(false); setLaunchProgress(null); }, 500);
       } else {
-        const result = await doLaunch(lastLaunchParams, operation);
+        const result = await doLaunch(lastLaunchParams, operation, true, lastLaunchCreateIntentRef.current);
         setInstances(prev => prev.map(t => t.id === lastLaunchParams.id ? { ...t, status: "running", port: result.port } : t));
         operation.schedule(() => { setShowLaunchPanel(false); setLaunchProgress(null); }, 800);
       }
@@ -1709,13 +1846,14 @@ function SillyClientLauncher() {
     }
   }, [lastLaunchParams, operationPurpose, doLaunch, openRemoteInstance, provisionCreatedInstance, migrateCreatedInstance, operations, setLaunchLogs]);
 
-  const closeCardMenu = useCallback(() => {
+  const closeCardMenu = useCallback((onClosed?: () => void) => {
     if (cardMenuCloseTimerRef.current) clearTimeout(cardMenuCloseTimerRef.current);
     setIsCardMenuClosing(true);
     cardMenuCloseTimerRef.current = setTimeout(() => {
       setActiveCardMenu(null);
       setIsCardMenuClosing(false);
       cardMenuCloseTimerRef.current = null;
+      onClosed?.();
     }, POPOVER_EXIT_MS);
   }, []);
 
@@ -1741,18 +1879,28 @@ function SillyClientLauncher() {
     }
   }, [isWindows]);
 
-  const closeRenameDialog = useCallback(() => {
+  const closeInstanceRename = useCallback(() => {
     if (!renamingId || isRenameClosing) return;
-    if (renameCloseTimerRef.current) clearTimeout(renameCloseTimerRef.current);
     setIsRenameClosing(true);
-    renameCloseTimerRef.current = setTimeout(() => {
-      setRenamingId(null);
-      setRenameValue("");
-      setRenameError(null);
-      setIsRenameClosing(false);
-      renameCloseTimerRef.current = null;
-    }, PANEL_EXIT_MS);
   }, [isRenameClosing, renamingId]);
+
+  const finishInstanceRename = useCallback(() => {
+    setRenamingId(null);
+    setRenameValue("");
+    setRenameError(null);
+    setIsRenameClosing(false);
+  }, []);
+
+  const openInstanceRename = useCallback((instance: TavernInstance) => {
+    if (instance.status === "running" || renameSavingRef.current) return;
+    closeCardMenu(() => {
+      setIsRenameClosing(false);
+      setRenameValue(instance.subtitle || instance.name);
+      setRenameError(null);
+      setRenamingId(instance.id);
+      setHoveredCard(instance.id);
+    });
+  }, [closeCardMenu]);
 
   const executeRenameInstance = useCallback(async (instanceId: string, newName: string): Promise<boolean> => {
     const trimmed = newName.trim();
@@ -1819,6 +1967,56 @@ function SillyClientLauncher() {
     return false;
   }, [instances]);
 
+  const saveInstanceRename = useCallback(async () => {
+    if (!renamingId || !renameValue.trim() || renameSavingRef.current || isRenameClosing) return;
+    renameSavingRef.current = true;
+    setIsRenamingSaving(true);
+    setRenameError(null);
+    try {
+      const ok = await executeRenameInstance(renamingId, renameValue.trim());
+      if (ok) {
+        closeInstanceRename();
+      } else {
+        setRenameError("重命名未完成，请检查实例状态后重试");
+      }
+    } catch (error) {
+      setRenameError(error instanceof Error ? error.message : "重命名实例失败，请检查文件夹权限");
+    } finally {
+      renameSavingRef.current = false;
+      setIsRenamingSaving(false);
+    }
+  }, [renamingId, renameValue, isRenameClosing, executeRenameInstance, closeInstanceRename]);
+
+  const cancelInstanceRename = useCallback(() => {
+    if (!renameSavingRef.current) closeInstanceRename();
+  }, [closeInstanceRename]);
+
+  useEffect(() => {
+    if (renamingId && !instances.some(instance => instance.id === renamingId && instance.status !== "running")) {
+      finishInstanceRename();
+    }
+  }, [instances, renamingId, finishInstanceRename]);
+
+  const changeInstanceRename = useCallback((value: string) => {
+    setRenameValue(value);
+    setRenameError(null);
+  }, []);
+
+  const instanceRename = useMemo<InstanceRenameState | undefined>(() => renamingId ? {
+    instanceId: renamingId,
+    value: renameValue,
+    error: renameError,
+    saving: isRenamingSaving,
+    closing: isRenameClosing,
+    onChange: changeInstanceRename,
+    onSave: saveInstanceRename,
+    onCancel: cancelInstanceRename,
+    onClosed: finishInstanceRename,
+  } : undefined, [
+    renamingId, renameValue, renameError, isRenamingSaving, isRenameClosing,
+    changeInstanceRename, saveInstanceRename, cancelInstanceRename, finishInstanceRename,
+  ]);
+
   const openInstanceTerminal = useCallback((instance: TavernInstance) => {
     setTerminalInstanceId(instance.id);
     instanceLogs.append(instance.installDir || instance.id, {
@@ -1827,6 +2025,174 @@ function SillyClientLauncher() {
     });
     setIsTerminalClosing(false);
     setShowTerminal(true);
+  }, []);
+
+  const openLaunchConsolePreview = useCallback((purpose: OperationPurpose) => {
+    if (!isDemoPreview) return;
+    const previewInstance = purpose === "create" ? DEBUG_CREATE_INSTANCE : DEBUG_OPEN_INSTANCE;
+    const logs = purpose === "create"
+      ? [
+          { msg: "创建实例 · 演示环境", level: "info" },
+          { msg: "准备安装 SillyTavern 1.14.0", level: "info" },
+          { msg: "正在下载当前版本 · 68%", level: "info" },
+        ]
+      : [
+          { msg: "打开实例 · 正在启动", level: "info" },
+          { msg: "SillyTavern 1.14.0", level: "success" },
+          { msg: "正在确认实例可运行", level: "info" },
+        ];
+    instanceLogs.update(DEBUG_LAUNCH_LOG_KEY, logs);
+    setLaunchLogKey(DEBUG_LAUNCH_LOG_KEY);
+    setLaunchError(null);
+    setLaunchProgress(
+      purpose === "create"
+        ? { pct: 68, text: "正在下载当前版本 · 68%" }
+        : { pct: 42, text: "正在确认实例可运行" },
+    );
+    setOperationPurpose(purpose);
+    setLastLaunchParams(previewInstance);
+    setIsLaunchPanelClosing(false);
+    setShowLaunchPanel(true);
+  }, [isDemoPreview]);
+
+  const handleTerminalButtonClick = useCallback(() => {
+    if (terminalDebugLongPressRef.current) {
+      terminalDebugLongPressRef.current = false;
+      return;
+    }
+    if (isWeb && !isWindows && !isShowcase && !isLocalPreview) return;
+    if (showTerminal) {
+      setIsTerminalClosing(true);
+      setTimeout(() => { setShowTerminal(false); setIsTerminalClosing(false); }, PANEL_EXIT_MS);
+      return;
+    }
+
+    const instance = activeInstance;
+    const btn = terminalBtnRef.current;
+    const settingsBtn = settingsBtnRef.current;
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      const settingsRect = settingsBtn?.getBoundingClientRect();
+      const rightEdge = settingsRect ? window.innerWidth - settingsRect.right : 16;
+      setTerminalPos({ left: rect.left, right: Math.max(8, rightEdge) });
+    }
+    if (!instance) {
+      setTerminalInstanceId(null);
+      setTerminalLogs([{ msg: "请先选择一个实例，再打开实例终端", level: "info" }]);
+      setIsTerminalClosing(false);
+      setShowTerminal(true);
+      return;
+    }
+    openInstanceTerminal(instance);
+  }, [
+    activeInstance,
+    isLocalPreview,
+    isShowcase,
+    isWeb,
+    isWindows,
+    openInstanceTerminal,
+    setTerminalLogs,
+    showTerminal,
+  ]);
+
+  const handleTerminalDebugPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!isDemoPreview || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (terminalDebugPressTimerRef.current) clearTimeout(terminalDebugPressTimerRef.current);
+    terminalDebugLongPressRef.current = false;
+    terminalDebugPressStartRef.current = { x: event.clientX, y: event.clientY };
+    terminalDebugPressTimerRef.current = window.setTimeout(() => {
+      terminalDebugPressTimerRef.current = null;
+      terminalDebugLongPressRef.current = true;
+      terminalDebugPressStartRef.current = null;
+      openLaunchConsolePreview("launch");
+    }, 620);
+  }, [isDemoPreview, openLaunchConsolePreview]);
+
+  const handleTerminalDebugPointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const start = terminalDebugPressStartRef.current;
+    if (!start) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
+      if (terminalDebugPressTimerRef.current) {
+        clearTimeout(terminalDebugPressTimerRef.current);
+        terminalDebugPressTimerRef.current = null;
+      }
+      terminalDebugPressStartRef.current = null;
+    }
+  }, []);
+
+  const handleTerminalDebugPointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (terminalDebugPressTimerRef.current) {
+      clearTimeout(terminalDebugPressTimerRef.current);
+      terminalDebugPressTimerRef.current = null;
+    }
+    terminalDebugPressStartRef.current = null;
+    if (terminalDebugLongPressRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
+  const handleTerminalDebugPointerCancel = useCallback(() => {
+    if (terminalDebugPressTimerRef.current) {
+      clearTimeout(terminalDebugPressTimerRef.current);
+      terminalDebugPressTimerRef.current = null;
+    }
+    terminalDebugPressStartRef.current = null;
+    terminalDebugLongPressRef.current = false;
+  }, []);
+
+  const handleBackgroundButtonClick = useCallback(() => {
+    if (middleDebugLongPressRef.current) {
+      middleDebugLongPressRef.current = false;
+      return;
+    }
+    toggleBgPanel();
+  }, [showBgPanel]);
+
+  const handleBackgroundDebugPointerDown = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!isDemoPreview || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (middleDebugPressTimerRef.current) clearTimeout(middleDebugPressTimerRef.current);
+    middleDebugLongPressRef.current = false;
+    middleDebugPressStartRef.current = { x: event.clientX, y: event.clientY };
+    middleDebugPressTimerRef.current = window.setTimeout(() => {
+      middleDebugPressTimerRef.current = null;
+      middleDebugLongPressRef.current = true;
+      middleDebugPressStartRef.current = null;
+      openLaunchConsolePreview("create");
+    }, 620);
+  }, [isDemoPreview, openLaunchConsolePreview]);
+
+  const handleBackgroundDebugPointerMove = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    const start = middleDebugPressStartRef.current;
+    if (!start) return;
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
+      if (middleDebugPressTimerRef.current) {
+        clearTimeout(middleDebugPressTimerRef.current);
+        middleDebugPressTimerRef.current = null;
+      }
+      middleDebugPressStartRef.current = null;
+    }
+  }, []);
+
+  const handleBackgroundDebugPointerUp = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
+    if (middleDebugPressTimerRef.current) {
+      clearTimeout(middleDebugPressTimerRef.current);
+      middleDebugPressTimerRef.current = null;
+    }
+    middleDebugPressStartRef.current = null;
+    if (middleDebugLongPressRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, []);
+
+  const handleBackgroundDebugPointerCancel = useCallback(() => {
+    if (middleDebugPressTimerRef.current) {
+      clearTimeout(middleDebugPressTimerRef.current);
+      middleDebugPressTimerRef.current = null;
+    }
+    middleDebugPressStartRef.current = null;
+    middleDebugLongPressRef.current = false;
   }, []);
 
   const openManagePanel = useCallback((instance: TavernInstance) => {
@@ -2253,11 +2619,8 @@ function SillyClientLauncher() {
   }, [pendingDelete, registerLayer, isDeletingInstance]);
 
   useEffect(() => {
-    if (renamingId) return registerLayer("rename_modal", () => {
-      setIsRenameClosing(true);
-      setTimeout(() => { setRenamingId(null); setIsRenameClosing(false); }, PANEL_EXIT_MS);
-    });
-  }, [renamingId, registerLayer]);
+    if (renamingId) return registerLayer("instance_rename", cancelInstanceRename);
+  }, [renamingId, registerLayer, cancelInstanceRename]);
 
   useEffect(() => {
     if (verDropdownOpen) return registerLayer("version_dropdown", closeVersionDropdown);
@@ -2283,17 +2646,6 @@ function SillyClientLauncher() {
     setActiveCardMenu(instance.id);
     setIsCardMenuClosing(false);
   }, []);
-
-  const handleCardRenameSave = useCallback(async (instanceId: string, newName: string) => {
-    try {
-      await executeRenameInstance(instanceId, newName);
-      setExternallyRenamingId(null);
-    } catch (error: any) {
-      alert(error?.message || "重命名实例文件夹失败");
-    }
-  }, [executeRenameInstance]);
-
-  const clearExternalRenaming = useCallback(() => setExternallyRenamingId(null), []);
 
   const openNewInstancePanel = useCallback(() => {
     if (isWeb && !isShowcase && !isLocalPreview && !import.meta.env.DEV) {
@@ -2391,31 +2743,15 @@ function SillyClientLauncher() {
           <div className="flex items-center gap-3 flex-shrink-0">
             <button
               ref={terminalBtnRef}
-              onClick={() => {
-                if (isWeb && !isWindows && !isShowcase && !isLocalPreview) return;
-                if (showTerminal) {
-                  setIsTerminalClosing(true);
-                  setTimeout(() => { setShowTerminal(false); setIsTerminalClosing(false); }, PANEL_EXIT_MS);
-                } else {
-                  const instance = activeInstance;
-                  const btn = terminalBtnRef.current;
-                  const settingsBtn = settingsBtnRef.current;
-                  if (btn) {
-                    const rect = btn.getBoundingClientRect();
-                    const settingsRect = settingsBtn?.getBoundingClientRect();
-                    const rightEdge = settingsRect ? window.innerWidth - settingsRect.right : 16;
-                    setTerminalPos({ left: rect.left, right: Math.max(8, rightEdge) });
-                  }
-                  if (!instance) {
-                    setTerminalInstanceId(null);
-                    setTerminalLogs([{ msg: "请先选择一个实例，再打开实例终端", level: "info" }]);
-                    setIsTerminalClosing(false);
-                    setShowTerminal(true);
-                    return;
-                  }
-                  openInstanceTerminal(instance);
-                }
+              onClick={handleTerminalButtonClick}
+              onPointerDown={handleTerminalDebugPointerDown}
+              onPointerMove={handleTerminalDebugPointerMove}
+              onPointerUp={handleTerminalDebugPointerUp}
+              onPointerCancel={handleTerminalDebugPointerCancel}
+              onContextMenu={event => {
+                if (isDemoPreview) event.preventDefault();
               }}
+              aria-label={isDemoPreview ? "打开终端，长按查看打开实例控制台" : "打开终端"}
               className={cn(
                 "ios-glass-btn px-3 h-8 flex items-center justify-center text-xs font-medium transition-all",
                 isLight ? "text-[#1a1625]/70 hover:text-[#1a1625]" : "text-white/70 hover:text-white"
@@ -2426,7 +2762,18 @@ function SillyClientLauncher() {
           </div>
 
           <div className="flex-1 flex items-center justify-center">
-            <button onClick={toggleBgPanel} className={cn("group flex items-center gap-2 px-4 py-1.5 rounded-full transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] max-w-[200px] border", isLight ? "border-black/10 text-[#1a1625]/80 hover:text-[#1a1625] shadow-[inset_0_1px_2px_rgba(0,0,0,0.05),0_1px_2px_rgba(255,255,255,0.5)]" : "border-white/10 text-white/80 hover:text-white shadow-[inset_0_1px_2px_rgba(0,0,0,0.2),0_1px_2px_rgba(255,255,255,0.1)]")}>
+            <button
+              onClick={handleBackgroundButtonClick}
+              onPointerDown={handleBackgroundDebugPointerDown}
+              onPointerMove={handleBackgroundDebugPointerMove}
+              onPointerUp={handleBackgroundDebugPointerUp}
+              onPointerCancel={handleBackgroundDebugPointerCancel}
+              onContextMenu={event => {
+                if (isDemoPreview) event.preventDefault();
+              }}
+              aria-label={isDemoPreview ? "打开背景设置，长按查看创建实例控制台" : "打开背景设置"}
+              className={cn("group flex items-center gap-2 px-4 py-1.5 rounded-full transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] max-w-[200px] border", isLight ? "border-black/10 text-[#1a1625]/80 hover:text-[#1a1625] shadow-[inset_0_1px_2px_rgba(0,0,0,0.05),0_1px_2px_rgba(255,255,255,0.5)]" : "border-white/10 text-white/80 hover:text-white shadow-[inset_0_1px_2px_rgba(0,0,0,0.2),0_1px_2px_rgba(255,255,255,0.1)]")}
+            >
               <span className="text-sm font-medium truncate">
                 {new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
               </span>
@@ -2592,9 +2939,7 @@ function SillyClientLauncher() {
           onReturnToTavern={handleReturnToTavern}
           onStopInstance={handleStopInstance}
           onOpenMenu={handleCardMenuOpen}
-          onRenameSave={handleCardRenameSave}
-          externallyRenamingId={externallyRenamingId}
-          onClearExternalRenaming={clearExternalRenaming}
+          rename={instanceRename}
           onReorderInstances={handleReorderInstances}
           createCardPinned={createCardPinned}
           createCardSlot={createCardSlot}
@@ -2625,10 +2970,7 @@ function SillyClientLauncher() {
               closeCardMenu();
               openManagePanel(inst);
             }}
-            onRename={(inst) => {
-              closeCardMenu();
-              setExternallyRenamingId(inst.id);
-            }}
+            onRename={openInstanceRename}
             onPickCover={(inst) => {
               closeCardMenu();
               void pickInstanceCover(inst);
@@ -2752,34 +3094,6 @@ function SillyClientLauncher() {
             setGarbageError(e instanceof Error ? e.message : String(e));
           }
           setCleaningGarbage(false);
-        }}
-      />
-
-      {/* 解耦业务组件: 重命名弹窗 (备用兜底) */}
-      <RenameModal
-        isOpen={!!renamingId}
-        isClosing={isRenameClosing}
-        onClose={closeRenameDialog}
-        isLight={isLight}
-        glassBg={glassBg}
-        value={renameValue}
-        onChange={setRenameValue}
-        error={renameError}
-        saving={isRenamingSaving}
-        onSave={async () => {
-          if (!renamingId || !renameValue.trim() || isRenamingSaving) return;
-          setIsRenamingSaving(true);
-          setRenameError(null);
-          try {
-            const ok = await executeRenameInstance(renamingId, renameValue.trim());
-            if (ok) {
-              closeRenameDialog();
-            }
-          } catch (err: any) {
-            setRenameError(err?.message || "重命名实例失败，请检查文件夹权限");
-          } finally {
-            setIsRenamingSaving(false);
-          }
         }}
       />
 
@@ -3018,11 +3332,14 @@ function SillyClientLauncher() {
 
       {/* 首次引导 */}
       {showOnboarding && (
-        <OnboardingGuide
-          isLight={isLight}
-          onComplete={dismissOnboarding}
-          onSkip={dismissOnboarding}
-        />
+        <Suspense fallback={null}>
+          <OnboardingGuide
+            isLight={isLight}
+            platform={isWindows ? "windows" : isAndroid ? "android" : isIOS ? "ios" : "web"}
+            onComplete={dismissOnboarding}
+            onSkip={dismissOnboarding}
+          />
+        </Suspense>
       )}
 
       {/* 新版本旧路径实例全屏一键迁移向导 */}

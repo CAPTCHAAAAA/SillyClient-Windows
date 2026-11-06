@@ -1528,7 +1528,7 @@ export const ManageInstanceModal: React.FC<ManageInstanceModalProps> = ({
                               instanceId: mp.installDir || mp.id,
                               installPath: mp.installPath,
                             });
-                            if (res.canceled) {
+                            if (res.cancelled || (res as any).canceled) {
                               setExportStatus(null);
                               return;
                             }
