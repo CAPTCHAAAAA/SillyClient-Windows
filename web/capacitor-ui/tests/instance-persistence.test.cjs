@@ -60,10 +60,10 @@ test("saved records whitelist fields and discard nested or top-level credentials
 });
 
 test("import resets transient statuses and first-entry hints", () => {
-  const records = codec.parseInstanceBackup(JSON.stringify({
-    version: 2,
-    instances: [{ ...local, pendingTavernGestureHint: true }, remote],
-  }));
+  const records = codec.normalizeStoredInstances(
+    [{ ...local, pendingTavernGestureHint: true }, remote],
+    { resetStatus: true }
+  );
   assert.equal(records[0].status, "stopped");
   assert.equal(records[1].status, "offline");
   assert.equal("pendingTavernGestureHint" in records[0], false);
@@ -118,23 +118,8 @@ test("duplicate records merge deterministically without object prototype keys", 
   assert.equal(records[1].id, "__proto__");
 });
 
-test("backup validates structure, schema version and input bounds", () => {
-  for (const content of [
-    "null", "{}", '{"instances":{}}', '{"version":99,"instances":[]}',
-    '{"instances":[null,{}]}',
-  ]) {
-    assert.throws(() => codec.parseInstanceBackup(content));
-  }
-  assert.throws(() => codec.parseInstanceBackup(" ".repeat(5 * 1024 * 1024 + 1)));
+test("normalization bounds maximum instance count", () => {
   assert.throws(() => codec.normalizeStoredInstances(Array(2001).fill(local)));
-});
-
-test("backup exports never exceed their own import bound", () => {
-  const cover = "data:image/png;base64," + "A".repeat(2 * 1024 * 1024 - 32);
-  assert.throws(() => codec.createInstanceBackup([1, 2, 3].map(id => ({
-    ...local, id: `local-${id}`, cover,
-  }))));
-  assert.equal(codec.parseInstanceBackup(codec.createInstanceBackup([])).length, 0);
 });
 
 test("heartbeat normalization does not overflow native integer configuration", () => {
@@ -157,11 +142,9 @@ test("preinstall persistence retains only catalog IDs, never imported source loc
   assert.equal(codec.serializeInstanceRecords([{ ...local, preinstall: { revision: 99, extensionIds: ["dice"] } }])[0].preinstall, undefined);
 });
 
-test("export and reimport round-trip only non-sensitive metadata", () => {
-  const exported = codec.createInstanceBackup([local, remote]);
-  assert.equal(exported.includes("must-not-persist"), false);
-  const restored = codec.parseInstanceBackup(exported);
-  assert.equal(restored.length, 2);
-  assert.equal(restored[0].status, "stopped");
-  assert.equal(restored[1].basicAuth.username, "alice");
+test("serialization preserves only non-sensitive metadata", () => {
+  const [storedLocal, storedRemote] = codec.serializeInstanceRecords([local, remote]);
+  assert.equal(storedLocal.id, "local-1");
+  assert.equal(storedRemote.basicAuth.username, "alice");
+  assert.equal("password" in storedRemote.basicAuth, false);
 });
