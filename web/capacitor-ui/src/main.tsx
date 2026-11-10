@@ -4,9 +4,13 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { getRouter } from "./router";
 import "./styles.css";
+import { isOnboardingSandbox, postOnboardingMessage } from "./lib/onboarding-mode";
 
 async function mountApplication() {
-  if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("nativePreview") === "1") {
+  if (isOnboardingSandbox) {
+    const { installOnboardingSandbox } = await import("./components/onboarding/onboarding-runtime");
+    await installOnboardingSandbox();
+  } else if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("nativePreview") === "1") {
     const { installNativePreview } = await import("./dev/native-preview");
     installNativePreview();
   }
@@ -20,4 +24,10 @@ async function mountApplication() {
   );
 }
 
-void mountApplication();
+void mountApplication().catch((error: unknown) => {
+  if (isOnboardingSandbox) {
+    postOnboardingMessage("error");
+    return;
+  }
+  throw error;
+});

@@ -1,4 +1,5 @@
 import { registerPlugin, PluginListenerHandle } from '@capacitor/core'
+import { isOnboardingSandbox } from './lib/onboarding-mode'
 import { type RenderEngineSettings, normalizeRenderEngineSettings } from './lib/render-settings'
 
 export { type RenderEngineSettings, normalizeRenderEngineSettings }
@@ -245,7 +246,7 @@ export interface TarvenEnvPlugin {
 
   /** 获取和设置酒馆沉浸式页面渲染设置（取色开关、全时/单次取色模式、点击光效）。 */
   getRenderEngineSettings(): Promise<RenderEngineSettings>
-  setRenderEngineSettings(options: RenderEngineSettings): Promise<void>
+  setRenderEngineSettings(options: Partial<RenderEngineSettings>): Promise<void>
 
   /** Windows: 获取和保存酒馆内容的全局打开方式。 */
   getContentOpenMode(): Promise<{ mode: ContentOpenMode }>
@@ -404,8 +405,21 @@ export interface TarvenEvent {
   totalUsageMs?: number
 }
 
-export const TarvenEnv = registerPlugin<TarvenEnvPlugin>('TarvenEnv',
+const nativeEnvironment = registerPlugin<TarvenEnvPlugin>('TarvenEnv',
   import.meta.env.DEV && new URLSearchParams(window.location.search).get('nativePreview') === '1'
     ? { web: async () => (await import('./dev/native-preview')).nativePreview }
     : undefined,
 )
+
+export const TarvenEnv: TarvenEnvPlugin = isOnboardingSandbox
+  ? new Proxy({} as TarvenEnvPlugin, {
+      get(_target, property) {
+        if (property === 'then') return undefined
+        return async (...args: unknown[]) => {
+          const { onboardingEnvironment } = await import('./components/onboarding/onboarding-runtime')
+          const method = onboardingEnvironment[property as keyof TarvenEnvPlugin]
+          return Reflect.apply(method, onboardingEnvironment, args)
+        }
+      },
+    })
+  : nativeEnvironment

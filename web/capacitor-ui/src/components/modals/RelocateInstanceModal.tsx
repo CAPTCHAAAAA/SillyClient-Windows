@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { Capacitor } from "@capacitor/core";
 import {
   X,
   AlertCircle,
@@ -10,6 +11,8 @@ import { LAYERS } from "../../constants/layers";
 import { LayerBackdrop } from "../common/LayerBackdrop";
 import { TarvenEnv } from "../../capacitor-plugin";
 import type { TavernInstance } from "../../types";
+import { cleanInstallPath, installationSelection, relocationTargetInParent } from "../../lib/install-location";
+import { humanizeNativeError } from "../../lib/native-errors";
 
 
 export interface RelocateInstanceModalProps {
@@ -20,6 +23,15 @@ export interface RelocateInstanceModalProps {
   isLight: boolean;
   glassBg: string;
   onRelocated?: (instanceId: string, newPath: string) => void;
+}
+
+interface InstanceSourcePath {
+  instanceId: string;
+  installDir?: string;
+  installPath?: string;
+  status: "loading" | "confirmed" | "failed";
+  path: string;
+  error: string | null;
 }
 
 /**
@@ -39,22 +51,44 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
   glassBg,
   onRelocated,
 }) => {
+  const isAndroid = Capacitor.getPlatform() === "android";
   const [customPath, setCustomPath] = useState("");
-  const [currentRealPath, setCurrentRealPath] = useState<string>("");
+  const [sourcePath, setSourcePath] = useState<InstanceSourcePath | null>(null);
   const [migrating, setMigrating] = useState(false);
+  const [pickingDirectory, setPickingDirectory] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<{ newPath: string } | null>(null);
+  const directoryPickerGeneration = useRef(0);
 
   useEffect(() => {
+    setErrorMsg(null);
+    setSuccessInfo(null);
+    setMigrating(false);
+    setCustomPath("");
+  }, [isOpen, instance?.id]);
+
+  useEffect(() => {
+    directoryPickerGeneration.current += 1;
+    setPickingDirectory(false);
     if (!isOpen || !instance) {
-      setErrorMsg(null);
-      setSuccessInfo(null);
-      setMigrating(false);
-      setCustomPath("");
+      setSourcePath(null);
       return;
     }
 
-    // 获取当前实例的真实物理路径
+    const identity = {
+      instanceId: instance.id,
+      installDir: instance.installDir,
+      installPath: instance.installPath,
+    };
+    setSourcePath({
+      ...identity,
+      status: "loading",
+      path: isAndroid ? "" : instance.installPath || "",
+      error: null,
+    });
+
+    // 原生确认的源路径只属于发起查询时的实例身份。
+    let active = true;
     const safeId = instance.installDir || instance.id;
     TarvenEnv.getInstanceInfo({
       instanceId: safeId,
@@ -62,41 +96,83 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
       port: instance.port ?? 8000,
     })
       .then((info) => {
-        if (info.path) setCurrentRealPath(info.path);
-        else setCurrentRealPath(instance.installPath || "—");
+        if (!active) return;
+        const path = isAndroid ? cleanInstallPath(info.path || "") || "" : info.path || instance.installPath || "—";
+        setSourcePath({
+          ...identity,
+          status: isAndroid && !path ? "failed" : "confirmed",
+          path,
+          error: isAndroid && !path ? "无法确认实例的实际存储目录：原生未返回有效路径，请重新打开后重试。" : null,
+        });
       })
-      .catch(() => {
-        setCurrentRealPath(instance.installPath || "—");
+      .catch((error) => {
+        if (!active) return;
+        const reason = humanizeNativeError(error instanceof Error ? error.message : String(error));
+        setSourcePath({
+          ...identity,
+          status: "failed",
+          path: isAndroid ? "" : instance.installPath || "—",
+          error: isAndroid ? `无法读取实例的实际存储目录：${reason}` : null,
+        });
       });
-  }, [isOpen, instance]);
+    return () => {
+      active = false;
+      directoryPickerGeneration.current += 1;
+    };
+  }, [isOpen, instance?.id, instance?.installDir, instance?.installPath, isAndroid]);
 
   if (!isOpen && !isClosing) return null;
   if (!instance) return null;
 
-  const isRunning = instance.status === "running";
+  const isRunning = instance.status === "running" || instance.status === "online";
+  const instanceSourcePath = sourcePath?.instanceId === instance.id &&
+    sourcePath.installDir === instance.installDir && sourcePath.installPath === instance.installPath
+      ? sourcePath : null;
+  const hasConfirmedSourcePath = isOpen && !isClosing && instanceSourcePath?.status === "confirmed";
+  const currentRealPath = instanceSourcePath?.path || (isAndroid ? "" : instance.installPath || "");
+  const visibleError = errorMsg || (isAndroid ? instanceSourcePath?.error : null);
 
   const handlePickDirectory = async () => {
+    if (pickingDirectory || migrating) return;
+    const generation = ++directoryPickerGeneration.current;
+    setPickingDirectory(true);
+    setErrorMsg(null);
     try {
-      const res = await (TarvenEnv as any).pickDirectory({
-        title: "选择实例迁移的目标目录",
-      });
-      if (res?.path) {
-        setCustomPath(res.path.replace(/^["']|["']$/g, "").trim());
+      const selection = installationSelection(await TarvenEnv.pickDirectory({ purpose: "installation" }));
+      if (generation !== directoryPickerGeneration.current) return;
+      if (isAndroid) {
+        try {
+          await TarvenEnv.setInstancesRoot({ path: selection.path });
+        } catch (error) {
+          if (generation !== directoryPickerGeneration.current) return;
+          setCustomPath("");
+          const reason = humanizeNativeError(error instanceof Error ? error.message : String(error));
+          setErrorMsg(`该文件夹不能作为实例存放位置：${reason}`);
+          return;
+        }
       }
-    } catch {
-      /* ignore */
+      if (generation === directoryPickerGeneration.current) setCustomPath(selection.path);
+    } catch (error) {
+      if (generation !== directoryPickerGeneration.current) return;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/cancel|取消/i.test(message)) setErrorMsg(humanizeNativeError(message));
+    } finally {
+      if (generation === directoryPickerGeneration.current) setPickingDirectory(false);
     }
   };
 
   const handleExecuteRelocate = async () => {
-    if (isRunning || migrating) return;
+    if (isRunning || migrating || pickingDirectory) return;
+    if (isAndroid && !hasConfirmedSourcePath) return;
+    const generation = directoryPickerGeneration.current;
     setErrorMsg(null);
     setMigrating(true);
 
     try {
       const safeId = instance.installDir || instance.id;
-      const target = customPath.replace(/^["']|["']$/g, "").trim();
-      if (!target) throw new Error("请先选择或输入目标目录");
+      const selected = cleanInstallPath(customPath);
+      if (!selected) throw new Error("请先选择目标目录");
+      const target = isAndroid ? relocationTargetInParent(selected, currentRealPath) : selected;
 
       const res = await TarvenEnv.relocateInstance({
         instanceId: safeId,
@@ -105,15 +181,17 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
       });
 
       if (res.success) {
-        setSuccessInfo({ newPath: res.newPath });
         onRelocated?.(instance.id, res.newPath);
+        if (generation === directoryPickerGeneration.current) setSuccessInfo({ newPath: res.newPath });
       } else {
         throw new Error("迁移未成功完成");
       }
-    } catch (err: any) {
-      setErrorMsg(err?.message || "迁移失败，请检查路径权限后重试");
+    } catch (error) {
+      if (generation === directoryPickerGeneration.current) {
+        setErrorMsg(humanizeNativeError(error instanceof Error ? error.message : "迁移失败，请检查路径权限后重试"));
+      }
     } finally {
-      setMigrating(false);
+      if (generation === directoryPickerGeneration.current) setMigrating(false);
     }
   };
 
@@ -193,7 +271,7 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
               </span>
             </div>
             <div className="text-[11px] font-mono break-all opacity-45 leading-relaxed">
-              当前路径: {currentRealPath || "读取中..."}
+              当前路径: {currentRealPath || (instanceSourcePath?.status === "failed" ? "无法读取" : "读取中...")}
             </div>
           </div>
 
@@ -236,8 +314,9 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                     <input
                       type="text"
                       value={customPath}
+                      readOnly={isAndroid}
                       onChange={(e) => setCustomPath(e.target.value)}
-                      placeholder="选择或输入完整目标目录绝对路径"
+                      placeholder={isAndroid ? "点击浏览，选择实例存放文件夹" : "选择或输入完整目标目录绝对路径"}
                       className={cn(
                         "ios-field-control motion-control flex-1 min-w-0 h-9 px-3 rounded-xl border text-xs transition-colors",
                         isLight
@@ -248,6 +327,7 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                     <button
                       type="button"
                       onClick={handlePickDirectory}
+                      disabled={pickingDirectory || migrating}
                       className={cn(
                         "flat-capsule motion-control h-9 px-3 rounded-full text-[11px] font-medium border-0 flex-shrink-0",
                         isLight
@@ -255,19 +335,19 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
                           : "text-white/60 hover:text-white"
                       )}
                     >
-                      浏览
+                      {pickingDirectory ? "选择中..." : "浏览"}
                     </button>
                   </div>
                   <p className={cn("text-[11px] opacity-45 leading-relaxed", isLight ? "text-[#1a1625]" : "text-white")}>
-                    支持任意磁盘或分区路径。跨盘迁移时将执行安全校验并自动清理原位置。
+                    {isAndroid ? "实例保留原目录名，搬迁到所选文件夹的一级子目录。" : "支持任意磁盘或分区路径。跨盘迁移时将执行安全校验并自动清理原位置。"}
                   </p>
               </div>
 
               {/* 异常提示 */}
-              {errorMsg && (
+              {visibleError && (
                 <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>{errorMsg}</span>
+                  <span>{visibleError}</span>
                 </div>
               )}
 
@@ -318,7 +398,7 @@ export const RelocateInstanceModal: React.FC<RelocateInstanceModalProps> = ({
               </button>
               <button
                 type="button"
-                disabled={isRunning || migrating || !customPath.trim()}
+                disabled={isRunning || migrating || pickingDirectory || !customPath.trim() || (isAndroid && !hasConfirmedSourcePath)}
                 onClick={handleExecuteRelocate}
                 className={cn(
                   "flat-capsule motion-control px-5 h-8 rounded-full text-xs font-medium flex items-center justify-center gap-1.5 border-0 disabled:opacity-40",

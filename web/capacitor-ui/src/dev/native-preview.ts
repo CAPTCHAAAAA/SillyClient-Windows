@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import type { TarvenEnvPlugin, TarvenEvent, GarbageItem, MaintenanceItem, MaintenanceScan, MaintenanceRecovery } from "../capacitor-plugin";
 import { normalizeRenderEngineSettings } from "../lib/render-settings";
+import type { RenderEngineSettings } from "../lib/render-settings";
 import { exactInstallTarget } from "../lib/install-location";
 import { validateExternalUrl } from "../lib/external-url";
 
@@ -16,6 +17,14 @@ let failCommands = false;
 let status: Awaited<ReturnType<TarvenEnvPlugin["getStatus"]>> = { serverReady: false, mode: "launcher" };
 let openMode: "webview" | "browser" = "webview";
 let renderEngineSettings = normalizeRenderEngineSettings(null);
+interface RenderSettingsFixture {
+  settings?: Partial<RenderEngineSettings>;
+  readDelay?: number;
+  writeDelay?: number;
+  readError?: string | null;
+  writeError?: string | null;
+}
+let renderSettingsFixture: RenderSettingsFixture = {};
 let migrated = new Map<string, string>();
 let scannedInstanceIds = ["preview-local", "preview-second"];
 type DirectorySelection = Awaited<ReturnType<TarvenEnvPlugin["pickDirectory"]>>;
@@ -205,8 +214,19 @@ export const nativePreview: TarvenEnvPlugin = {
   },
   async getSafeInsets() { return { top: 0, bottom: 0, left: 0, right: 0 }; },
   async setPullToRefresh() {},
-  async getRenderEngineSettings() { return { ...renderEngineSettings }; },
-  async setRenderEngineSettings(options) { renderEngineSettings = normalizeRenderEngineSettings(options); },
+  async getRenderEngineSettings() {
+    record("getRenderEngineSettings");
+    const settings = { ...renderEngineSettings };
+    if (renderSettingsFixture.readDelay) await new Promise(resolve => setTimeout(resolve, renderSettingsFixture.readDelay));
+    if (renderSettingsFixture.readError) throw new Error(renderSettingsFixture.readError);
+    return settings;
+  },
+  async setRenderEngineSettings(options) {
+    record("setRenderEngineSettings", options);
+    if (renderSettingsFixture.writeDelay) await new Promise(resolve => setTimeout(resolve, renderSettingsFixture.writeDelay));
+    if (renderSettingsFixture.writeError) throw new Error(renderSettingsFixture.writeError);
+    renderEngineSettings = normalizeRenderEngineSettings({ ...renderEngineSettings, ...options });
+  },
   async getContentOpenMode() { return { mode: openMode }; },
   async setContentOpenMode(options) { openMode = options.mode; return options; },
   async setRemoteBasicAuth(options) {
@@ -364,6 +384,7 @@ export function installNativePreview() {
       zipSelection?: ZipSelection | null;
       exportResult?: ExportResult | null;
       exportRejectMessage?: string | null;
+      renderSettings?: RenderSettingsFixture;
     };
   };
   if (global.__SILLYCLIENT_PREVIEW_FIXTURE__?.scannedInstanceIds) {
@@ -388,6 +409,8 @@ export function installNativePreview() {
     exportResult = global.__SILLYCLIENT_PREVIEW_FIXTURE__?.exportResult || null;
   }
   exportRejectMessage = global.__SILLYCLIENT_PREVIEW_FIXTURE__?.exportRejectMessage || null;
+  renderSettingsFixture = { ...global.__SILLYCLIENT_PREVIEW_FIXTURE__?.renderSettings };
+  renderEngineSettings = normalizeRenderEngineSettings(renderSettingsFixture.settings);
   global.__SILLYCLIENT_PLATFORM__ = platform;
   Capacitor.isNativePlatform = () => true;
   Capacitor.getPlatform = () => platform;
@@ -404,6 +427,7 @@ export function installNativePreview() {
       zipSelection?: ZipSelection | null;
       exportResult?: ExportResult | null;
       exportRejectMessage?: string | null;
+      renderSettings?: RenderSettingsFixture;
     }) {
       manualProvision = options.manualProvision ?? manualProvision;
       listenerDelay = options.listenerDelay ?? listenerDelay;
@@ -417,6 +441,12 @@ export function installNativePreview() {
       if ("zipSelection" in options) zipSelection = options.zipSelection;
       if ("exportResult" in options) exportResult = options.exportResult || null;
       if (options.exportRejectMessage !== undefined) exportRejectMessage = options.exportRejectMessage;
+      if (options.renderSettings) {
+        renderSettingsFixture = { ...renderSettingsFixture, ...options.renderSettings };
+        if (options.renderSettings.settings) {
+          renderEngineSettings = normalizeRenderEngineSettings({ ...renderEngineSettings, ...options.renderSettings.settings });
+        }
+      }
     },
     pending: () => Array.from(pending.keys()),
     listeners: () => Object.fromEntries(Array.from(listeners, ([name, group]) => [name, group.size])),

@@ -21,6 +21,9 @@ export interface AppSettingsDrawerProps {
   pullToRefresh: boolean;
   setPullToRefresh: (v: boolean) => void;
   renderSettings?: RenderEngineSettings | null;
+  canSetPerformancePreset?: boolean;
+  renderSettingsPending?: boolean;
+  renderSettingsError?: string | null;
   onRenderSettingsChange?: (next: RenderEngineSettings) => void;
   contentOpenMode: ContentOpenMode;
   setContentOpenMode: (m: ContentOpenMode) => void;
@@ -104,6 +107,9 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
   pullToRefresh,
   setPullToRefresh,
   renderSettings,
+  canSetPerformancePreset = false,
+  renderSettingsPending = false,
+  renderSettingsError,
   onRenderSettingsChange,
   contentOpenMode,
   setContentOpenMode,
@@ -275,6 +281,7 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                   >
                     <ToggleSwitch
                       on={renderSettings.immersiveColor}
+                      disabled={renderSettingsPending}
                       ariaLabel="顶栏变色龙"
                       onChange={(enabled) => {
                         onRenderSettingsChange({
@@ -300,7 +307,7 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                         { id: "realtime", label: "实时" },
                         { id: "once", label: "单次" },
                       ]}
-                      disabled={!renderSettings.immersiveColor}
+                      disabled={renderSettingsPending || !renderSettings.immersiveColor}
                       ariaLabel="取色频率"
                       onChange={(mode) => {
                         onRenderSettingsChange({
@@ -321,7 +328,7 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                   >
                     <ToggleSwitch
                       on={renderSettings.immersiveColor && renderSettings.clickEffect}
-                      disabled={!renderSettings.immersiveColor}
+                      disabled={renderSettingsPending || !renderSettings.immersiveColor}
                       ariaLabel="点击光效"
                       onChange={(enabled) => {
                         if (!renderSettings.immersiveColor) return;
@@ -334,6 +341,31 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                     />
                   </AppSettingsRow>
                 </>
+              )}
+              {renderSettings && onRenderSettingsChange && canSetPerformancePreset && (
+                <AppSettingsRow
+                  label="酒馆性能优化"
+                  desc="优化酒馆页面的渲染与运行开销"
+                >
+                  <ToggleSwitch
+                    on={renderSettings.performancePreset}
+                    disabled={renderSettingsPending}
+                    ariaLabel="酒馆性能优化"
+                    onChange={(enabled) => onRenderSettingsChange({
+                      ...renderSettings,
+                      performancePreset: enabled,
+                    })}
+                    isLight={isLight}
+                  />
+                </AppSettingsRow>
+              )}
+              {renderSettingsError && (
+                <div
+                  role="alert"
+                  className={cn("px-1 py-2 text-xs", isLight ? "text-red-900/70" : "text-red-300/90")}
+                >
+                  {renderSettingsError}
+                </div>
               )}
               {isWindows && (
                 <AppSettingsRow
