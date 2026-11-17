@@ -39,6 +39,7 @@ interface Presentation {
 
 const TARGET_GAP = 18;
 const CALLOUT_WIDTH = 292;
+const SPOTLIGHT_SETTLE_TIMEOUT_MS = 900;
 
 function getEventElement(target: EventTarget | null) {
   if (target instanceof Element) return target;
@@ -103,7 +104,7 @@ export default function OnboardingGuide({
       const moving = ringRef.current?.getAnimations().some((animation) =>
         animation.playState === "running" || animation.pending,
       );
-      if (moving && performance.now() - startedAt < 900) {
+      if (moving && performance.now() - startedAt < SPOTLIGHT_SETTLE_TIMEOUT_MS) {
         frameId = window.requestAnimationFrame(waitForSpotlight);
       } else {
         setSettledStepId(step.id);
@@ -160,10 +161,18 @@ export default function OnboardingGuide({
         setCalloutHeight((current) => Math.abs(current - height) > 1 ? height : current);
       }
     };
-    const observer = new ResizeObserver(measure);
-    observer.observe(callout);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(measure);
+    observer?.observe(callout);
+    window.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("resize", measure);
     measure();
-    return () => observer.disconnect();
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
+    };
   }, [Boolean(presentation)]);
 
   const requestClose = useCallback((complete: boolean) => {

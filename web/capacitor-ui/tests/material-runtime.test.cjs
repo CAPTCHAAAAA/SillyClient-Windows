@@ -40,9 +40,26 @@ test("repeated reveal annotation produces no new class/inert/style mutations", (
   const doc = { querySelectorAll: () => [card] };
   context.ensure(doc);
   const initial = writes;
+  assert.equal(properties.get("--card-title-lift"), "-60px");
+  assert.equal(attributes.has("inert"), true);
+  assert.equal(subtitle.classList.values.size, 0);
+  assert.equal(status.classList.values.size, 0);
   for (let index = 0; index < 100; index++) context.ensure(doc);
-  assert.equal(initial, 4);
   assert.equal(writes, initial);
+
+  accordion.classList.add("is-open");
+  context.ensure(doc);
+  assert.equal(attributes.has("inert"), false);
+  const opened = writes;
+  for (let index = 0; index < 100; index++) context.ensure(doc);
+  assert.equal(writes, opened);
+
+  subtitle.offsetTop = 400;
+  context.ensure(doc);
+  assert.equal(properties.get("--card-title-lift"), "-96px");
+  const resized = writes;
+  for (let index = 0; index < 100; index++) context.ensure(doc);
+  assert.equal(writes, resized);
 });
 
 test("observer ignores runtime-only classes and terminal descendants", () => {

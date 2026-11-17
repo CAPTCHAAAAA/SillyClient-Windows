@@ -2,6 +2,8 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
+const ts = require("typescript");
 const { loadSource } = require("./load-source.cjs");
 const {
   paginationCenter, paginationEase, samplePaginationPose, paginationDotOpacity,
@@ -150,11 +152,47 @@ test("visibility or preference changes snap pending geometry; disposal cancels w
   assert.equal(h.pending.size, 0);
 });
 
-test("component preserves native navigation and scopes geometry and theme ownership", () => {
+test("component delegates clamped navigation to the scroll controller and scopes geometry and theme ownership", () => {
   const component = fs.readFileSync(path.join(__dirname, "../src/components/instance/InstanceCarousel.tsx"), "utf8");
   const helper = fs.readFileSync(path.join(__dirname, "../src/lib/pagination-motion.ts"), "utf8");
   const styles = fs.readFileSync(path.join(__dirname, "../src/styles.css"), "utf8");
-  assert.ok(component.includes('el.scrollTo({ left: targetScroll, behavior: "smooth" })'));
+  const cards = [0, 1, 2].map(index => ({ index, hasAttribute: name => name === "data-slot" }));
+  const carouselRef = { current: { children: [{ hasAttribute: () => false }, ...cards] } };
+  const activeSlideRef = { current: 0 };
+  const animatePaginationRef = { current: true };
+  const isProgrammaticScrollingRef = { current: false };
+  const requests = [];
+  let snaps = 0;
+  const context = {
+    carouselRef, activeSlideRef, animatePaginationRef, isProgrammaticScrollingRef,
+    totalSlides: cards.length,
+    useCallback: callback => callback,
+    setActiveSlide: index => { activeSlideRef.current = index; },
+    paginationMotionRef: { current: { snap: () => { snaps++; } } },
+    scrollLeftForCard: (element, card) => card.index * 240,
+    settleScrollTo: (element, target, velocity) => requests.push({ element, target, velocity }),
+  };
+  const start = component.indexOf("const goToSlide = useCallback(");
+  const end = component.indexOf("useImperativeHandle(", start);
+  assert.ok(start >= 0 && end > start);
+  const navigation = ts.transpileModule(component.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  vm.runInNewContext(navigation + "\nthis.navigate = goToSlide;", context);
+  context.navigate(20, false, 0.75);
+  assert.equal(activeSlideRef.current, 2);
+  assert.equal(animatePaginationRef.current, false);
+  assert.equal(isProgrammaticScrollingRef.current, true);
+  assert.deepEqual(requests.at(-1), { element: carouselRef.current, target: 480, velocity: 0.75 });
+  context.navigate(2, false);
+  assert.equal(snaps, 1);
+  context.navigate(-20);
+  assert.equal(activeSlideRef.current, 0);
+  assert.equal(requests.at(-1).target, 0);
+  carouselRef.current = null;
+  const count = requests.length;
+  context.navigate(1);
+  assert.equal(requests.length, count);
   assert.ok(component.includes('goToSlide(activeSlideRef.current - 1, false)'));
   assert.ok(component.includes('goToSlide(activeSlideRef.current + 1, false)'));
   assert.ok(component.includes('media.addEventListener("change", onReducedMotion)'));
@@ -163,7 +201,9 @@ test("component preserves native navigation and scopes geometry and theme owners
   assert.ok(component.includes('document.removeEventListener("visibilitychange", onVisibility)'));
   assert.ok(!component.includes("pillWidth") && !component.includes("stretchTimeoutRef"));
   assert.ok(!helper.includes("getBoundingClientRect") && !helper.includes("getComputedStyle"));
-  assert.equal(styles.split(":not(.carousel-pagination):not(.carousel-pagination *)").length - 1, 2);
-  assert.equal(styles.split(":not(.motion-panel-stack):not(.motion-panel-face)").length - 1, 2);
+  assert.match(styles, /\.carousel-pagination\s*\{\s*color: #fff;/);
+  assert.match(styles, /\.carousel-pagination\.is-light\s*\{\s*color: #1a1625;/);
+  assert.match(styles, /\.carousel-pagination__mover\s*\{[^}]*transition: none;/);
+  assert.match(styles, /\.motion-panel-stack\s*\{[^}]*transition: height var\(--motion-dissolve\)/);
   assert.match(styles, /\.carousel-pagination__dot-coverage\s*\{\s*transition: none;/);
 });

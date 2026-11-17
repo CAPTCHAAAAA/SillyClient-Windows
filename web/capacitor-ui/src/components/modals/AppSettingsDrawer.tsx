@@ -1,15 +1,33 @@
-import React, { useState, useRef, useLayoutEffect } from "react";
+import React, { useState, useRef, useLayoutEffect, useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
 import { X, ChevronRight } from "lucide-react";
 import { TarvenEnv } from "../../capacitor-plugin";
 import type { ContentOpenMode, AppUpdateInfo, RenderEngineSettings } from "../../capacitor-plugin";
 import { cn } from "../../lib/utils";
 import { LAYERS } from "../../constants/layers";
 import { ActionButton } from "../common/ActionButton";
+import { ErrorReportAlert } from "../common/ErrorReportAlert";
 import { ToggleSwitch } from "../common/ToggleSwitch";
 import { SegmentedSwitch } from "../common/SegmentedSwitch";
+import { reportGlobalError } from "../../lib/global-error-store";
+import {
+  createDiagnosticContext,
+  humanizeNativeError,
+  type DiagnosticContext,
+} from "../../lib/native-errors";
 import type { TavernInstance } from "../../types";
 import { openExternalUrl } from "../../lib/external-links";
 
+
+function isWebUnimplementedError(error: unknown): boolean {
+  if (Capacitor.isNativePlatform()) return false;
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return code === "UNIMPLEMENTED" || /not implemented on web/i.test(message);
+}
 
 export interface AppSettingsDrawerProps {
   isOpen: boolean;
@@ -24,6 +42,7 @@ export interface AppSettingsDrawerProps {
   canSetPerformancePreset?: boolean;
   renderSettingsPending?: boolean;
   renderSettingsError?: string | null;
+  renderSettingsDiagnostic?: DiagnosticContext | null;
   onRenderSettingsChange?: (next: RenderEngineSettings) => void;
   contentOpenMode: ContentOpenMode;
   setContentOpenMode: (m: ContentOpenMode) => void;
@@ -33,7 +52,9 @@ export interface AppSettingsDrawerProps {
   setInstances: React.Dispatch<React.SetStateAction<TavernInstance[]>>;
   appUpdateState: "idle" | "checking" | "current" | "available" | "error";
   appUpdateInfo: AppUpdateInfo | null;
-  checkForAppUpdate: () => Promise<any>;
+  appUpdateError?: string | null;
+  appUpdateDiagnostic?: DiagnosticContext | null;
+  checkForAppUpdate: (options?: { interactive?: boolean }) => Promise<any>;
   openProjectPage: () => void;
   onOpenCleanGarbage: () => void;
 }
@@ -110,6 +131,7 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
   canSetPerformancePreset = false,
   renderSettingsPending = false,
   renderSettingsError,
+  renderSettingsDiagnostic,
   onRenderSettingsChange,
   contentOpenMode,
   setContentOpenMode,
@@ -119,6 +141,8 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
   setInstances,
   appUpdateState,
   appUpdateInfo,
+  appUpdateError,
+  appUpdateDiagnostic,
   checkForAppUpdate,
   openProjectPage,
   onOpenCleanGarbage,
@@ -126,6 +150,15 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
   const [appSettingsTab, setAppSettingsTab] = useState<
     "general" | "maintenance"
   >("general");
+  const [settingsActionError, setSettingsActionError] = useState<string | null>(null);
+  const [settingsActionDiagnostic, setSettingsActionDiagnostic] = useState<DiagnosticContext | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setSettingsActionError(null);
+      setSettingsActionDiagnostic(null);
+    }
+  }, [isOpen]);
 
   const generalRef = useRef<HTMLDivElement>(null);
   const maintenanceRef = useRef<HTMLDivElement>(null);
@@ -159,9 +192,14 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
     isOpen,
     pullToRefresh,
     renderSettings,
+    canSetPerformancePreset,
+    renderSettingsPending,
+    renderSettingsError,
+    settingsActionError,
     contentOpenMode,
     appUpdateState,
     appUpdateInfo,
+    appUpdateError,
   ]);
 
   if (!isOpen && !isClosing) return null;
@@ -179,8 +217,8 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
         top: "50%",
         left: "50%",
         transform: "translate(-50%, -50%)",
-        width: "min(460px, calc(100vw - 2rem))",
-        maxHeight: "min(85vh, calc(100vh - 4rem))",
+        width: "min(460px, calc(var(--ui-vw, 100vw) - 2rem))",
+        maxHeight: "min(calc(var(--ui-vh, 100vh) * 0.85), calc(var(--ui-vh, 100vh) - 4rem))",
       }}
     >
       {/* 头部 */}
@@ -267,8 +305,28 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                 <ToggleSwitch
                   on={pullToRefresh}
                   onChange={(v) => {
+                    const previous = pullToRefresh;
+                    setSettingsActionError(null);
+                    setSettingsActionDiagnostic(null);
                     setPullToRefresh(v);
-                    TarvenEnv.setPullToRefresh({ enabled: v }).catch(() => {});
+                    TarvenEnv.setPullToRefresh({ enabled: v }).catch((error) => {
+                      if (isWebUnimplementedError(error)) return;
+                      setPullToRefresh(previous);
+                      const friendly = humanizeNativeError(error);
+                      const context = createDiagnosticContext(error, {
+                        area: "settings",
+                        stage: "pull-to-refresh",
+                        userMessage: friendly,
+                      });
+                      setSettingsActionError(friendly);
+                      setSettingsActionDiagnostic(context);
+                      reportGlobalError(error, {
+                        area: "settings",
+                        stage: "pull-to-refresh",
+                        userMessage: friendly,
+                        diagnostic: context,
+                      });
+                    });
                   }}
                   isLight={isLight}
                 />
@@ -360,12 +418,26 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                 </AppSettingsRow>
               )}
               {renderSettingsError && (
-                <div
-                  role="alert"
-                  className={cn("px-1 py-2 text-xs", isLight ? "text-red-900/70" : "text-red-300/90")}
-                >
-                  {renderSettingsError}
-                </div>
+                <ErrorReportAlert
+                  error={renderSettingsError}
+                  diagnostic={renderSettingsDiagnostic}
+                  area="settings"
+                  stage="render-settings"
+                  isLight={isLight}
+                  compact
+                  className="my-1.5"
+                />
+              )}
+              {settingsActionError && (
+                <ErrorReportAlert
+                  error={settingsActionError}
+                  diagnostic={settingsActionDiagnostic}
+                  area={settingsActionDiagnostic?.area ?? "settings"}
+                  stage={settingsActionDiagnostic?.stage}
+                  isLight={isLight}
+                  compact
+                  className="my-1.5"
+                />
               )}
               {isWindows && (
                 <AppSettingsRow
@@ -379,10 +451,29 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                       const mode: ContentOpenMode = useBrowser
                         ? "browser"
                         : "webview";
+                      setSettingsActionError(null);
+                      setSettingsActionDiagnostic(null);
                       setContentOpenMode(mode);
-                      TarvenEnv.setContentOpenMode({ mode }).catch(() =>
-                        setContentOpenMode(previous)
-                      );
+                      TarvenEnv.setContentOpenMode({ mode }).catch((error) => {
+                        setContentOpenMode(previous);
+                        if (isWebUnimplementedError(error)) return;
+                        const friendly = humanizeNativeError(error);
+                        const context = createDiagnosticContext(error, {
+                          area: "settings",
+                          stage: "content-open-mode",
+                          platform: "windows",
+                          userMessage: friendly,
+                        });
+                        setSettingsActionError(friendly);
+                        setSettingsActionDiagnostic(context);
+                        reportGlobalError(error, {
+                          area: "settings",
+                          stage: "content-open-mode",
+                          platform: "windows",
+                          userMessage: friendly,
+                          diagnostic: context,
+                        });
+                      });
                     }}
                     isLight={isLight}
                   />
@@ -436,7 +527,7 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                 <div className="app-settings-actions">
                   <ActionButton
                     onClick={() => {
-                      void checkForAppUpdate();
+                      void checkForAppUpdate({ interactive: true });
                     }}
                   >
                     {appUpdateState === "checking" ? "检查中" : "检查"}
@@ -455,6 +546,17 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                     )}
                 </div>
               </AppSettingsRow>
+              {appUpdateState === "error" && (
+                <ErrorReportAlert
+                  error={appUpdateError || "暂时无法连接更新服务，请检查网络或代理后重试"}
+                  diagnostic={appUpdateDiagnostic}
+                  area="update"
+                  stage="check-update"
+                  isLight={isLight}
+                  compact
+                  className="my-1.5"
+                />
+              )}
               <AppSettingsRow
                 label="临时文件"
                 desc="扫描可以安全移除的缓存"
@@ -479,8 +581,26 @@ export const AppSettingsDrawer: React.FC<AppSettingsDrawerProps> = ({
                     if (
                       confirm("确认清空数据并重新初始化？所有实例将被删除")
                     ) {
+                      setSettingsActionError(null);
+                      setSettingsActionDiagnostic(null);
                       localStorage.removeItem("sillyclient.instances");
-                      TarvenEnv.clearWebViewData().catch(() => {});
+                      TarvenEnv.clearWebViewData().catch((error) => {
+                        if (isWebUnimplementedError(error)) return;
+                        const friendly = humanizeNativeError(error);
+                        const context = createDiagnosticContext(error, {
+                          area: "cleanup",
+                          stage: "clear-webview-data",
+                          userMessage: friendly,
+                        });
+                        setSettingsActionError(friendly);
+                        setSettingsActionDiagnostic(context);
+                        reportGlobalError(error, {
+                          area: "cleanup",
+                          stage: "clear-webview-data",
+                          userMessage: friendly,
+                          diagnostic: context,
+                        });
+                      });
                       setInstances([]);
                     }
                   }}
