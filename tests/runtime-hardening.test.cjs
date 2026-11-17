@@ -1909,7 +1909,7 @@ function companionFixture(t, config = { dataRoot: './data' }, fsOverride) {
     },
     ...(fsOverride ? { 'node:fs': fsOverride } : {}),
   })('src/runtime/companion-presets.ts');
-  const request = { bundleId: 'sc-bordeaux', revision: 1 };
+  const request = { bundleId: 'sc-bordeaux', revision: 3 };
   const presetRoot = path.join(project, 'resources', 'companion-presets');
   const install = () => service.installCompanionPreset(server, request, presetRoot);
   return { root, server, paths, queries, service, request, presetRoot, install };
@@ -1932,10 +1932,29 @@ test('companion preset applies real resources to default data and restores only 
   const wallpaper = path.join(setup.server, 'data', 'default-user', 'backgrounds', 'sillyclient-bg-8k.jpg');
   assert.ok(fs.existsSync(theme));
   assert.ok(fs.existsSync(wallpaper));
+  assert.deepEqual(fs.readFileSync(theme), fs.readFileSync(path.join(setup.presetRoot, 'sc-bordeaux', 'themes', 'SC Bordeaux.json')));
   transaction.rollback();
   assert.equal(fs.readFileSync(settings, 'utf8'), original);
   assert.ok(!fs.existsSync(theme));
   assert.ok(!fs.existsSync(wallpaper));
+});
+
+test('companion preset verifies revision 3 asset bytes before touching an instance', async (t) => {
+  const setup = companionFixture(t);
+  await assert.rejects(setup.service.installCompanionPreset(setup.server, {
+    bundleId: 'sc-bordeaux', revision: 1,
+  }, setup.presetRoot), /不支持的主题预设版本/);
+  const presetRoot = path.join(setup.root, 'corrupt-presets');
+  const corruptBundleRoot = path.join(presetRoot, 'sc-bordeaux');
+  fs.mkdirSync(path.join(corruptBundleRoot, 'themes'), { recursive: true });
+  fs.mkdirSync(path.join(corruptBundleRoot, 'wallpaper'), { recursive: true });
+  for (const relativePath of ['manifest.json', 'themes/SC Bordeaux.json', 'wallpaper/sillyclient-bg-8k.jpg']) {
+    fs.copyFileSync(path.join(setup.presetRoot, 'sc-bordeaux', relativePath), path.join(corruptBundleRoot, relativePath));
+  }
+  fs.appendFileSync(path.join(corruptBundleRoot, 'themes', 'SC Bordeaux.json'), '\n');
+  await assert.rejects(setup.service.installCompanionPreset(setup.server, setup.request, presetRoot), /内置主题预设资源校验失败/);
+  assert.ok(!fs.existsSync(path.join(setup.server, 'data')));
+  assert.ok(!fs.existsSync(path.join(setup.server, '.sillyclient')));
 });
 
 test('companion preset rejects custom data roots before modifying default or custom files', async (t) => {
@@ -1971,7 +1990,7 @@ test('already applied companion preset is a true no-op even with a later custom 
   const marker = path.join(setup.server, '.sillyclient', 'companion-presets', 'sc-bordeaux.json');
   fs.mkdirSync(path.dirname(marker), { recursive: true });
   const original = JSON.stringify({
-    bundleId: 'sc-bordeaux', revision: 1,
+    bundleId: 'sc-bordeaux', revision: 3,
     themeSha256: manifest.theme.sha256, wallpaperSha256: manifest.wallpaper.sha256,
   });
   fs.writeFileSync(marker, original);

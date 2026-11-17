@@ -58,6 +58,13 @@ npm --prefix .worktrees/release-hardening-windows run pack
 
 ## 4. 本树推进与改动记录 (Worktree Activity Log)
 
+### 2026-11-18 Windows 1.15.0 主题预设紧急修复
+
+- 根据用户紧急发布指令保持版本 `1.15.0`，将打包的 SC Bordeaux 主题与最新生成文件精确对齐，SHA-256 `8253F83DA43971F489A48CDD94F1050A3DD3BABDA0772C1AA5D85300029544F2`；资源 manifest 与宿主安装器校验统一至 Revision 3，修复前端请求 Revision 3、旧宿主只接受 Revision 1 导致的预设安装拒收。
+- 宿主正式编译与 `tsc --noEmit` 通过；全量回归 88 PASS / 0 FAIL / 1 可选归档缓存 SKIP。新增校验确认主题安装落盘字节精确匹配内置资源，旧 revision 和篡改资源在修改实例前拒绝。
+- 正式 NSIS 安装包归档 `Local/artifacts/v1.15.0/windows-theme-hotfix-20261118/SillyClient-Windows-v1.15.0.exe`，118,852,195 字节，SHA-256 `8C762D3549BCC9191D94ABAC43C258F4130E8551ECB76BD6268950D3A0FB7BFF`。直接从归档 EXE 提取资源，确认主题哈希、manifest Revision 3、asar 内编译后宿主校验一致；前端 28 份资产逐字节一致，Windows 控制台、Sentry 反馈和 1.15.0 版本在包内，合成故障演示标记为零。
+- 证据 `Local/evidence/windows-theme-hotfix-1.15.0-20261118/`。本树负责测试、打包、提交推送 LTS 与快进同步 Windows main；主发布流程统一替换现有 v1.15.0 Release 资产与更新说明。未安装或启动应用。
+
 ### 2026-11-18 Windows 1.15.0 故障演示链清理与重新构建
 
 - 按用户要求删除前端 `DEV_FAULT_TEST_INSTANCE` 卡片、固定实例 ID、存取过滤、故障 fetch、两处专用错误展示特判，以及 Logo 长按 620ms 合成异常上报、相关定时器与指针事件；保留普通演示实例、showcase、onboarding、真实全局错误处理与 Sentry 反馈。Windows 宿主 `src/` 未修改，版本仍为 `1.15.0`。

@@ -2,12 +2,12 @@
   "schema": "sillyclient.companion-preset",
   "version": 1,
   "bundleId": "sc-bordeaux",
-  "revision": 1,
+  "revision": 3,
   "displayName": "SC Bordeaux",
   "theme": {
     "source": "themes/SC Bordeaux.json",
     "target": "data/default-user/themes/SC Bordeaux.json",
-    "sha256": "AB0207DE9DD970557D428B47DBA8BD0859B3FA5FC6FD0050011ECF30BCA16E70"
+    "sha256": "8253F83DA43971F489A48CDD94F1050A3DD3BABDA0772C1AA5D85300029544F2"
   },
   "wallpaper": {
     "source": "wallpaper/sillyclient-bg-8k.jpg",
