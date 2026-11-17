@@ -8,7 +8,6 @@ import {
   Folder,
   Cloud,
   Terminal,
-  AlertTriangle,
 } from "lucide-react";
 import { cn, normalizeStoredVersion } from "@/lib/utils";
 import { applyUiScale, loadUiScale, saveUiScale, toUnscaledPx } from "@/lib/ui-scale";
@@ -17,7 +16,7 @@ import { TarvenEnv, DEFAULT_CONFIG, normalizeRenderEngineSettings } from "@/capa
 import { openExternalUrl } from "@/lib/external-links";
 import type { AppUpdateInfo, CompanionPresetSelection, ContentOpenMode, InstanceConfig, InstallPathMode, GithubRelease, GarbageItem, TarvenEvent, PreinstalledExtensionId, RenderEngineSettings } from "@/capacitor-plugin";
 import { buildInstanceSubfolder, cleanInstallPath, exactInstallTarget, installationSelection, instanceParentPath, normalizeInstanceIdentity, sanitizeFolderName, shouldShowDirectoryPickerError, validateInstallPathInput } from "@/lib/install-location";
-import { createDiagnosticContext, extractErrorMessage, humanizeNativeError, sanitizeDiagnosticText, type DiagnosticContext } from "@/lib/native-errors";
+import { createDiagnosticContext, humanizeNativeError, type DiagnosticContext } from "@/lib/native-errors";
 import { selectTavernRelease } from "@/lib/tavern-release";
 import { normalizeStoredInstances, serializeInstanceRecords, type StoredInstance } from "@/lib/instance-persistence";
 import { GLOBAL_LOG_KEY, instanceLogs, type LogLine } from "@/lib/log-store";
@@ -66,7 +65,6 @@ const ONBOARDING_KEY = "sillyclient.onboarding.version";
 const ONBOARDING_VERSION = "6";
 const CREATE_CARD_SLOT_KEY = "sillyclient.createCardSlot";
 const CURRENT_VERSION = 2;
-const DEV_FAULT_TEST_INSTANCE_ID = "__dev-fault-test-card__";
 const BACKGROUND_PANEL_EXIT_MS = 300;
 const PANEL_EXIT_MS = 300;
 const POPOVER_EXIT_MS = 300;
@@ -143,10 +141,7 @@ function normalizeStoredCover(cover?: string) {
 /** 持久化实例列表(icon 不持久化,加载时还原)。 */
 function saveInstances(list: TavernInstance[]) {
   try {
-    const persistable = import.meta.env.DEV
-      ? list.filter((item) => item.id !== DEV_FAULT_TEST_INSTANCE_ID)
-      : list;
-    localStorage.setItem(INSTANCES_KEY, JSON.stringify(serializeInstanceRecords(persistable)));
+    localStorage.setItem(INSTANCES_KEY, JSON.stringify(serializeInstanceRecords(list)));
   } catch {
     /* ignore */
   }
@@ -172,24 +167,6 @@ const DEMO_RUNNING_INSTANCES: TavernInstance[] = [
   { ...DEMO_INSTANCE, id: "demo-running-second", name: "SillyTavern", subtitle: "测试酒馆 · 运行中", version: "1.19.0", port: 8001 },
   { ...DEMO_INSTANCE, id: "demo-running-third", name: "SillyTavern", subtitle: "备用酒馆 · 运行中", version: "stable", port: 8002 },
 ];
-
-const DEV_FAULT_TEST_INSTANCE: TavernInstance | null = import.meta.env.DEV
-  ? {
-      id: DEV_FAULT_TEST_INSTANCE_ID,
-      name: "异常自动捕获测试",
-      subtitle: "点击展开 · 点启动必报错",
-      version: "dev",
-      status: "error",
-      type: "remote",
-      url: "http://127.0.0.1:59999",
-      createdAt: "测试卡片",
-      lastUsed: "点开后点击启动",
-      totalUsage: "0s",
-      color: "#8b3a52",
-      port: 59999,
-      icon: <AlertTriangle className="w-5 h-5" />,
-    }
-  : null;
 
 const DEBUG_LAUNCH_LOG_KEY = "__sillyclient_debug_launch_console__";
 const DEBUG_OPEN_INSTANCE: TavernInstance = {
@@ -290,7 +267,6 @@ function SillyClientLauncher() {
   const platformTag = isWindows ? "windows" : isIOS ? "ios" : isAndroid ? "android" : "web";
   const isDemoPreview = isWeb && !isWindows && !isShowcase && !isNativePreview
     && (import.meta.env.DEV || (isLocalPreview && window.location.port === "8768"));
-  const canPreviewIssueReport = isDemoPreview || (isNativePreview && !isShowcase);
   const terminalTitle = isWindows ? "Windows 控制台" : isIOS ? "iOS 控制台" : "Android 终端";
   const terminalPrompt = isWindows ? "C:\\>" : isIOS ? "ios >" : "~ $";
   const terminalBanner = isWindows
@@ -307,14 +283,9 @@ function SillyClientLauncher() {
   const [isRelocateModalClosing, setIsRelocateModalClosing] = useState(false);
   const [instances, setInstances] = useState<TavernInstance[]>(() => {
     if (isShowcase) return [];
-    const rawLoaded = loadInstances();
-    const loaded = import.meta.env.DEV
-      ? rawLoaded.filter((item) => item.id !== DEV_FAULT_TEST_INSTANCE_ID)
-      : rawLoaded;
+    const loaded = loadInstances();
     if (!isDemoPreview) return loaded;
-    return import.meta.env.DEV && DEV_FAULT_TEST_INSTANCE
-      ? [DEV_FAULT_TEST_INSTANCE, ...DEMO_RUNNING_INSTANCES, ...loaded]
-      : [...DEMO_RUNNING_INSTANCES, ...loaded];
+    return [...DEMO_RUNNING_INSTANCES, ...loaded];
   });
   const [showBgPanel, setShowBgPanel] = useState(false);
   const [isPanelClosing, setIsPanelClosing] = useState(false);
@@ -583,9 +554,6 @@ function SillyClientLauncher() {
   const middleDebugPressTimerRef = useRef<number | null>(null);
   const middleDebugPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const middleDebugLongPressRef = useRef(false);
-  const logoDebugPressTimerRef = useRef<number | null>(null);
-  const logoDebugPressStartRef = useRef<{ x: number; y: number } | null>(null);
-  const logoDebugLongPressRef = useRef(false);
   const settingsBtnRef = useRef<HTMLButtonElement>(null);
   const cardMenuCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const managePanelOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -760,7 +728,6 @@ function SillyClientLauncher() {
     if (managePanelCloseTimerRef.current) clearTimeout(managePanelCloseTimerRef.current);
     if (terminalDebugPressTimerRef.current) clearTimeout(terminalDebugPressTimerRef.current);
     if (middleDebugPressTimerRef.current) clearTimeout(middleDebugPressTimerRef.current);
-    if (logoDebugPressTimerRef.current) clearTimeout(logoDebugPressTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -1150,7 +1117,7 @@ function SillyClientLauncher() {
   // 远程实例在线状态检测(用原生 pingUrl 绕过 WebView CORS)
   const checkRemoteStatus = useCallback(async () => {
     const remotes = instances.filter(
-      (t) => t.type === "remote" && t.url && !(import.meta.env.DEV && t.id === DEV_FAULT_TEST_INSTANCE_ID)
+      (t) => t.type === "remote" && t.url
     );
     if (remotes.length === 0) return;
     const results = await Promise.all(remotes.map(async (r) => {
@@ -1495,10 +1462,6 @@ function SillyClientLauncher() {
     const url = instance.url || "http://127.0.0.1:8000";
     setLaunchLogs([{ msg: `检查 ${url}`, level: "info" }]);
     setLaunchProgress({ pct: 25, text: "正在验证远程连接" });
-    if (import.meta.env.DEV && isWeb && instance.id === DEV_FAULT_TEST_INSTANCE_ID) {
-      await operation.delay(260);
-      await operation.wait(fetch(url, { mode: "no-cors", signal: AbortSignal.timeout(1200) }));
-    }
     const result = await operation.wait(TarvenEnv.pingUrl({ url, instanceId: instance.id }));
     if (!result.online) {
       throw new Error(result.error || "远程实例当前不可访问");
@@ -1518,7 +1481,7 @@ function SillyClientLauncher() {
       showGestureHint: instance.pendingTavernGestureHint === true,
     }));
     setLaunchProgress({ pct: 100, text: "远程实例已打开" });
-  }, [contentOpenMode, isWeb, setLaunchLogs]);
+  }, [contentOpenMode, setLaunchLogs]);
 
   // 启动实例直接执行入口 (跳过密码阻断，在已完成密码校验或无密码时调用)
   const launchTavernDirect = useCallback(async (instance: TavernInstance) => {
@@ -1575,17 +1538,7 @@ function SillyClientLauncher() {
     } catch (err: any) {
       if (!operation.isCurrent || err instanceof OperationCancelledError) return;
       const isValidation = err instanceof ClientValidationError;
-      const rawFaultMessage = sanitizeDiagnosticText(extractErrorMessage(err), [
-        instance.subtitle,
-        instance.name,
-        instance.installPath,
-        instance.url,
-      ]);
-      const msg = isValidation
-        ? err.message
-        : instance.id === DEV_FAULT_TEST_INSTANCE_ID && rawFaultMessage
-          ? rawFaultMessage
-          : humanizeNativeError(err);
+      const msg = isValidation ? err.message : humanizeNativeError(err);
       const diagnostic = isValidation
         ? null
         : createDiagnosticContext(err, {
@@ -2064,17 +2017,7 @@ function SillyClientLauncher() {
     } catch (err: any) {
       if (!operation.isCurrent || err instanceof OperationCancelledError) return;
       const isValidation = err instanceof ClientValidationError;
-      const rawFaultMessage = sanitizeDiagnosticText(extractErrorMessage(err), [
-        lastLaunchParams.subtitle,
-        lastLaunchParams.name,
-        lastLaunchParams.installPath,
-        lastLaunchParams.url,
-      ]);
-      const msg = isValidation
-        ? err.message
-        : lastLaunchParams.id === DEV_FAULT_TEST_INSTANCE_ID && rawFaultMessage
-          ? rawFaultMessage
-          : humanizeNativeError(err);
+      const msg = isValidation ? err.message : humanizeNativeError(err);
       const diagnostic = isValidation
         ? null
         : createDiagnosticContext(err, {
@@ -3020,88 +2963,9 @@ function SillyClientLauncher() {
     setShowNewInstancePanel(true);
   }, [isWeb, isShowcase, isLocalPreview, resetNewInstanceFields]);
 
-  const openIssueReportPreview = useCallback(() => {
-    if (!canPreviewIssueReport) return;
-    const queryPlatform = new URLSearchParams(window.location.search).get("platform")?.trim();
-    const previewPlatform = queryPlatform || (platformTag === "web" ? "windows" : platformTag);
-    const previewError = Object.assign(
-      new Error("TypeError: Cannot read properties of undefined (reading 'servicePort') at startTavernRuntime"),
-      { stage: "runtimeInit", code: "ERR_UNHANDLED_RUNTIME" },
-    );
-    const diagnostic = createDiagnosticContext(previewError, {
-      area: "runtime",
-      stage: "runtimeInit",
-      elapsedMs: 1420,
-      platform: previewPlatform,
-    });
-    closeVersionDropdown();
-    reportGlobalError(previewError, {
-      area: "runtime",
-      stage: "runtimeInit",
-      platform: previewPlatform,
-      diagnostic,
-      force: true,
-    });
-  }, [canPreviewIssueReport, closeVersionDropdown, platformTag]);
-
-  const clearLogoDebugTimer = useCallback(() => {
-    if (logoDebugPressTimerRef.current) {
-      clearTimeout(logoDebugPressTimerRef.current);
-      logoDebugPressTimerRef.current = null;
-    }
-    logoDebugPressStartRef.current = null;
-  }, []);
-
   const handleLogoClick = useCallback(() => {
-    if (logoDebugLongPressRef.current) {
-      logoDebugLongPressRef.current = false;
-      return;
-    }
     setLogoFontIndex(prev => (prev + 1) % LOGO_FONTS.length);
   }, []);
-
-  const handleLogoDebugPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!canPreviewIssueReport || (event.pointerType === "mouse" && event.button !== 0)) return;
-    clearLogoDebugTimer();
-    logoDebugLongPressRef.current = false;
-    logoDebugPressStartRef.current = { x: event.clientX, y: event.clientY };
-    logoDebugPressTimerRef.current = window.setTimeout(() => {
-      logoDebugPressTimerRef.current = null;
-      logoDebugPressStartRef.current = null;
-      logoDebugLongPressRef.current = true;
-      openIssueReportPreview();
-      window.addEventListener(
-        "pointerup",
-        () => {
-          window.setTimeout(() => {
-            logoDebugLongPressRef.current = false;
-          }, 60);
-        },
-        { once: true },
-      );
-    }, 620);
-  }, [canPreviewIssueReport, clearLogoDebugTimer, openIssueReportPreview]);
-
-  const handleLogoDebugPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const start = logoDebugPressStartRef.current;
-    if (!start) return;
-    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) {
-      clearLogoDebugTimer();
-    }
-  }, [clearLogoDebugTimer]);
-
-  const handleLogoDebugPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    clearLogoDebugTimer();
-    if (logoDebugLongPressRef.current) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, [clearLogoDebugTimer]);
-
-  const handleLogoDebugPointerCancel = useCallback(() => {
-    clearLogoDebugTimer();
-    logoDebugLongPressRef.current = false;
-  }, [clearLogoDebugTimer]);
 
   return (
     <div
@@ -3301,20 +3165,7 @@ function SillyClientLauncher() {
         <div
           className="mb-4 text-center select-none cursor-pointer group"
           onClick={handleLogoClick}
-          onPointerDown={handleLogoDebugPointerDown}
-          onPointerMove={handleLogoDebugPointerMove}
-          onPointerUp={handleLogoDebugPointerUp}
-          onPointerCancel={handleLogoDebugPointerCancel}
-          onContextMenu={(event) => {
-            if (canPreviewIssueReport && (logoDebugLongPressRef.current || logoDebugPressTimerRef.current)) {
-              event.preventDefault();
-            }
-          }}
-          title={
-            canPreviewIssueReport
-              ? `点击切换字体 (${LOGO_FONTS[logoFontIndex].name}) · 长按预览问题上报`
-              : `点击切换字体 (${LOGO_FONTS[logoFontIndex].name})`
-          }
+          title={`点击切换字体 (${LOGO_FONTS[logoFontIndex].name})`}
         >
           <span
             className="inline-block text-[clamp(3rem,10vw,7.5rem)] font-normal leading-none transition-all duration-300"
@@ -3329,7 +3180,7 @@ function SillyClientLauncher() {
           <div className={cn(
             "text-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-300",
             isLight ? "text-[#1a1625]/25" : "text-white/25"
-          )}>{canPreviewIssueReport ? `${LOGO_FONTS[logoFontIndex].name} · 长按预览上报` : LOGO_FONTS[logoFontIndex].name}</div>
+          )}>{LOGO_FONTS[logoFontIndex].name}</div>
         </div>
 
         {/* 搜索栏 */}

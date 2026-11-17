@@ -58,6 +58,13 @@ npm --prefix .worktrees/release-hardening-windows run pack
 
 ## 4. 本树推进与改动记录 (Worktree Activity Log)
 
+### 2026-11-18 Windows 1.15.0 故障演示链清理与重新构建
+
+- 按用户要求删除前端 `DEV_FAULT_TEST_INSTANCE` 卡片、固定实例 ID、存取过滤、故障 fetch、两处专用错误展示特判，以及 Logo 长按 620ms 合成异常上报、相关定时器与指针事件；保留普通演示实例、showcase、onboarding、真实全局错误处理与 Sentry 反馈。Windows 宿主 `src/` 未修改，版本仍为 `1.15.0`。
+- 前端类型检查、Vite 生产构建与 95/95 测试通过；宿主类型检查通过，正式编译后宿主回归 87 PASS / 0 FAIL / 1 可选归档 SKIP。首次宿主测试因旧 `dist` 已清理而缺少编译文件，已保留失败日志；重编译后完整重跑通过。
+- 官方 `scripts/Sync-Frontend.ps1` 已刷新 `frontend-dist` 与 `frontend.lock.json`，NSIS 正式打包成功。`app.asar` 内 28 份前端文件与本次源码构建、同步结果逐字节一致；故障演示标记全部为零，Windows 控制台、版本 1.15.0 与 Sentry 交付代码仍在。
+- 新包独立归档 `Local/artifacts/v1.15.0/windows-no-fault-demo-20261118/SillyClient-Windows-v1.15.0.exe`：118,842,098 字节，SHA-256 `202376f51f0a4d53ac4376440a397fea230f7aacbe23956d8c138a31b5317f13`。证据 `Local/evidence/windows-no-fault-demo-20261118/`；未覆盖旧根归档、未安装或启动应用。构建通过后提交并推送本 LTS，随后快进同步 Windows main；确切交付 SHA 与远端回执记入上述证据。
+
 | 日期 | 操作人 / 提交 | 改动摘要与内部验证结果 | 状态 |
 | :--- | :--- | :--- | :---: |
 | 2026-10-08 | Agent (f5ce082) | 修复从移动端导入 ZIP 依赖锁失效与启动阻塞，打包 Windows 1.11.0 安装包并推送到 main | 已发布 |
