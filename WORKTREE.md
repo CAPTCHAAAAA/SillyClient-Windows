@@ -58,6 +58,12 @@ npm --prefix .worktrees/release-hardening-windows run pack
 
 ## 4. 本树推进与改动记录 (Worktree Activity Log)
 
+### 2026-11-19 Windows 1.15.1 前端同步与统一发布
+
+- **同步范围**：从 `common-frontend`（`d946b58`）同步统一前端更新（`ManageFolderShell` + `folder-tab-geometry.ts` 一体 SVG 文件夹页签与 780ms `manage-shared-transition.ts` 平切、`HeaderClock`、`CornerResizeCurve` 悬停/激活态、`interactionLocks` 与按需远程状态轮询、取消/未实现错误边界收敛及业务源码 `src/dev/` 物理隔离）；严格剔除 `src/dev/DevDebugOverlay.tsx` 与 `src/dev/dev-fixtures.tsx`（保持 `src/main.tsx` 无调试浮窗引用）；`src/routes/index.tsx` 三方合并保留 `directoryPickerGeneration` 防抖守卫及 `provisionCreatedInstance` 后置 `!isAndroid` 的 `setInstancesRoot` 写入。同步更新 `tests/native-preview.browser.cjs` 管理页签 `role="tab"` 选择器。
+- **版本与验证**：双 `package.json` 升为 `1.15.1`；前端 `tsc --noEmit`、Vite 生产构建（1956 modules）与前后两次 `node --test web/capacitor-ui/tests/*.test.cjs`（107/107，含 `dev-isolation.test.cjs`）全通过；`Sync-Frontend.ps1` 刷新 `frontend-dist` 与 `frontend.lock.json`；宿主 `npm run check`、`npm run build`、`npm test`（88 pass / 0 fail / 1 skip 可选归档缓存，Windows 后端终态架构未改动）全通过。
+- **打包与审计**：`npm run pack` 产出 NSIS 安装包，归档至 `Local/artifacts/v1.15.1/SillyClient-Windows-v1.15.1.exe`（118,850,650 字节，SHA-256 `7be6b64d0af7eee7437cad27ca452ef8cdd622850f771bf036e8d369c615ee7e`）；`app.asar` 审计确认 28/28 前端资产逐字节一致、含 `Windows 控制台` / `1.15.1` / Sentry DSN、合成与开发测试标记为零（证据：`Local/evidence/v1.15.1-release/windows-package-audit.json`）。未在本机安装或启动应用。
+
 ### 2026-11-18 Windows 1.15.0 主题预设紧急修复
 
 - 根据用户紧急发布指令保持版本 `1.15.0`，将打包的 SC Bordeaux 主题与最新生成文件精确对齐，SHA-256 `8253F83DA43971F489A48CDD94F1050A3DD3BABDA0772C1AA5D85300029544F2`；资源 manifest 与宿主安装器校验统一至 Revision 3，修复前端请求 Revision 3、旧宿主只接受 Revision 1 导致的预设安装拒收。

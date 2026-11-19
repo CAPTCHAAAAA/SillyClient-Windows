@@ -378,7 +378,7 @@ test("command logs after stop reach only the instance and rejected commands stay
     await page.waitForTimeout(650);
     await first.getByRole("button", { name: "操作菜单", exact: true }).click();
     await page.getByRole("button", { name: "管理", exact: true }).click();
-    await page.getByRole("button", { name: "实例终端", exact: true }).click();
+    await page.getByRole("tab", { name: "实例终端", exact: true }).click();
     const input = page.getByPlaceholder("输入 Windows 命令", { exact: true });
     await input.fill("echo after-stop");
     await input.press("Enter");
