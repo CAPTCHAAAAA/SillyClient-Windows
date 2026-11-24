@@ -21,7 +21,7 @@ import { invalidateDirectorySize } from './runtime/directory-stats';
 import { findAvailablePort } from './port-finder';
 import { downloadWithMirrors, flattenExtractedDir } from './download-provision';
 import { resolveInstanceDir } from './instance-query';
-import type { ProvisionAndStartParams } from './contracts/ipc-contracts';
+import type { ProvisionAndStartParams, ProvisionAndStartResult } from './contracts/ipc-contracts';
 
 export function writeInstanceConfig(serverDir: string, port: number, config: any): void {
   const c = config || {};
@@ -91,17 +91,19 @@ export async function pollUntilReady(
   log: (msg: string, level?: string) => void,
   signal?: AbortSignal,
   host = '127.0.0.1',
+  hasExited?: () => boolean,
 ): Promise<boolean> {
   const start = Date.now();
   const url = `http://${host}:${port}`;
   while (Date.now() - start < timeoutMs) {
     checkSignal(signal);
-    if (!proc.isServerRunning()) return false;
+    if (!proc.isServerRunning() || hasExited?.()) return false;
     try {
       if (await tryConnect(url, signal)) return true;
     } catch {
       checkSignal(signal);
     }
+    if (!proc.isServerRunning() || hasExited?.()) return false;
     await delay(200, signal);
   }
   return false;
@@ -149,7 +151,7 @@ export async function executeProvisionWorkflow(
   opts: ProvisionAndStartParams,
   context: OperationContext,
   callbacks: ProvisionCallbacks,
-): Promise<{ ready: boolean }> {
+): Promise<ProvisionAndStartResult> {
   const { zipballUrl, localZipPath, config, installPath, installPathMode, companionPreset } = opts || {};
   const port = opts?.port;
   const safeInstanceId = context.instanceId;
@@ -321,17 +323,32 @@ export async function executeProvisionWorkflow(
 
     callbacks.onServerStarted(safeInstanceId, context.operationId, targetServerDir, actualPort);
 
-    proc.startServer(targetServerDir, safeInstanceId, actualPort, log, () => {
+    let serverExited = false;
+    let serverExitCode: number | null = null;
+    const startupErrorLines: string[] = [];
+    const serverLog = (msg: string, level?: string) => {
+      if (level === 'error' && msg && !/^Server exited \(code=/.test(msg)) {
+        startupErrorLines.push(msg.trim());
+        if (startupErrorLines.length > 6) startupErrorLines.shift();
+      }
+      log(msg, level);
+    };
+
+    proc.startServer(targetServerDir, safeInstanceId, actualPort, serverLog, (code) => {
+      serverExited = true;
+      serverExitCode = code;
       callbacks.onServerExited(safeInstanceId, context.operationId);
     }, { args, operationId: context.operationId });
 
     progress(95, '等待就绪');
-    const ready = await pollUntilReady(actualPort, 180000, log, context.signal, connectionHost);
+    const ready = await pollUntilReady(actualPort, 180000, log, context.signal, connectionHost, () => serverExited);
     context.check();
-    if (!ready) throw new Error('服务启动超时（180s）');
-    if (!proc.isServerRunning() || callbacks.getCurrentOperationId() !== context.operationId) {
-      throw new Error('服务在完成启动前已退出');
+    if (!proc.isServerRunning() || serverExited || callbacks.getCurrentOperationId() !== context.operationId) {
+      const codePart = serverExitCode !== null ? ` (code=${serverExitCode})` : '';
+      const lastErr = startupErrorLines.length > 0 ? `：${startupErrorLines[startupErrorLines.length - 1].slice(0, 200)}` : '';
+      throw new Error(`Node.js 进程在启动完成前已退出${codePart}${lastErr}`);
     }
+    if (!ready) throw new Error('服务启动超时（180s）');
 
     const currentUrl = `http://${connectionHost}:${actualPort}`;
     companionPresetTransaction?.commit();
@@ -370,10 +387,14 @@ export async function executeProvisionWorkflow(
       }
       await utils.removeDirWithRetries(targetServerDir);
     }
-    if (!context.signal.aborted) {
-      log(`失败: ${e.message}`, 'error');
-      callbacks.notify('error', { message: e.message, ...eventContext });
+    if (context.signal.aborted) {
+      return { ready: false, cancelled: true };
     }
-    return { ready: false };
+    const message = e instanceof Error && e.message.trim()
+      ? e.message.trim()
+      : String(e || '实例启动失败');
+    log(`失败: ${message}`, 'error');
+    callbacks.notify('error', { message, ...eventContext });
+    return { ready: false, error: message };
   }
 }

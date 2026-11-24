@@ -76,3 +76,81 @@ test('renameInstance rejects existing target directory', async () => {
   instanceStore.removeInstanceRecord('inst-a');
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
+
+test('renameInstance rejects when an active child process holds the directory', async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-rename-active-'));
+  const oldDir = path.join(tmpRoot, 'inst-busy');
+  fs.mkdirSync(oldDir, { recursive: true });
+  instanceStore.registerInstance('inst-busy', oldDir);
+
+  try {
+    await assert.rejects(
+      async () => {
+        await rename.renameInstance(
+          { instanceId: 'inst-busy', newName: 'inst-renamed' },
+          null,
+          { activeDirectories: [oldDir] },
+        );
+      },
+      { message: /仍有终端或后台进程占用/ },
+    );
+    assert.equal(fs.existsSync(oldDir), true);
+  } finally {
+    instanceStore.removeInstanceRecord('inst-busy');
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('renameInstance retries transient EPERM and reports clear occupied hint when exhausted', async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-rename-eperm-'));
+  const oldDir = path.join(tmpRoot, 'inst-retry');
+  const newDir = path.join(tmpRoot, 'inst-after');
+  fs.mkdirSync(oldDir, { recursive: true });
+  instanceStore.registerInstance('inst-retry', oldDir);
+
+  try {
+    let attempts = 0;
+    const res = await rename.renameInstance(
+      { instanceId: 'inst-retry', newName: 'inst-after' },
+      null,
+      {
+        retryDelaysMs: [1, 1, 1],
+        renameImpl: async (from, to) => {
+          attempts += 1;
+          if (attempts < 3) {
+            const err = new Error(`EPERM: operation not permitted, rename '${from}' -> '${to}'`);
+            err.code = 'EPERM';
+            throw err;
+          }
+          await fs.promises.rename(from, to);
+        },
+      },
+    );
+    assert.equal(res.success, true);
+    assert.equal(attempts, 3);
+    assert.equal(fs.existsSync(newDir), true);
+
+    await assert.rejects(
+      async () => {
+        await rename.renameInstance(
+          { instanceId: 'inst-after', newName: 'inst-locked' },
+          null,
+          {
+            retryDelaysMs: [1, 1],
+            renameImpl: async () => {
+              const err = new Error('EPERM: locked');
+              err.code = 'EPERM';
+              throw err;
+            },
+          },
+        );
+      },
+      (err) => err.code === 'EPERM' && /无法重命名实例目录（EPERM）/.test(err.message) && /占用/.test(err.message),
+    );
+  } finally {
+    instanceStore.removeInstanceRecord('inst-retry');
+    instanceStore.removeInstanceRecord('inst-after');
+    instanceStore.removeInstanceRecord('inst-locked');
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});

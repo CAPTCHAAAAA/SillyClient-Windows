@@ -45,7 +45,7 @@ import {
 
 // 引入解耦后的独立领域服务
 import { pickDirectoryDialog, pickImageDialog, pickZipFileDialog, pickSaveZipFileDialog } from './system-dialogs';
-import type { ExportInstanceParams, ExportInstanceResult } from './contracts/ipc-contracts';
+import type { ExportInstanceParams, ExportInstanceResult, ProvisionAndStartResult } from './contracts/ipc-contracts';
 import { saveTextFileSafely, readTextFileSafely } from './file-system-ops';
 import { pingUrl } from './network-probe';
 import { fetchReleases } from './download-provision';
@@ -227,7 +227,7 @@ export function notify(eventName: string, data: any): void {
 // 业务执行与协调流程
 // ---------------------------------------------------------------------------
 
-async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
+async function provisionAndStart(opts: any): Promise<ProvisionAndStartResult> {
   if (cleanupCompleted) throw new Error('Application is shutting down');
   const preinstall = validatePreinstallSelection(opts?.preinstall);
   const safeInstanceId = paths.normalizeInstanceId(opts?.instanceId || '');
@@ -277,7 +277,7 @@ async function provisionAndStart(opts: any): Promise<{ ready: boolean }> {
         },
       }));
   } catch (error: any) {
-    if (error?.name === 'AbortError') return { ready: false };
+    if (error?.name === 'AbortError') return { ready: false, cancelled: true };
     throw error;
   }
 }
@@ -437,7 +437,13 @@ export async function handle(method: string, options: any): Promise<any> {
     case 'relocateInstance':
       return relocateInstance(options, currentInstanceId);
     case 'renameInstance':
-      return renameInstance(options, currentInstanceId);
+      return operations.enqueue(() => {
+        garbage.invalidate();
+        maintenance.invalidate();
+        return renameInstance(options, currentInstanceId, {
+          activeDirectories: proc.activeProcessDirectories(),
+        });
+      });
     case 'setInstancePassword':
       return setInstancePassword(options.instanceId, options.password, options.oldPassword);
     case 'verifyInstancePassword':

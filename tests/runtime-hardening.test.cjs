@@ -180,7 +180,7 @@ function pluginHarness(t, callbacks = {}) {
   let starts = 0;
   const fakeProcesses = {
     isServerRunning: () => running,
-    activeProcessDirectories: () => [],
+    activeProcessDirectories: callbacks.activeProcessDirectories || (() => []),
     stopServer: async () => {
       if (running) { running = false; exit?.(0); }
     },
@@ -190,8 +190,12 @@ function pluginHarness(t, callbacks = {}) {
     startServer: (cwd, id, port, log, onExit, options) => {
       running = true;
       starts++;
-      exit = onExit;
-      callbacks.onStart?.({ cwd, id, port, options });
+      const wrappedOnExit = (code) => {
+        running = false;
+        onExit?.(code);
+      };
+      exit = wrappedOnExit;
+      callbacks.onStart?.({ cwd, id, port, log, onExit: wrappedOnExit, options });
       return fakeChild(5000 + starts);
     },
     sendCommand: callbacks.sendCommand || (async () => undefined),
@@ -204,13 +208,13 @@ function pluginHarness(t, callbacks = {}) {
     writeText: (file, text) => fs.writeFileSync(file, text),
   };
   const http = {
-    get: (_url, _options, onResponse) => {
+    get: callbacks.httpGet || ((_url, _options, onResponse) => {
       const request = new EventEmitter();
       request.destroy = () => undefined;
       request.setTimeout = () => undefined;
       setImmediate(() => onResponse({ statusCode: 200, destroy: () => undefined }));
       return request;
-    },
+    }),
   };
   const network = {
     createServer: () => {
@@ -339,9 +343,12 @@ test('invalid custom path selection preserves an already running instance and it
     { installPath: incomplete, installPathMode: 'exact' },
     { installPath: path.parse(harness.root).root, installPathMode: 'exact' },
   ]) {
-    assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    const invalidResult = await harness.plugin.handle('provisionAndStart', {
       instanceId: 'invalid', operationId: 'invalid-op', port: 8000, ...options,
-    }), { ready: false });
+    });
+    assert.equal(invalidResult.ready, false);
+    assert.equal(typeof invalidResult.error, 'string');
+    assert.ok(invalidResult.error.length > 0);
     assert.equal(harness.running(), true);
     assert.equal(harness.plugin.isServerReady(), true);
     assert.equal(harness.plugin.getCurrentInstanceId(), 'running');
@@ -443,7 +450,10 @@ test('a missing registered custom path never adopts a same-ID managed directory 
   const info = await harness.plugin.handle('getInstanceInfo', { instanceId: 'custom' });
   assert.equal(info.path, missing);
   assert.equal(info.status, 'not_found');
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'custom', port: 8000 }), { ready: false });
+  const missingResult = await harness.plugin.handle('provisionAndStart', { instanceId: 'custom', port: 8000 });
+  assert.equal(missingResult.ready, false);
+  assert.equal(typeof missingResult.error, 'string');
+  assert.ok(missingResult.error.length > 0);
   assert.equal(harness.starts(), 0);
   await harness.plugin.handle('sendCommand', { instanceId: 'custom', text: 'synthetic' });
   assert.deepEqual(commands, []);
@@ -492,7 +502,9 @@ test('registered instances stay authoritative over stale card paths and never to
   // 创建意图（携带安装源）且显式路径与注册表冲突：拒绝在新位置重复创建造成分身，运行中的实例不受打扰。
   const archive = path.join(harness.root, 'source.zip');
   fs.writeFileSync(archive, 'synthetic archive');
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { ...options, localZipPath: archive }), { ready: false });
+  const conflictResult = await harness.plugin.handle('provisionAndStart', { ...options, localZipPath: archive });
+  assert.equal(conflictResult.ready, false);
+  assert.match(conflictResult.error || '', /已安装在/);
   assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /已安装在/);
   assert.equal(harness.running(), true);
 });
@@ -510,7 +522,9 @@ test('launch without install source adopts a legacy hidden-directory instance in
 
 test('launch of a missing instance without install source refuses a silent reinstall', async (t) => {
   const harness = pluginHarness(t);
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'ghost', port: 8000 }), { ready: false });
+  const ghostResult = await harness.plugin.handle('provisionAndStart', { instanceId: 'ghost', port: 8000 });
+  assert.equal(ghostResult.ready, false);
+  assert.match(ghostResult.error || '', /找不到实例/);
   assert.equal(harness.starts(), 0);
   const error = harness.events.filter((event) => event.name === 'tarven:error').at(-1);
   assert.match(error.data.message, /找不到实例/);
@@ -527,7 +541,9 @@ test('launch of an incomplete instance without install source reports corruption
   fs.writeFileSync(path.join(broken, 'package.json'), JSON.stringify({ version: '1.19.0' }));
   fs.writeFileSync(path.join(broken, 'data', 'user.json'), '{"keep":true}');
   harness.load('src/runtime/instances.ts').registerInstance('broken', broken);
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', { instanceId: 'broken', port: 8000 }), { ready: false });
+  const brokenResult = await harness.plugin.handle('provisionAndStart', { instanceId: 'broken', port: 8000 });
+  assert.equal(brokenResult.ready, false);
+  assert.match(brokenResult.error || '', /缺少启动文件/);
   assert.equal(harness.starts(), 0);
   const error = harness.events.filter((event) => event.name === 'tarven:error').at(-1);
   assert.match(error.data.message, /缺少启动文件/);
@@ -619,9 +635,11 @@ test('provision accepts the real numeric heartbeat defaults and preserves reques
 test('provision rejects nonnumeric, noninteger and out-of-range heartbeat values before any installation', async (t) => {
   const harness = pluginHarness(t);
   for (const heartbeat of [true, false, null, '30', -1, 0.5, NaN, Infinity, 2147483648, {}]) {
-    assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    const res = await harness.plugin.handle('provisionAndStart', {
       instanceId: 'invalid-heartbeat', port: 8000, config: { ...defaultRuntimeConfig, heartbeat },
-    }), { ready: false });
+    });
+    assert.equal(res.ready, false);
+    assert.match(res.error || '', /heartbeat/i);
     assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /heartbeat/i);
   }
   assert.equal(harness.starts(), 0);
@@ -632,16 +650,20 @@ test('provision rejects nonnumeric, noninteger and out-of-range heartbeat values
 test('provision validates runtime flags and ports through the same launch argument contract', async (t) => {
   const harness = pluginHarness(t);
   for (const key of ['listen', 'ipv4', 'ipv6', 'dnsIpv6', 'keepAlive']) {
-    assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    const res = await harness.plugin.handle('provisionAndStart', {
       instanceId: 'invalid-flag', port: 8000, config: { ...defaultRuntimeConfig, [key]: 'false' },
-    }), { ready: false });
+    });
+    assert.equal(res.ready, false);
+    assert.match(res.error || '', new RegExp(`Invalid runtime flag: ${key}`));
     assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message,
       new RegExp(`Invalid runtime flag: ${key}`));
   }
   for (const port of [0, -1, 0.5, 65536, NaN, Infinity, -Infinity, '8000', true, false, null, [], {}]) {
-    assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    const res = await harness.plugin.handle('provisionAndStart', {
       instanceId: 'invalid-port', port, config: defaultRuntimeConfig,
-    }), { ready: false });
+    });
+    assert.equal(res.ready, false);
+    assert.match(res.error || '', /Invalid server port/);
     assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /Invalid server port/);
   }
   assert.equal(harness.starts(), 0);
@@ -661,9 +683,11 @@ test('runtime configuration rejects malformed shapes and unknown keys before int
     null, 'false', true, false, 1, [], [{ listen: false }], new Date(0), new Map(),
     Object.create({ listen: false }), { keepAlvie: true }, { protocol: { ipv4: true } },
   ]) {
-    assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    const res = await harness.plugin.handle('provisionAndStart', {
       instanceId: 'invalid-config', operationId: 'invalid-config-op', port: 8000, config,
-    }), { ready: false });
+    });
+    assert.equal(res.ready, false);
+    assert.match(res.error || '', /runtime configuration/i);
     assert.match(harness.events.filter(event => event.name === 'tarven:error').at(-1).data.message,
       /runtime configuration/i);
     assert.equal(harness.running(), true);
@@ -680,17 +704,21 @@ test('runtime flags reject wrong types and incompatible protocols without silent
   const harness = pluginHarness(t);
   for (const key of ['listen', 'ipv4', 'ipv6', 'dnsIpv6', 'keepAlive']) {
     for (const value of [null, 0, 1, 'true', [], {}]) {
-      assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+      const res = await harness.plugin.handle('provisionAndStart', {
         instanceId: 'invalid-flags', port: 8000, config: { [key]: value },
-      }), { ready: false });
+      });
+      assert.equal(res.ready, false);
+      assert.match(res.error || '', new RegExp(`Invalid runtime flag: ${key}`));
       assert.match(harness.events.filter(event => event.name === 'tarven:error').at(-1).data.message,
         new RegExp(`Invalid runtime flag: ${key}`));
     }
   }
   for (const config of [{ ipv4: false, ipv6: false }, { ipv4: false }]) {
-    assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+    const res = await harness.plugin.handle('provisionAndStart', {
       instanceId: 'invalid-protocols', port: 8000, config,
-    }), { ready: false });
+    });
+    assert.equal(res.ready, false);
+    assert.match(res.error || '', /protocol|IPv6/i);
     assert.match(harness.events.filter(event => event.name === 'tarven:error').at(-1).data.message,
       /protocol|IPv6/i);
   }
@@ -798,7 +826,7 @@ test('stop during npm prevents service resurrection and preserves existing confi
   await entered.promise;
   const stopping = harness.plugin.stopCurrentServer({ instanceId: 'existing', operationId: 'launch-1' });
   installation.resolve();
-  assert.deepEqual(await launch, { ready: false });
+  assert.deepEqual(await launch, { ready: false, cancelled: true });
   await stopping;
   assert.equal(harness.starts(), 0);
   assert.equal(harness.plugin.isServerReady(), false);
@@ -827,7 +855,9 @@ test('a failed npm install with partial node_modules is repaired on the next lau
   const source = fs.readFileSync(path.join(directory, 'server.js'));
   const config = fs.readFileSync(path.join(directory, 'config.yaml'));
   const launchOptions = { instanceId: 'existing', port: 8000, config: defaultRuntimeConfig };
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', launchOptions), { ready: false });
+  const failedInstall = await harness.plugin.handle('provisionAndStart', launchOptions);
+  assert.equal(failedInstall.ready, false);
+  assert.match(failedInstall.error || '', /synthetic dependency failure/);
   const markers = path.join(harness.paths.bootstrapDir, 'dependency-installs');
   assert.equal(fs.readdirSync(markers).length, 1);
   assert.equal(harness.starts(), 0);
@@ -865,7 +895,7 @@ test('cancelling npm after it created node_modules leaves recovery state until a
   await entered.promise;
   const stopped = harness.plugin.stopCurrentServer({ instanceId: 'cancelled', operationId: 'cancelled-op' });
   finished.resolve();
-  assert.deepEqual(await launch, { ready: false });
+  assert.deepEqual(await launch, { ready: false, cancelled: true });
   await stopped;
   const markers = path.join(harness.paths.bootstrapDir, 'dependency-installs');
   assert.equal(fs.readdirSync(markers).length, 1);
@@ -887,9 +917,11 @@ test('takeover never repairs dependencies or writes installation markers into it
   await harness.plugin.handle('migrateInstance', {
     instanceId: 'takeover', sourcePath: source, mode: 'takeover',
   });
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+  const takeoverRes = await harness.plugin.handle('provisionAndStart', {
     instanceId: 'takeover', port: 8000, config: defaultRuntimeConfig,
-  }), { ready: false });
+  });
+  assert.equal(takeoverRes.ready, false);
+  assert.match(takeoverRes.error || '', /Takeover dependencies/);
   assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /Takeover dependencies/);
   assert.equal(installs, 0);
   assert.equal(harness.starts(), 0);
@@ -913,7 +945,7 @@ test('stop during download aborts retries and removes only owned staging', async
   const launch = harness.plugin.handle('provisionAndStart', { instanceId: 'new-one', operationId: 'download-1', port: 8000, zipballUrl: 'https://example.invalid/source.zip' });
   await entered.promise;
   const stop = harness.plugin.stopCurrentServer({ instanceId: 'new-one', operationId: 'download-1' });
-  assert.deepEqual(await launch, { ready: false });
+  assert.deepEqual(await launch, { ready: false, cancelled: true });
   await stop;
   assert.equal(downloads, 1);
   assert.equal(harness.starts(), 0);
@@ -940,7 +972,7 @@ test('overlapping launches serialize cleanup and delayed old closes cannot stop 
   await entered.promise;
   const second = harness.plugin.handle('provisionAndStart', { instanceId: 'new', operationId: 'new-op', port: 8001 });
   installing.resolve();
-  assert.deepEqual(await first, { ready: false });
+  assert.deepEqual(await first, { ready: false, cancelled: true });
   assert.deepEqual(await second, { ready: true });
   assert.equal(harness.starts(), 1);
   const status = await harness.plugin.handle('getStatus');
@@ -964,7 +996,7 @@ test('legacy unscoped close still cancels a pending launch safely', async (t) =>
   await entered.promise;
   const stop = harness.plugin.stopCurrentServer();
   done.resolve();
-  assert.deepEqual(await launch, { ready: false });
+  assert.deepEqual(await launch, { ready: false, cancelled: true });
   await stop;
   assert.equal(harness.starts(), 0);
 });
@@ -2116,9 +2148,11 @@ test('unconfigured storage root refuses implicit creation targets without fabric
   harness.paths.setInstancesRoot({});
   const archive = path.join(harness.root, 'source.zip');
   fs.writeFileSync(archive, 'synthetic archive');
-  assert.deepEqual(await harness.plugin.handle('provisionAndStart', {
+  const unconfiguredRes = await harness.plugin.handle('provisionAndStart', {
     instanceId: 'no-root', port: 8000, localZipPath: archive,
-  }), { ready: false });
+  });
+  assert.equal(unconfiguredRes.ready, false);
+  assert.match(unconfiguredRes.error || '', /尚未选择实例安装目录/);
   assert.equal(harness.starts(), 0);
   assert.match(harness.events.filter((event) => event.name === 'tarven:error').at(-1).data.message, /尚未选择实例安装目录/);
   // 绝不创造任何默认目录顶替。
@@ -2148,4 +2182,52 @@ test('relocate without an explicit target requires a configured root instead of 
   );
   // 数据原样保留在旧目录。
   assert.equal(fs.existsSync(path.join(legacyDir, 'server.js')), true);
+});
+
+test('early server process exit reports exit code and stderr instead of a false 180s timeout (#9)', async (t) => {
+  const harness = pluginHarness(t, {
+    onStart: ({ log, onExit }) => {
+      setTimeout(() => {
+        log('Error: listen EADDRINUSE: address already in use 127.0.0.1:8000', 'error');
+        onExit(1);
+      }, 20);
+    },
+    httpGet: () => {
+      const request = new EventEmitter();
+      request.destroy = () => undefined;
+      request.setTimeout = () => undefined;
+      setImmediate(() => request.emit('error', new Error('connect ECONNREFUSED')));
+      return request;
+    },
+  });
+  const directory = harness.paths.serverDirFor('crash-on-boot');
+  serverFiles(directory);
+  fs.mkdirSync(path.join(directory, 'node_modules'));
+  const res = await harness.plugin.handle('provisionAndStart', {
+    instanceId: 'crash-on-boot', operationId: 'boot-crash', port: 8000,
+  });
+  assert.equal(res.ready, false);
+  assert.equal(res.cancelled, undefined);
+  assert.match(res.error || '', /Node\.js 进程在启动完成前已退出 \(code=1\)/);
+  assert.match(res.error || '', /EADDRINUSE/);
+  assert.doesNotMatch(res.error || '', /180s/);
+  const errEvent = harness.events.filter((event) => event.name === 'tarven:error').at(-1);
+  assert.equal(errEvent.data.message, res.error);
+});
+
+test('renameInstance rejects when an active auxiliary process holds the instance directory (#12)', async (t) => {
+  let heldDirectories = [];
+  const harness = pluginHarness(t, {
+    activeProcessDirectories: () => heldDirectories,
+  });
+  const directory = harness.paths.serverDirFor('busy-rename');
+  serverFiles(directory);
+  harness.load('src/runtime/instances.ts').registerInstance('busy-rename', directory);
+  heldDirectories = [directory];
+  await assert.rejects(
+    harness.plugin.handle('renameInstance', { instanceId: 'busy-rename', newName: 'renamed-busy' }),
+    /仍有终端或后台进程占用/,
+  );
+  assert.equal(fs.existsSync(directory), true);
+  assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('busy-rename').path, directory);
 });

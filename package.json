@@ -1,12 +1,12 @@
 {
   "name": "sillyclient-windows",
-  "version": "1.15.1",
+  "version": "1.15.3",
   "description": "SillyClient for Windows",
   "main": "dist/main.js",
   "scripts": {
     "dev": "npm run build && electron .",
     "check": "tsc --noEmit",
-    "test": "node --test tests/runtime-hardening.test.cjs tests/instance-import.test.cjs",
+    "test": "node --test tests/runtime-hardening.test.cjs tests/instance-import.test.cjs tests/rename.test.cjs",
     "build": "tsc",
     "pack": "npm run build && electron-builder --win",
     "prepare:runtime": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-NodeRuntime.ps1",

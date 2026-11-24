@@ -58,6 +58,15 @@ npm --prefix .worktrees/release-hardening-windows run pack
 
 ## 4. 本树推进与改动记录 (Worktree Activity Log)
 
+### 2026-11-24 Windows 1.15.3 Issue 全量修复与 NSIS 安装包打包就绪（待用户敲板发布）
+
+- **问题修复范围（对应 `#9`、`#12`、`#11`、`#14/#17`、`#20/#18/#19`，严守终态解耦架构冻结）**：
+  - **启动报错直返与进程早退识别（`#9`）**：`src/contracts/ipc-contracts.ts` 扩展 `ProvisionAndStartResult`（新增可选 `error?: string` / `cancelled?: boolean`）；`src/provision-workflow.ts` 捕获启动期 Node 早退状态、退出码与最后 6 行 `stderr`，在 `pollUntilReady` 中实时检测进程退出，早退时明确上报 `Node.js 进程在启动完成前已退出 (code=...)` 而不再误报 `服务启动超时（180s）`，并在 `catch` 与 `plugin.ts` 中将真实 `error` 或 `cancelled: true` 随返回值同步带回，彻底消除异步 `tarven:error` 事件与 `invoke` 返回值竞态导致的通用兜底文案丢失诊断信息；
+  - **重命名串行互斥与 `EPERM` 退避重试（`#12`）**：`src/plugin.ts` 将 `renameInstance` 纳入 `operations.enqueue` 串行队列并传入 `proc.activeProcessDirectories()`，成功后主动刷新 `garbage`/`maintenance` 缓存；`src/runtime/rename.ts` 检查目标目录是否存在终端/后台子进程占用（拒绝并发重命名），对 `EPERM`/`EBUSY`/`EACCES` 引入有界退避重试（`150/300/500/800/1200ms`），耗尽后转为明确中文占用提示并保留原始错误码，大小写两段式重命名失败时自动回滚，并在完成后调用 `invalidateDirectorySize` 清理旧/新路径大小缓存；
+  - **通用前端同步（`#11`、`#14/#17`、`#20/#18/#19`）**：同步 `provision-timeout.ts`（`ProvisionTimeoutTracker` 5m 空闲 / 25m 总上限心跳续期与 `resolveProvisionFailure`）、`native-errors.ts`（`RESERVED_DIAGNOSTIC_TOKENS` 防指纹分裂）、`sentry-diagnostic.ts` / `submit-diagnostic-report.ts`（内置生产 DSN 仅在原生生产环境启用）及 `routes/index.tsx` Web 演示端兜底；严格剔除 `src/dev/`。
+- **版本与验证**：双 `package.json` 升为 `1.15.3`；`package.json` 的 `npm test` 增补 `tests/rename.test.cjs`；前端 `tsc --noEmit`、Vite 生产构建（1957 modules）与全量前端测试通过；`Sync-Frontend.ps1` 刷新 `frontend-dist` 与 `frontend.lock.json`；宿主 `npm run check`、`npm run build`、`npm test`（**95 pass / 0 fail / 1 optional skip**，新增 `#9` 早退与 `#12` 后台占用/重命名重试回归）全绿通过。
+- **打包与审计**：`npm run pack` 产出 NSIS 安装包，归档至 `Local/artifacts/v1.15.3/SillyClient-Windows-v1.15.3.exe`（`118,850,425` 字节，SHA-256 `9d9b8c2f478b6d0e1f4b7799478d61ec4558450d622e29a611f98059a04f83b3`）；`app.asar` 审计确认 28/28 前端资产逐字节一致、含 `1.15.3` / `Windows 控制台` / Sentry DSN 及本次编译后后端修复文案、零 `src/dev` 与合成故障标记。未在本机安装或启动应用（`physicalDeviceTested: false`、`uiInteractionTested: false`）；未合入 `main` 或创建 Release，等待用户敲板发布。
+
 ### 2026-11-19 Windows 1.15.1 前端同步与统一发布
 
 - **同步范围**：从 `common-frontend`（`d946b58`）同步统一前端更新（`ManageFolderShell` + `folder-tab-geometry.ts` 一体 SVG 文件夹页签与 780ms `manage-shared-transition.ts` 平切、`HeaderClock`、`CornerResizeCurve` 悬停/激活态、`interactionLocks` 与按需远程状态轮询、取消/未实现错误边界收敛及业务源码 `src/dev/` 物理隔离）；严格剔除 `src/dev/DevDebugOverlay.tsx` 与 `src/dev/dev-fixtures.tsx`（保持 `src/main.tsx` 无调试浮窗引用）；`src/routes/index.tsx` 三方合并保留 `directoryPickerGeneration` 防抖守卫及 `provisionCreatedInstance` 后置 `!isAndroid` 的 `setInstancesRoot` 写入。同步更新 `tests/native-preview.browser.cjs` 管理页签 `role="tab"` 选择器。

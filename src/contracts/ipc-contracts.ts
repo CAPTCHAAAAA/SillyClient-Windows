@@ -194,6 +194,8 @@ export interface ProvisionAndStartParams {
 
 export interface ProvisionAndStartResult {
   ready: boolean;
+  error?: string;
+  cancelled?: boolean;
 }
 
 export interface OpenExternalUrlParams {
