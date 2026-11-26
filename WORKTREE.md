@@ -58,6 +58,14 @@ npm --prefix .worktrees/release-hardening-windows run pack
 
 ## 4. 本树推进与改动记录 (Worktree Activity Log)
 
+### 2026-11-27 Windows 1.15.4 离线 Git 桥接、镜像与预制扩展加固及前端同步正式发布
+
+- **修复与同步内容（严守终态冻结架构，未触碰 `src/plugin.ts`、`src/main.ts`、`src/contracts/ipc-contracts.ts`）**：
+  - **离线纯 JS Git 桥接兜底**：新增 `resources/git-bridge/`（`isomorphic-git.cjs`、`isomorphic-git-http-node.cjs`、`git-bridge-preload.cjs`、`THIRD_PARTY_NOTICES.txt`）并纳入 `package.json` `build.extraResources`；`src/runtime/process.ts` 新增 `resolveGitBridgeDir` 与 `applyGitBridgeEnv` 并在 `startServer` 注入正斜杠 `NODE_OPTIONS` `--require` 预加载，无系统 `git.exe` 时自动全量桥接 `simple-git`/`isomorphic-git`（ESM/CJS/`Worker`），有 `git.exe` 时自动接管含 `.git/sillyclient-tree.json` 或浅层无对象库的预制扩展；
+  - **下载镜像与预制拓展加固**：`src/runtime/utils.ts` 增加 `Accept-Encoding: identity` 与首字节响应头超时 `headerTimeoutMs`（收到响应头即清理，不影响大文件流式传输）；`src/download-provision.ts` 与 `src/runtime/preinstalled-extensions.ts` 移除失效的 `ghfast.top`/`ghproxy.net`，换用 5 节点 ZIP 镜像池并记忆批次最快源，将大小与 SHA-256 校验移入镜像循环内，支持 `./` 相对清单入口并补写 `.git/` 元数据与 `.git/sillyclient-tree.json`；
+  - **通用前端同步**：合入 `common-frontend` `40436b2`（`--motion-hover: 500ms` 与控制岛硬切修复），双 `package.json` 升至 `1.15.4`，`Sync-Frontend.ps1` 刷新 `frontend-dist` 与 `frontend.lock.json`（`assetsSha256` `95e719a6…57b4f`）。
+- **验证、打包与本机覆盖安装**：前端 `tsc --noEmit`、Vite 构建（1957 modules）、前端单测（112/112）、宿主 `npm run check`、`npm run build`、`npm test`（**97 pass / 0 fail / 1 optional skip**，含新增 2 项镜像 SHA 回退 + Git 桥接 CJS/ESM/`Worker` 清理回归）全绿。`npm run pack` 产出并归档 `Local/artifacts/v1.15.4/SillyClient-Windows-v1.15.4.exe`（`118,982,965` 字节，SHA-256 `d0aa544274b6284189efd43fb1bb7ab9a88aa4d40546b088042ea3c2f69910a7`），`app.asar` 与 `resources/git-bridge/` 审计全通；已按用户指令静默覆盖安装至本机 `D:\Software\AI\Entertainment\SillyClient` 并核验 `app.asar` 与注册表版本 `1.15.4`。
+
 ### 2026-11-24 Windows 1.15.3 Issue 全量修复与 NSIS 安装包打包就绪（待用户敲板发布）
 
 - **问题修复范围（对应 `#9`、`#12`、`#11`、`#14/#17`、`#20/#18/#19`，严守终态解耦架构冻结）**：

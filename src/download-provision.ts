@@ -93,18 +93,24 @@ export async function downloadWithMirrors(
 ): Promise<void> {
   const mirrors = [
     originalUrl,
-    `https://ghfast.top/${originalUrl}`,
     `https://gh-proxy.com/${originalUrl}`,
-    `https://ghproxy.net/${originalUrl}`,
+    `https://gh-proxy.org/${originalUrl}`,
+    `https://edgeone.gh-proxy.com/${originalUrl}`,
+    `https://ghproxy.vip/${originalUrl}`,
+    `https://v6.gh-proxy.org/${originalUrl}`,
   ];
 
   let lastError: Error | null = null;
   for (let i = 0; i < mirrors.length; i++) {
-    for (let retry = 0; retry < 2; retry++) {
+    const maxRetries = i === 0 ? 1 : 2;
+    const headerTimeoutMs = i === 0 ? 10_000 : 20_000;
+    for (let retry = 0; retry < maxRetries; retry++) {
       checkSignal(signal);
       try {
-        log(`下载 (镜像 ${i + 1}/${mirrors.length}, 重试 ${retry + 1}/2)`);
-        await utils.downloadFile(mirrors[i], destPath, onProgress, signal);
+        log(`下载 (镜像 ${i + 1}/${mirrors.length}, 重试 ${retry + 1}/${maxRetries})`);
+        await utils.downloadFile(mirrors[i], destPath, onProgress, signal, Number.POSITIVE_INFINITY, {
+          headerTimeoutMs,
+        });
         checkSignal(signal);
         return;
       } catch (e: any) {

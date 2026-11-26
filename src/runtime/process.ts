@@ -181,6 +181,52 @@ export async function runNpmInstall(
   throw new Error('npm install failed after 3 attempts');
 }
 
+export function resolveGitBridgeDir(): string | null {
+  const candidates = [
+    process.resourcesPath ? path.join(process.resourcesPath, 'git-bridge') : '',
+    path.join(__dirname, '..', '..', 'resources', 'git-bridge'),
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(path.join(dir, 'git-bridge-preload.cjs'))) {
+        return dir;
+      }
+    } catch {
+      // Ignore directory access errors
+    }
+  }
+  return null;
+}
+
+export function applyGitBridgeEnv(env: Record<string, string>, bridgeDir = resolveGitBridgeDir()): Record<string, string> {
+  if (!bridgeDir) return env;
+  const preloadFile = path.join(bridgeDir, 'git-bridge-preload.cjs');
+  if (!fs.existsSync(preloadFile)) return env;
+  env.SILLYCLIENT_GIT_BRIDGE_DIR = bridgeDir;
+  env.SILLYTAVERN_GIT_BRIDGE_DIR = bridgeDir;
+  if (env.SILLYTAVERN_GIT_HAS_SYSTEM === undefined) {
+    const pathEntries = (env.PATH || '')
+      .split(path.delimiter)
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const hasGit = pathEntries.some((entry) => {
+      try {
+        return fs.existsSync(path.join(entry, 'git.exe'));
+      } catch {
+        return false;
+      }
+    });
+    env.SILLYTAVERN_GIT_HAS_SYSTEM = hasGit ? '1' : '0';
+  }
+  const normalizedPreload = preloadFile.replace(/\\/g, '/');
+  const requireFlag = `--require="${normalizedPreload}"`;
+  const existingOptions = (env.NODE_OPTIONS || '').trim();
+  if (!existingOptions.includes(normalizedPreload)) {
+    env.NODE_OPTIONS = existingOptions ? `${existingOptions} ${requireFlag}` : requireFlag;
+  }
+  return env;
+}
+
 export function startServer(
   serverDir: string,
   instanceId: string,
@@ -191,15 +237,18 @@ export function startServer(
 ): ChildProcess {
   if (serverProcess && supervisor.owns(serverProcess)) throw new Error('Previous server is still running');
   onLog(`Starting server (port ${port})`);
-  // Direct invocation leaves takeover scripts untouched and owns the real Node PID.
-  const child = spawn(getNodeExe(), ['server.js', ...(options.args || ['--port', String(port)])], {
-    cwd: serverDir,
-    env: buildEnv({
+  const serverEnv = applyGitBridgeEnv(
+    buildEnv({
       NODE_ENV: 'production',
       AUTO_LAUNCH: 'false',
       NO_BROWSER: 'true',
       SILLYTAVERN_GIT_BACKEND: process.env.SILLYTAVERN_GIT_BACKEND || 'auto',
     }),
+  );
+  // Direct invocation leaves takeover scripts untouched and owns the real Node PID.
+  const child = spawn(getNodeExe(), ['server.js', ...(options.args || ['--port', String(port)])], {
+    cwd: serverDir,
+    env: serverEnv,
     shell: false,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],

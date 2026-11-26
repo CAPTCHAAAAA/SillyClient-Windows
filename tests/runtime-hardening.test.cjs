@@ -2231,3 +2231,157 @@ test('renameInstance rejects when an active auxiliary process holds the instance
   assert.equal(fs.existsSync(directory), true);
   assert.equal(harness.load('src/runtime/instances.ts').getInstanceRecord('busy-rename').path, directory);
 });
+
+test('preinstall falls back across mirrors on SHA mismatch, reuses fastest mirror, accepts ./ manifest and writes git metadata', async (t) => {
+  const setup = extensionFixture(t, ['tavern-helper', 'dice'], {
+    'tavern-helper': { manifest: { js: './index.js', css: ['./style.css'] } },
+  });
+  const requests = [];
+  const transaction = await setup.installer.installPreselectedExtensions(
+    setup.server,
+    { revision: 1, extensionIds: ['tavern-helper', 'dice'] },
+    {},
+    {
+      catalogPath: setup.dependencies.catalogPath,
+      mirrors: ['https://mirror-bad.example/', 'https://mirror-good.example/'],
+      download: async (url, destination) => {
+        requests.push(url);
+        if (url.startsWith('https://codeload.github.com/')) {
+          throw new Error('Direct GitHub blocked');
+        }
+        if (url.startsWith('https://mirror-bad.example/')) {
+          fs.writeFileSync(destination, Buffer.from('corrupt-http-200-html'));
+          return;
+        }
+        const extension = setup.extensions.find((entry) =>
+          url === `https://mirror-good.example/https://codeload.github.com/${entry.repository}/zip/${entry.commit}`,
+        );
+        assert.ok(extension, `Unexpected mirror url: ${url}`);
+        fs.writeFileSync(destination, setup.archives.get(extension.id));
+      },
+    },
+  );
+  transaction.commit();
+
+  // First extension fails direct + mirror-bad (SHA mismatch) and succeeds on mirror-good.
+  // Second extension tries sticky mirror-good FIRST without re-hitting direct or mirror-bad.
+  assert.equal(requests.length, 4);
+  assert.ok(requests[0].startsWith('https://codeload.github.com/'));
+  assert.ok(requests[1].startsWith('https://mirror-bad.example/'));
+  assert.ok(requests[2].startsWith('https://mirror-good.example/'));
+  assert.ok(requests[3].startsWith('https://mirror-good.example/'));
+
+  const target = path.join(setup.server, 'data', 'default-user', 'extensions', 'JS-Slash-Runner');
+  assert.equal(fs.readFileSync(path.join(target, '.git', 'HEAD'), 'utf8').trim(), 'ref: refs/heads/main');
+  assert.ok(fs.readFileSync(path.join(target, '.git', 'config'), 'utf8').includes('https://github.com/N0VI028/JS-Slash-Runner.git'));
+  const treeMeta = JSON.parse(fs.readFileSync(path.join(target, '.git', 'sillyclient-tree.json'), 'utf8'));
+  assert.equal(treeMeta.commit, setup.extensions[0].commit);
+  assert.ok(treeMeta.files.includes('index.js'));
+  assert.ok(treeMeta.files.includes('manifest.json'));
+});
+
+test('applyGitBridgeEnv hooks CJS, ESM, Worker and cleans stale files on pull without local isomorphic-git or git.exe', async (t) => {
+  const root = fixture(t);
+  const paths = pathsFor(root);
+  const proc = loader({ './paths': paths, electron: {} })('src/runtime/process.ts');
+  const resolvedBridge = proc.resolveGitBridgeDir();
+  assert.ok(resolvedBridge && fs.existsSync(path.join(resolvedBridge, 'git-bridge-preload.cjs')));
+
+  // Build isolated synthetic bridge dir with deterministic offline mock isomorphic-git
+  const mockBridge = path.join(root, 'dir with spaces', 'git-bridge');
+  fs.mkdirSync(mockBridge, { recursive: true });
+  fs.copyFileSync(path.join(resolvedBridge, 'git-bridge-preload.cjs'), path.join(mockBridge, 'git-bridge-preload.cjs'));
+  const remoteHead = 'e'.repeat(40);
+  fs.writeFileSync(path.join(mockBridge, 'isomorphic-git-http-node.cjs'), `
+    module.exports = {
+      async request(req) {
+        if (req.url.startsWith('https://github.com/')) throw new Error('Direct blocked');
+        return { url: req.url, statusCode: 200, headers: {}, body: [] };
+      }
+    };
+  `);
+  fs.writeFileSync(path.join(mockBridge, 'isomorphic-git.cjs'), `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    module.exports = {
+      async fetch({ http, url }) {
+        await http.request({ url: url + '/git-upload-pack', method: 'POST', body: [Buffer.from('want')] });
+        return { fetchHead: '${remoteHead}' };
+      },
+      async checkout({ dir }) { fs.writeFileSync(path.join(dir, 'index.js'), 'updated'); },
+      async listFiles({ ref }) {
+        if (ref === 'HEAD') throw new Error('shallow preinstall');
+        return ['index.js', 'manifest.json'];
+      },
+      async clone({ dir }) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'cloned.txt'), 'ok');
+      },
+    };
+  `);
+
+  const serverDir = path.join(root, 'legacy-server');
+  const extDir = path.join(serverDir, 'data', 'default-user', 'extensions', 'Extension-Dice');
+  fs.mkdirSync(path.join(extDir, '.git', 'refs', 'heads'), { recursive: true });
+  fs.mkdirSync(path.join(extDir, '.git', 'refs', 'remotes', 'origin'), { recursive: true });
+  fs.mkdirSync(path.join(extDir, 'legacy'), { recursive: true });
+  fs.writeFileSync(path.join(extDir, 'manifest.json'), JSON.stringify({ display_name: 'Dice', version: '2.0.0', js: 'index.js' }));
+  fs.writeFileSync(path.join(extDir, 'index.js'), 'old');
+  fs.writeFileSync(path.join(extDir, 'legacy', 'removed.js'), 'old');
+  fs.writeFileSync(path.join(extDir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(extDir, '.git', 'config'), '[remote "origin"]\n\turl = https://github.com/SillyTavern/Extension-Dice.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n');
+  fs.writeFileSync(path.join(extDir, '.git', 'refs', 'heads', 'main'), '1'.repeat(40) + '\n');
+  fs.writeFileSync(path.join(extDir, '.git', 'refs', 'remotes', 'origin', 'main'), '1'.repeat(40) + '\n');
+  fs.writeFileSync(path.join(extDir, '.git', 'sillyclient-tree.json'), JSON.stringify({ commit: '1'.repeat(40), files: ['index.js', 'manifest.json', 'legacy/removed.js'] }));
+
+  const scriptPath = path.join(serverDir, 'verify.mjs');
+  fs.writeFileSync(scriptPath, `
+    import { createRequire } from 'node:module';
+    import { Worker } from 'node:worker_threads';
+    import simpleGit, { CheckRepoActions } from 'simple-git';
+    import isoGit, { clone } from 'isomorphic-git';
+    import fs from 'node:fs';
+    import path from 'node:path';
+    const require = createRequire(import.meta.url);
+    const cjsSg = require('simple-git');
+    const extDir = path.resolve('data/default-user/extensions/Extension-Dice');
+    const cloneDir = path.resolve('data/default-user/extensions/Cloned');
+    await cjsSg(extDir).pull('origin', 'main');
+    await simpleGit().clone('https://github.com/example/Cloned', cloneDir, ['--depth', '1']);
+    const wRes = await new Promise((resolve, reject) => {
+      const w = new Worker("const { parentPort } = require('node:worker_threads'); (async () => { const c = require('simple-git'); const e = await import('simple-git'); parentPort.postMessage({ cjs: typeof c.simpleGit, esm: typeof e.default }); })().catch(err => parentPort.postMessage({ err: String(err) }));", { eval: true });
+      w.once('message', resolve);
+      w.once('error', reject);
+    });
+    console.log(JSON.stringify({
+      checkAction: CheckRepoActions.IS_REPO_ROOT,
+      isoExport: typeof isoGit.clone === 'function' && typeof clone === 'function',
+      staleRemoved: !fs.existsSync(path.join(extDir, 'legacy', 'removed.js')),
+      staleDirRemoved: !fs.existsSync(path.join(extDir, 'legacy')),
+      cloned: fs.existsSync(path.join(cloneDir, 'cloned.txt')),
+      head: await simpleGit(extDir).revparse(['HEAD']),
+      wRes,
+    }));
+  `);
+
+  const env = proc.applyGitBridgeEnv(
+    { PATH: '', SILLYTAVERN_GIT_HAS_SYSTEM: '0', SILLYTAVERN_GIT_BACKEND: 'auto' },
+    mockBridge,
+  );
+  assert.ok(env.NODE_OPTIONS.includes(path.join(mockBridge, 'git-bridge-preload.cjs').replace(/\\/g, '/')));
+  const result = require('node:child_process').spawnSync(process.execPath, [scriptPath], {
+    cwd: serverDir,
+    env: { ...process.env, ...env },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const observed = JSON.parse(result.stdout.trim());
+  assert.equal(observed.checkAction, 'root');
+  assert.equal(observed.isoExport, true);
+  assert.equal(observed.staleRemoved, true);
+  assert.equal(observed.staleDirRemoved, true);
+  assert.equal(observed.cloned, true);
+  assert.equal(observed.head, remoteHead);
+  assert.deepEqual(observed.wRes, { cjs: 'function', esm: 'function' });
+});

@@ -77,17 +77,34 @@ export async function downloadFile(
   onProgress?: (percent: number) => void,
   signal?: AbortSignal,
   maxBytes = Number.POSITIVE_INFINITY,
+  options?: { headerTimeoutMs?: number },
 ): Promise<void> {
   checkSignal(signal);
   const downloadSignal = signal
     ? AbortSignal.any([signal, AbortSignal.timeout(300000)])
     : AbortSignal.timeout(300000);
-  const response = await net.fetch(url, {
-    headers: {
-      'User-Agent': 'SillyClient-Windows',
-    },
-    signal: downloadSignal,
-  });
+  const headerController = new AbortController();
+  const headerTimer = options?.headerTimeoutMs
+    ? setTimeout(
+        () => headerController.abort(new Error(`Response timeout (${options.headerTimeoutMs}ms)`)),
+        options.headerTimeoutMs,
+      )
+    : null;
+  const fetchSignal = headerTimer
+    ? AbortSignal.any([downloadSignal, headerController.signal])
+    : downloadSignal;
+  let response: Response;
+  try {
+    response = await net.fetch(url, {
+      headers: {
+        'User-Agent': 'SillyClient-Windows',
+        'Accept-Encoding': 'identity',
+      },
+      signal: fetchSignal,
+    });
+  } finally {
+    if (headerTimer) clearTimeout(headerTimer);
+  }
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status}`);
   }

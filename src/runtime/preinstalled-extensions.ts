@@ -15,6 +15,13 @@ const ALLOWED_REPOSITORIES: Record<string, string> = {
 const MAX_ARCHIVE_BYTES = 32 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 128 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
+const VERIFIED_MIRROR_PREFIXES = [
+  'https://gh-proxy.com/',
+  'https://gh-proxy.org/',
+  'https://edgeone.gh-proxy.com/',
+  'https://ghproxy.vip/',
+  'https://v6.gh-proxy.org/',
+];
 
 export interface PreinstallSelection {
   revision: 1;
@@ -44,6 +51,7 @@ export interface ExtensionInstallTransaction {
 interface InstallerDependencies {
   catalogPath?: string;
   download?: typeof downloadFile;
+  mirrors?: string[];
   resolveDataRoot?: (serverDir: string, signal?: AbortSignal) => Promise<string>;
 }
 
@@ -139,12 +147,64 @@ async function treeIdentity(root: string, signal?: AbortSignal): Promise<string>
   return createHash('sha256').update(entries.sort().join('\n')).digest('hex');
 }
 
-function relativeAsset(root: string, entry: unknown): string {
-  if (typeof entry !== 'string' || !entry || path.isAbsolute(entry) || entry.includes(':')
-    || entry.split(/[\\/]/).some((part) => !part || part === '..' || part === '.')) {
+function relativeAsset(root: string, entry: unknown, allowDotSlash = false): string {
+  if (typeof entry !== 'string' || !entry) {
     throw new Error('Unsafe extension asset path');
   }
-  return path.join(root, entry);
+  let normalized = entry.trim();
+  if (allowDotSlash) {
+    normalized = normalized.replace(/\\/g, '/');
+    while (normalized.startsWith('./')) normalized = normalized.slice(2);
+  }
+  if (!normalized || path.isAbsolute(normalized) || normalized.includes(':')
+    || normalized.split(/[\\/]/).some((part) => !part || part === '..' || part === '.')) {
+    throw new Error('Unsafe extension asset path');
+  }
+  return path.join(root, normalized);
+}
+
+async function collectTrackedFiles(root: string, signal?: AbortSignal): Promise<string[]> {
+  const files: string[] = [];
+  const queue = [root];
+  while (queue.length) {
+    checkSignal(signal);
+    const directory = queue.pop()!;
+    for (const entry of await fs.promises.readdir(directory, { withFileTypes: true })) {
+      checkSignal(signal);
+      if (directory === root && (entry.name === '.git' || entry.name === '.sillyclient-install.json')) continue;
+      const target = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(target);
+      } else if (entry.isFile()) {
+        files.push(path.relative(root, target).replace(/\\/g, '/'));
+      }
+    }
+  }
+  return files.sort();
+}
+
+async function writeGitMetadata(root: string, extension: ExtensionRecord, signal?: AbortSignal): Promise<void> {
+  const gitDir = path.join(root, '.git');
+  for (const sub of ['refs/heads', 'refs/remotes/origin', 'objects/info', 'objects/pack']) {
+    await fs.promises.mkdir(path.join(gitDir, sub), { recursive: true });
+  }
+  const remoteUrl = `https://github.com/${extension.repository}.git`;
+  await fs.promises.writeFile(path.join(gitDir, 'HEAD'), 'ref: refs/heads/main\n', 'utf8');
+  await fs.promises.writeFile(
+    path.join(gitDir, 'config'),
+    '[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n\tlogallrefupdates = true\n'
+      + `[remote "origin"]\n\turl = ${remoteUrl}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`
+      + '[branch "main"]\n\tremote = origin\n\tmerge = refs/heads/main\n',
+    'utf8',
+  );
+  await fs.promises.writeFile(path.join(gitDir, 'refs/heads/main'), `${extension.commit}\n`, 'utf8');
+  await fs.promises.writeFile(path.join(gitDir, 'refs/remotes/origin/main'), `${extension.commit}\n`, 'utf8');
+  const trackedFiles = await collectTrackedFiles(root, signal);
+  await fs.promises.writeFile(
+    path.join(gitDir, 'sillyclient-tree.json'),
+    JSON.stringify({ commit: extension.commit, files: trackedFiles }),
+    'utf8',
+  );
 }
 
 async function validateManifest(root: string, actualVersion: string, extension: ExtensionRecord): Promise<void> {
@@ -171,7 +231,7 @@ async function validateManifest(root: string, actualVersion: string, extension: 
     ...(Array.isArray(manifest.css) ? manifest.css : manifest.css ? [manifest.css] : [])];
   if (!declared.length) throw new Error('Extension manifest has no JavaScript or CSS entry');
   for (const entry of declared) {
-    const entryStat = await assertPlainPath(relativeAsset(root, entry));
+    const entryStat = await assertPlainPath(relativeAsset(root, entry, true));
     if (!entryStat.isFile() || entryStat.size === 0) throw new Error('Missing extension manifest entry');
   }
 }
@@ -261,6 +321,8 @@ export async function installPreselectedExtensions(
   };
   try {
     await createPlainDirectories(extensionsRoot, createdParents);
+    let preferredMirrorPrefix: string | null = null;
+    const configuredMirrors = dependencies.mirrors ?? VERIFIED_MIRROR_PREFIXES;
     for (let index = 0; index < extensions.length; index++) {
       checkSignal(options.signal);
       const extension = extensions[index];
@@ -280,37 +342,52 @@ export async function installPreselectedExtensions(
       staging.push(stage);
       const archive = path.join(stage, 'archive.zip');
       const rawUrl = `https://codeload.github.com/${extension.repository}/zip/${extension.commit}`;
-      const candidates = dependencies.download ? [rawUrl] : [
-        rawUrl,
-        `https://ghfast.top/${rawUrl}`,
-        `https://gh-proxy.com/${rawUrl}`,
-        `https://ghproxy.net/${rawUrl}`,
-      ];
+      const candidates: Array<{ prefix: string | null; url: string }> =
+        dependencies.download && !dependencies.mirrors
+          ? [{ prefix: null, url: rawUrl }]
+          : [
+              ...(preferredMirrorPrefix
+                ? [{ prefix: preferredMirrorPrefix, url: `${preferredMirrorPrefix}${rawUrl}` }]
+                : []),
+              { prefix: null, url: rawUrl },
+              ...configuredMirrors
+                .filter((prefix) => prefix !== preferredMirrorPrefix)
+                .map((prefix) => ({ prefix, url: `${prefix}${rawUrl}` })),
+            ];
       options.progress?.(index * 100 / extensions.length, `Downloading ${extension.displayName}`);
       let downloaded = false;
       let lastDownloadError: Error | null = null;
-      for (const mirrorUrl of candidates) {
+      for (const candidate of candidates) {
+        const mirrorUrl = candidate.url;
         checkSignal(options.signal);
         try {
+          await fs.promises.rm(archive, { force: true }).catch(() => undefined);
           await (dependencies.download || downloadFile)(mirrorUrl, archive, (percent) => {
             options.progress?.((index + percent / 100) * 100 / extensions.length, `Downloading ${extension.displayName}`);
-          }, options.signal, MAX_ARCHIVE_BYTES);
+          }, options.signal, MAX_ARCHIVE_BYTES, {
+            headerTimeoutMs: candidate.prefix === null ? 10_000 : 20_000,
+          });
+          checkSignal(options.signal);
+          const archiveStat = await fs.promises.lstat(archive);
+          if (!archiveStat.isFile() || archiveStat.size !== extension.archiveBytes
+            || (await digest(archive, options.signal)).toLowerCase() !== extension.archiveSha256.toLowerCase()) {
+            throw new Error(`Pinned archive verification failed: ${extension.id}`);
+          }
+          preferredMirrorPrefix = candidate.prefix;
           downloaded = true;
           break;
         } catch (err: any) {
+          await fs.promises.rm(archive, { force: true }).catch(() => undefined);
           checkSignal(options.signal);
+          if (candidate.prefix && preferredMirrorPrefix === candidate.prefix) {
+            preferredMirrorPrefix = null;
+          }
           lastDownloadError = err;
           options.log?.(`Mirror download failed (${mirrorUrl}): ${err.message}`);
         }
       }
       if (!downloaded) {
         throw lastDownloadError || new Error(`Failed to download ${extension.displayName}`);
-      }
-      checkSignal(options.signal);
-      const archiveStat = await fs.promises.lstat(archive);
-      if (!archiveStat.isFile() || archiveStat.size !== extension.archiveBytes
-        || (await digest(archive, options.signal)).toLowerCase() !== extension.archiveSha256.toLowerCase()) {
-        throw new Error(`Pinned archive verification failed: ${extension.id}`);
       }
       const extraction = path.join(stage, 'content');
       await fs.promises.mkdir(extraction);
@@ -324,6 +401,7 @@ export async function installPreselectedExtensions(
       const source = path.join(extraction, expectedRoot);
       await assertPlainPath(source, true);
       await validateManifest(source, actualVersion, extension);
+      await writeGitMetadata(source, extension, options.signal);
       await fs.promises.writeFile(path.join(source, '.sillyclient-install.json'), JSON.stringify({
         revision: 1, transactionId, id: extension.id, commit: extension.commit, operationId: options.operationId,
         version: extension.version, license: extension.license, licensePath: extension.licensePath,

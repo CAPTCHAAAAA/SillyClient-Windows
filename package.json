@@ -1,6 +1,6 @@
 {
   "name": "sillyclient-windows",
-  "version": "1.15.3",
+  "version": "1.15.4",
   "description": "SillyClient for Windows",
   "main": "dist/main.js",
   "scripts": {
@@ -68,6 +68,13 @@
         "to": "preinstalled-extensions",
         "filter": [
           "catalog.json"
+        ]
+      },
+      {
+        "from": "resources/git-bridge",
+        "to": "git-bridge",
+        "filter": [
+          "**/*"
         ]
       }
     ]
